@@ -1,0 +1,40 @@
+# cabal
+dist
+dist-*
+cabal.project.local
+cabal.project.local~
+.ghc.environment.*
+
+# haskell tool chain
+.hie/
+.cabal-sandbox/
+cabal.sandbox.config
+
+# nix
+result
+result-*
+
+# direnv
+.direnv
+
+# editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+.*.kate-swp
+.stack-work/
+TAGS
+tags
+.ghci
+.ghcid
+
+# misc
+.DS_Store
+/.pre-commit-config.yaml
+
+# cabal new-style
+.cabal/
+dist-newstyle/

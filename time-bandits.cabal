@@ -1,0 +1,91 @@
+cabal-version:      2.4
+name:               time-bandits
+version:            0.1.0.0
+license:            Apache-2.0
+copyright:          2025 Sam Hart
+author:             Sam Hart
+maintainer:         sam@hxrts.com
+category:           Development
+synopsis:           Distributed time travel
+description:
+  A Haskell library for managing distributed timelines and resource transfers
+
+extra-source-files:
+  LICENSE
+  README.md
+
+source-repository head
+  type:     git
+  location: https://github.com/timewave-computer/time-bandits.git
+
+common shared
+  ghc-options:
+    -Wall -Wincomplete-record-updates -Wincomplete-uni-patterns
+    -Wmissing-deriving-strategies -Wunused-foralls -Wunused-foralls
+    -fprint-explicit-foralls -fprint-explicit-kinds
+
+  mixins:
+    base hiding (Prelude),
+    relude (Relude as Prelude, Relude.Container.One),
+    relude
+
+  default-extensions:
+    DataKinds
+    DerivingStrategies
+    DerivingVia
+    LambdaCase
+    MultiWayIf
+    NoStarIsType
+    OverloadedStrings
+    StrictData
+    TypeFamilies
+    ViewPatterns
+
+  build-depends:
+    , aeson
+    , async
+    , base               >=4.18    && <5
+    , bytestring
+    , cborg              >=0.2
+    , cereal
+    , containers
+    , crypto-api
+    , cryptohash-sha256
+    , cryptonite
+    , data-default
+    , directory
+    , filepath
+    , memory
+    , mtl
+    , optics-core
+    , polysemy           ==1.9.2.0
+    , polysemy-log       ==0.9.0.0
+    , polysemy-plugin    ==0.4.5.0
+    , profunctors
+    , relude             >=1.0
+    , serialise          >=0.2
+    , text
+    , time
+    , transformers
+    , with-utf8
+
+  default-language:   GHC2021
+
+library
+  import:          shared
+  hs-source-dirs:  src
+  exposed-modules:
+    TimeBandits.Core
+    TimeBandits.Effects
+    TimeBandits.Events
+    TimeBandits.Types
+
+executable time-bandits
+  import:         shared
+  main-is:        Main.hs
+  hs-source-dirs: app
+  build-depends:
+    , bytestring
+    , text
+    , time-bandits
+    , utf8-string
