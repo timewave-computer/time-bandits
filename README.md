@@ -1,11 +1,10 @@
-# Time Bandits: Distributed Timetravel Coordination
+# Time Bandits: Distributed Timetravel
 
 ![Time Bandits](./map_of_time.png)
 
 Time Bandits is a distributed system for coordinating resources across different timelines, owing it's name to the 1981 Terry Gilliam film of same name. The system allows actors to define and execute operations that interact with different timelines, writing time travel programs by composing structured effects.
 
-
-
+This was written as a protoype to work through some ideas about how to write a distribtued programming language using algebraic effects, as well as the supporting distributed system architecture.
 
 ## Overview
 
