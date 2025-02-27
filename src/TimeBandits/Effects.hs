@@ -39,11 +39,18 @@ module TimeBandits.Effects (
     interpretAppEffects,
 
     -- * Error Types
-    TimelineError (..),
-    ResourceError (..),
-    ActorError (..),
-    CryptoError (..),
-    StorageError (..),
+    TimelineErrorType (..),
+    ResourceErrorType (..),
+    ActorErrorType (..),
+    CryptoErrorType (..),
+    StorageErrorType (..),
+
+    -- * Error Conversion Functions
+    asTimelineError,
+    asResourceError,
+    asActorError,
+    asCryptoError,
+    asStorageError,
 
     -- * Capability Typeclasses
     TimelineOps (..),
@@ -143,11 +150,13 @@ import Polysemy.Trace (Trace, trace, traceToStdout)
 import TimeBandits.Core (computeMessageHash, computeSha256)
 import TimeBandits.Types (
     Actor (..),
+    ActorErrorType (..),
     ActorHash,
     ActorType (..),
     AppError (..),
     AuthenticatedMessage (..),
     ContentAddressedMessage (..),
+    CryptoErrorType (..),
     EntityHash (..),
     EventContent (..),
     EventMetadata (..),
@@ -157,13 +166,16 @@ import TimeBandits.Types (
     PrivKey (..),
     PubKey (..),
     Resource (..),
+    ResourceErrorType (..),
     ResourceEvent (..),
     ResourceEventType (..),
     ResourceHash,
     ResourceLog,
     ResourceTransaction (..),
     Signature (..),
+    StorageErrorType (..),
     TimelineBlock (..),
+    TimelineErrorType (..),
     TimelineEventType (..),
     TimelineHash,
     TimelineLog (..),
@@ -177,58 +189,34 @@ import TimeBandits.Types (
 import TimeBandits.Types qualified as Types
 import Prelude hiding (trace)
 
--- | Timeline operations effect
-data TimelineOps m a where
-    CreateTimeline :: TimelineHash -> ActorHash -> TimelineOps m (Either TimelineError TimelineLog)
-    MergeTimelines :: TimelineHash -> TimelineHash -> TimelineOps m (Either TimelineError TimelineLog)
-    GetTimelineHistory :: TimelineHash -> TimelineOps m (Either TimelineError [LogEntry EventContent])
-    FinalizeEvents :: TimelineHash -> [LogEntry EventContent] -> TimelineOps m (Either TimelineError TimelineBlock)
-
--- | Timeline-specific errors
-data TimelineError
-    = TimelineNotFound TimelineHash
-    | TimelineAlreadyExists TimelineHash
-    | TimelineMergeConflict TimelineHash TimelineHash
-    | InvalidTimelineState Text
-    | UnauthorizedTimelineAccess ActorHash
-    deriving stock (Show, Eq)
-
--- | Resource-specific errors
-data ResourceError
-    = ResourceNotFound ResourceHash
-    | ResourceAlreadyExists ResourceHash
-    | UnauthorizedResourceAccess ActorHash
-    | InvalidResourceState Text
-    | ResourceAlreadySpent ResourceHash
-    deriving stock (Show, Eq)
-
--- | Actor-specific errors
-data ActorError
-    = ActorNotFound ActorHash
-    | ActorAlreadyExists ActorHash
-    | InvalidActorRole ActorType
-    | UnauthorizedActorOperation ActorHash
-    deriving stock (Show, Eq)
-
--- | Crypto-specific errors
-data CryptoError
-    = InvalidSignature
-    | InvalidKeyPair
-    | SigningError Text
-    deriving stock (Show, Eq)
-
--- | Storage-specific errors
-data StorageError
-    = ItemNotFound Hash
-    | StorageFailure Text
-    | ReplicationFailure Text
-    deriving stock (Show, Eq)
-
 -- | Logical clock for tracking causal ordering in timelines
 data LogicalClock m a where
     GetCurrentTime :: LogicalClock m LamportTime
     IncrementTime :: LogicalClock m LamportTime
     UpdateTime :: LamportTime -> LogicalClock m LamportTime
+
+-- | Timeline operations effect
+data TimelineOps m a where
+    CreateTimeline :: TimelineHash -> ActorHash -> TimelineOps m (Either TimelineErrorType TimelineLog)
+    MergeTimelines :: TimelineHash -> TimelineHash -> TimelineOps m (Either TimelineErrorType TimelineLog)
+    GetTimelineHistory :: TimelineHash -> TimelineOps m (Either TimelineErrorType [LogEntry EventContent])
+    FinalizeEvents :: TimelineHash -> [LogEntry EventContent] -> TimelineOps m (Either TimelineErrorType TimelineBlock)
+
+-- | Error conversion helper functions
+asTimelineError :: (Member (Error AppError) r) => TimelineErrorType -> Sem r a
+asTimelineError = throw . TimelineError
+
+asResourceError :: (Member (Error AppError) r) => ResourceErrorType -> Sem r a
+asResourceError = throw . ResourceError
+
+asActorError :: (Member (Error AppError) r) => ActorErrorType -> Sem r a
+asActorError = throw . ActorError
+
+asCryptoError :: (Member (Error AppError) r) => CryptoErrorType -> Sem r a
+asCryptoError = throw . CryptoError
+
+asStorageError :: (Member (Error AppError) r) => StorageErrorType -> Sem r a
+asStorageError = throw . StorageError
 
 -- | Resource transfer operation
 transferResourceOp :: (Member (Error AppError) r, Member LogicalClock r) => Resource -> ActorHash -> TimelineHash -> LamportTime -> [TimelineHash] -> Sem r (Either AppError (Resource, ResourceEvent))
@@ -295,17 +283,17 @@ data BanditSubscriptions m a where
 
 -- | Timeline management effect
 data TimelineManagement m a where
-    CreateNewTimeline :: TimelineHash -> ActorHash -> TimelineManagement m (Either TimelineError TimelineLog)
-    MergeTimelinesWith :: TimelineHash -> TimelineHash -> TimelineManagement m (Either TimelineError TimelineLog)
-    GetTimelineEvents :: TimelineHash -> TimelineManagement m (Either TimelineError [LogEntry EventContent])
-    FinalizeTimelineBlock :: TimelineHash -> [LogEntry EventContent] -> TimelineManagement m (Either TimelineError TimelineBlock)
+    CreateNewTimeline :: TimelineHash -> ActorHash -> TimelineManagement m (Either TimelineErrorType TimelineLog)
+    MergeTimelinesWith :: TimelineHash -> TimelineHash -> TimelineManagement m (Either TimelineErrorType TimelineLog)
+    GetTimelineEvents :: TimelineHash -> TimelineManagement m (Either TimelineErrorType [LogEntry EventContent])
+    FinalizeTimelineBlock :: TimelineHash -> [LogEntry EventContent] -> TimelineManagement m (Either TimelineErrorType TimelineBlock)
 
 -- | Event management effect
 data EventManagement m a where
-    RegisterTimelineEvent :: TimelineHash -> EventContent -> EventManagement m (Either TimelineError (LogEntry EventContent))
-    GetObjectEventHistory :: TimelineHash -> Hash -> EventManagement m (Either TimelineError [LogEntry EventContent])
-    GetEventsAfterMerkle :: TimelineHash -> Hash -> EventManagement m (Either TimelineError [LogEntry EventContent])
-    GetPendingEvents :: TimelineHash -> EventManagement m (Either TimelineError [LogEntry EventContent])
+    RegisterTimelineEvent :: TimelineHash -> EventContent -> EventManagement m (Either TimelineErrorType (LogEntry EventContent))
+    GetObjectEventHistory :: TimelineHash -> Hash -> EventManagement m (Either TimelineErrorType [LogEntry EventContent])
+    GetEventsAfterMerkle :: TimelineHash -> Hash -> EventManagement m (Either TimelineErrorType [LogEntry EventContent])
+    GetPendingEvents :: TimelineHash -> EventManagement m (Either TimelineErrorType [LogEntry EventContent])
 
 -- | Cryptographic operations effect
 data CryptoOperation m a where
@@ -388,7 +376,7 @@ convertToTimelineLog :: [LogEntry EventContent] -> Maybe [LogEntry TimelineEvent
 convertToTimelineLog = traverse (\entry -> (\evt -> entry{leContent = evt}) <$> convertToTimelineEvent (leContent entry))
 
 -- | Validate event sequence
-validateEventSequence :: (Member (Error TimelineError) r) => [LogEntry EventContent] -> Sem r ()
+validateEventSequence :: (Member (Error TimelineErrorType) r) => [LogEntry EventContent] -> Sem r ()
 validateEventSequence [] = pure ()
 validateEventSequence [_] = pure ()
 validateEventSequence (e1 : e2 : es) = do
@@ -398,7 +386,7 @@ validateEventSequence (e1 : e2 : es) = do
     validateEventSequence (e2 : es)
 
 -- | Validate event timestamps
-validateEventTimestamps :: (Member (Error TimelineError) r) => LamportTime -> [LogEntry EventContent] -> Sem r ()
+validateEventTimestamps :: (Member (Error TimelineErrorType) r) => LamportTime -> [LogEntry EventContent] -> Sem r ()
 validateEventTimestamps lastTime events = do
     forM_ events $ \event -> do
         when (emTimestamp (leMetadata event) <= lastTime) $
@@ -438,7 +426,7 @@ computeMerkleRoot events =
      in computeMerkleTreeRoot eventHashes
 
 -- | Validate events
-validateEvents :: (Member (Error TimelineError) r) => TimelineLog -> [LogEntry EventContent] -> Sem r ()
+validateEvents :: (Member (Error TimelineErrorType) r) => TimelineLog -> [LogEntry EventContent] -> Sem r ()
 validateEvents log events = do
     -- Check event sequence
     validateEventSequence events
@@ -484,7 +472,7 @@ storeTimelineLog th log = do
     pure ()
 
 -- | Validate that two timelines can be merged
-validateMerge :: (Member (Error TimelineError) r) => TimelineLog -> TimelineLog -> Sem r ()
+validateMerge :: (Member (Error TimelineErrorType) r) => TimelineLog -> TimelineLog -> Sem r ()
 validateMerge src dst = do
     -- Check for conflicts
     when (tlLastProcessedTime src > tlLastProcessedTime dst) $
@@ -493,11 +481,11 @@ validateMerge src dst = do
 
 -- | Create a new timeline
 createNewTimeline ::
-    ( Members '[LogicalClock, Error TimelineError, Output String, Embed IO] r
+    ( Members '[LogicalClock, Error TimelineErrorType, Output String, Embed IO] r
     ) =>
     TimelineHash ->
     ActorHash ->
-    Sem r (Either TimelineError TimelineLog)
+    Sem r (Either TimelineErrorType TimelineLog)
 createNewTimeline th actor = do
     output $ "Creating timeline: " <> show th
     timestamp <- send GetCurrentTime
@@ -511,11 +499,11 @@ createNewTimeline th actor = do
 
 -- | Merge two existing timelines
 mergeExistingTimelines ::
-    ( Members '[LogicalClock, Error TimelineError, Output String, Embed IO] r
+    ( Members '[LogicalClock, Error TimelineErrorType, Output String, Embed IO] r
     ) =>
     TimelineHash ->
     TimelineHash ->
-    Sem r (Either TimelineError TimelineLog)
+    Sem r (Either TimelineErrorType TimelineLog)
 mergeExistingTimelines src dst = do
     output $ "Merging timelines: " <> show src <> " -> " <> show dst
     srcLog <- getTimelineLog src ?!> TimelineNotFound src
@@ -528,10 +516,10 @@ mergeExistingTimelines src dst = do
 
 -- | Get timeline event history
 getTimelineEventHistory ::
-    ( Members '[Error TimelineError, Output String, Embed IO] r
+    ( Members '[Error TimelineErrorType, Output String, Embed IO] r
     ) =>
     TimelineHash ->
-    Sem r (Either TimelineError [LogEntry EventContent])
+    Sem r (Either TimelineErrorType [LogEntry EventContent])
 getTimelineEventHistory th = do
     output $ "Getting timeline history: " <> show th
     timelineLog <- getTimelineLog th ?!> TimelineNotFound th
@@ -541,11 +529,11 @@ getTimelineEventHistory th = do
 
 -- | Finalize timeline events into a block
 finalizeTimelineEvents ::
-    ( Members '[LogicalClock, Error TimelineError, Output String, Embed IO] r
+    ( Members '[LogicalClock, Error TimelineErrorType, Output String, Embed IO] r
     ) =>
     TimelineHash ->
     [LogEntry EventContent] ->
-    Sem r (Either TimelineError TimelineBlock)
+    Sem r (Either TimelineErrorType TimelineBlock)
 finalizeTimelineEvents th events = do
     output $ "Finalizing events for timeline: " <> show th
     timelineLog <- getTimelineLog th ?!> TimelineNotFound th
@@ -560,7 +548,7 @@ finalizeTimelineEvents th events = do
 
 -- | Convert events or throw an error
 convertEventsOrThrow ::
-    ( Member (Error TimelineError) r
+    ( Member (Error TimelineErrorType) r
     ) =>
     [LogEntry EventContent] ->
     Sem r [LogEntry TimelineEventType]
@@ -590,46 +578,46 @@ updateTimelineLog log merkleRoot timestamp =
 -- | Resource management capability
 class (Monad m) => ResourceOps m where
     -- | Allocate a new resource
-    allocateResource :: Resource -> ActorHash -> m (Either ResourceError ResourceHash)
+    allocateResource :: Resource -> ActorHash -> m (Either ResourceErrorType ResourceHash)
 
     -- | Transfer resource ownership
-    transferResource :: ResourceHash -> ActorHash -> ActorHash -> m (Either ResourceError Resource)
+    transferResource :: ResourceHash -> ActorHash -> ActorHash -> m (Either ResourceErrorType Resource)
 
     -- | Get resource history
-    getResourceHistory :: ResourceHash -> m (Either ResourceError ResourceLog)
+    getResourceHistory :: ResourceHash -> m (Either ResourceErrorType ResourceLog)
 
 -- | Actor management capability
 class (Monad m) => ActorOps m where
     -- | Register a new actor
-    registerActor :: ActorType -> PubKey -> m (Either ActorError Actor)
+    registerActor :: ActorType -> PubKey -> m (Either ActorErrorType Actor)
 
     -- | Update actor role
-    updateActorRole :: ActorHash -> ActorType -> m (Either ActorError Actor)
+    updateActorRole :: ActorHash -> ActorType -> m (Either ActorErrorType Actor)
 
     -- | Get actor history
-    getActorHistory :: ActorHash -> m (Either ActorError [LogEntry EventContent])
+    getActorHistory :: ActorHash -> m (Either ActorErrorType [LogEntry EventContent])
 
 -- | Cryptographic operations capability
 class (Monad m) => CryptoOps m where
     -- | Sign a message
-    signMessage :: PrivKey -> ByteString -> m (Either CryptoError Signature)
+    signMessage :: PrivKey -> ByteString -> m (Either CryptoErrorType Signature)
 
     -- | Verify a signature
-    verifySignature :: PubKey -> ByteString -> Signature -> m (Either CryptoError Bool)
+    verifySignature :: PubKey -> ByteString -> Signature -> m (Either CryptoErrorType Bool)
 
     -- | Generate a new key pair
-    generateKeyPair :: m (Either CryptoError (PubKey, PrivKey))
+    generateKeyPair :: m (Either CryptoErrorType (PubKey, PrivKey))
 
 -- | Storage operations capability
 class (Monad m) => StorageOps m where
     -- | Store an item
-    storeItem :: TransientStoredItem -> m (Either StorageError Hash)
+    storeItem :: TransientStoredItem -> m (Either StorageErrorType Hash)
 
     -- | Retrieve an item
-    retrieveItem :: Hash -> m (Either StorageError TransientStoredItem)
+    retrieveItem :: Hash -> m (Either StorageErrorType TransientStoredItem)
 
     -- | Delete an item
-    deleteItem :: Hash -> m (Either StorageError ())
+    deleteItem :: Hash -> m (Either StorageErrorType ())
 
 -- | Actor management effect
 data ActorManagement m a where
@@ -834,7 +822,7 @@ interpretCryptoOperation = interpret \case
 
 -- | Interpret event management
 interpretEventManagement ::
-    ( Members '[TimelineOps, LogicalClock, Error TimelineError, Output String] r
+    ( Members '[TimelineOps, LogicalClock, Error TimelineErrorType, Output String] r
     ) =>
     EventManagement m a ->
     Sem r a
@@ -870,7 +858,7 @@ interpretEventManagement = \case
         pure $ Right []
 
 -- | Interpret actor management operations
-interpretActorManagement :: (Members '[Error ActorError, Output String, Embed IO] r) => Sem (ActorManagement ': r) a -> Sem r a
+interpretActorManagement :: (Members '[Error ActorErrorType, Output String, Embed IO] r) => Sem (ActorManagement ': r) a -> Sem r a
 interpretActorManagement = interpret \case
     CreateActor actorType -> do
         output $ "Creating actor of type: " <> show actorType
@@ -905,7 +893,7 @@ semAuthenticateMessage msg = do
     result <- send $ VerifySignature (PubKey "TODO") content sig -- TODO: Get proper public key from actor
     if result
         then pure $ Right True
-        else pure $ Left Types.InvalidSignature
+        else pure $ Left (CryptoError InvalidSignatureError)
 
 -- | Interpret the transient storage effect
 interpretTransientStorage :: (Members '[Trace, Embed IO, Output String, Error AppError] r) => IORef TransientDatastore -> Sem (TransientStorage ': r) a -> Sem r a
@@ -919,7 +907,7 @@ interpretTransientStorage storeRef = interpret \case
         store <- liftIO $ readIORef storeRef
         let responsibleNodes = assignTimeBandits store key
         output $ "Retrieving item with key " ++ show key ++ " from nodes: " ++ show responsibleNodes
-        throw $ StorageError "Item retrieval not implemented"
+        throw $ StorageError (StorageFailure "Item retrieval not implemented")
     GetResponsibleNodes key -> do
         store <- liftIO $ readIORef storeRef
         pure $ assignTimeBandits store key
@@ -945,7 +933,7 @@ interpretBanditSubscriptions subsRef = interpret \case
 
 -- | Interpret timeline management using TimelineOps
 interpretTimelineManagement ::
-    ( Members '[TimelineOps, LogicalClock, Error TimelineError, Output String] r
+    ( Members '[TimelineOps, LogicalClock, Error TimelineErrorType, Output String] r
     ) =>
     TimelineManagement m a ->
     Sem r a
@@ -957,7 +945,7 @@ interpretTimelineManagement = \case
 
 -- | Interpret timeline operations
 interpretTimelineOps ::
-    ( Members '[LogicalClock, Error TimelineError, Output String, Embed IO] r
+    ( Members '[LogicalClock, Error TimelineErrorType, Output String, Embed IO] r
     ) =>
     Sem (TimelineOps ': r) a ->
     Sem r a

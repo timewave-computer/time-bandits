@@ -60,6 +60,11 @@ module TimeBandits.Types (
 
   -- * Core Data Types
   AppError (..),
+  TimelineErrorType (..),
+  ResourceErrorType (..),
+  ActorErrorType (..),
+  CryptoErrorType (..),
+  StorageErrorType (..),
   SystemConfig (..),
   defaultSystemConfig,
 
@@ -457,13 +462,54 @@ data EventMetadata = EventMetadata
 
 -- | Application errors
 data AppError
-  = AuthorizationError Text
-  | TimeoutError Text
-  | ResourceError Text
+  = TimelineError TimelineErrorType
+  | ResourceError ResourceErrorType
+  | ActorError ActorErrorType
+  | CryptoError CryptoErrorType
+  | StorageError StorageErrorType
   | NetworkError Text
-  | InvalidEd25519PrivateKey
-  | InvalidSignature
-  | StorageError Text
+  | AuthorizationError Text
+  | TimeoutError Text
+  deriving stock (Show, Eq)
+
+-- | Timeline-specific error types
+data TimelineErrorType
+  = TimelineNotFound TimelineHash
+  | TimelineAlreadyExists TimelineHash
+  | TimelineMergeConflict TimelineHash TimelineHash
+  | InvalidTimelineState Text
+  | UnauthorizedTimelineAccess ActorHash
+  deriving stock (Show, Eq)
+
+-- | Resource-specific error types
+data ResourceErrorType
+  = ResourceNotFound ResourceHash
+  | ResourceAlreadyExists ResourceHash
+  | UnauthorizedResourceAccess ActorHash
+  | InvalidResourceState Text
+  | ResourceAlreadySpent ResourceHash
+  deriving stock (Show, Eq)
+
+-- | Actor-specific error types
+data ActorErrorType
+  = ActorNotFound ActorHash
+  | ActorAlreadyExists ActorHash
+  | InvalidActorRole ActorType
+  | UnauthorizedActorOperation ActorHash
+  deriving stock (Show, Eq)
+
+-- | Crypto-specific error types
+data CryptoErrorType
+  = InvalidSignatureError
+  | InvalidKeyPairError
+  | SigningError Text
+  deriving stock (Show, Eq)
+
+-- | Storage-specific error types
+data StorageErrorType
+  = ItemNotFound Hash
+  | StorageFailure Text
+  | ReplicationFailure Text
   deriving stock (Show, Eq)
 
 -- | A resource transaction that consumes and creates resources
