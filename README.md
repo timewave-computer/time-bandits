@@ -6,7 +6,7 @@ Time Bandits is a distributed system for coordinating resources across different
 Naming is in reference to the 1981 Terry Gilliam film, [Time Bandits](https://en.wikipedia.org/wiki/Time_Bandits).
 The system allows "time travellers" to write distributed programs that interact with multiple timelines at once.
 
-This is a protoype for working through various ideas about how to write a secure distribtued programming language as the composition algebraic effects, along with the supporting P2P architecture.
+This is a protoype for working through various ideas about how to write a secure distribtued programming language as the composition of algebraic effects, along with the supporting P2P architecture.
 
 ## Overview
 
