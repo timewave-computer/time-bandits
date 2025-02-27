@@ -33,7 +33,7 @@ This is a protoype for working through various ideas about how to write a secure
 ### Sharded On-chain Storage
 - Each timeline maintains its own event trie, updated by Time Bandits
 - All events are hash linked and content addressed
-- "Map of Time registers actors, resources, and programs
+- "Map of Time" registers actors, resources, and programs
 
 ### Resource Management
 - UTXO-like resource system
