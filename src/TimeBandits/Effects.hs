@@ -203,23 +203,23 @@ data TimelineOps m a where
     FinalizeEvents :: TimelineHash -> [LogEntry EventContent] -> TimelineOps m (Either TimelineErrorType TimelineBlock)
 
 -- | Error conversion helper functions
-asTimelineError :: (Member (Error AppError) r) => TimelineErrorType -> Sem r a
+asTimelineError :: (Members '[Error AppError] r) => TimelineErrorType -> Sem r a
 asTimelineError = throw . TimelineError
 
-asResourceError :: (Member (Error AppError) r) => ResourceErrorType -> Sem r a
+asResourceError :: (Members '[Error AppError] r) => ResourceErrorType -> Sem r a
 asResourceError = throw . ResourceError
 
-asActorError :: (Member (Error AppError) r) => ActorErrorType -> Sem r a
+asActorError :: (Members '[Error AppError] r) => ActorErrorType -> Sem r a
 asActorError = throw . ActorError
 
-asCryptoError :: (Member (Error AppError) r) => CryptoErrorType -> Sem r a
+asCryptoError :: (Members '[Error AppError] r) => CryptoErrorType -> Sem r a
 asCryptoError = throw . CryptoError
 
-asStorageError :: (Member (Error AppError) r) => StorageErrorType -> Sem r a
+asStorageError :: (Members '[Error AppError] r) => StorageErrorType -> Sem r a
 asStorageError = throw . StorageError
 
 -- | Resource transfer operation
-transferResourceOp :: (Member (Error AppError) r, Member LogicalClock r) => Resource -> ActorHash -> TimelineHash -> LamportTime -> [TimelineHash] -> Sem r (Either AppError (Resource, ResourceEvent))
+transferResourceOp :: (Members '[Error AppError, LogicalClock] r) => Resource -> ActorHash -> TimelineHash -> LamportTime -> [TimelineHash] -> Sem r (Either AppError (Resource, ResourceEvent))
 transferResourceOp resource newOwner destTimeline timestamp provChain = do
     let updatedResource = resource{resourceOwner = newOwner}
         event =
@@ -350,7 +350,7 @@ emptyTrie :: Trie a
 emptyTrie = Trie Map.empty
 
 -- | Operator for Maybe to Either conversion with error
-(?!>) :: (Member (Error e) r) => Sem r (Maybe a) -> e -> Sem r a
+(?!>) :: (Members '[Error e] r) => Sem r (Maybe a) -> e -> Sem r a
 maybeVal ?!> err = do
     val <- maybeVal
     case val of
@@ -376,7 +376,7 @@ convertToTimelineLog :: [LogEntry EventContent] -> Maybe [LogEntry TimelineEvent
 convertToTimelineLog = traverse (\entry -> (\evt -> entry{leContent = evt}) <$> convertToTimelineEvent (leContent entry))
 
 -- | Validate event sequence
-validateEventSequence :: (Member (Error TimelineErrorType) r) => [LogEntry EventContent] -> Sem r ()
+validateEventSequence :: (Members '[Error TimelineErrorType] r) => [LogEntry EventContent] -> Sem r ()
 validateEventSequence [] = pure ()
 validateEventSequence [_] = pure ()
 validateEventSequence (e1 : e2 : es) = do
@@ -386,7 +386,7 @@ validateEventSequence (e1 : e2 : es) = do
     validateEventSequence (e2 : es)
 
 -- | Validate event timestamps
-validateEventTimestamps :: (Member (Error TimelineErrorType) r) => LamportTime -> [LogEntry EventContent] -> Sem r ()
+validateEventTimestamps :: (Members '[Error TimelineErrorType] r) => LamportTime -> [LogEntry EventContent] -> Sem r ()
 validateEventTimestamps lastTime events = do
     forM_ events $ \event -> do
         when (emTimestamp (leMetadata event) <= lastTime) $
@@ -426,7 +426,7 @@ computeMerkleRoot events =
      in computeMerkleTreeRoot eventHashes
 
 -- | Validate events
-validateEvents :: (Member (Error TimelineErrorType) r) => TimelineLog -> [LogEntry EventContent] -> Sem r ()
+validateEvents :: (Members '[Error TimelineErrorType] r) => TimelineLog -> [LogEntry EventContent] -> Sem r ()
 validateEvents log events = do
     -- Check event sequence
     validateEventSequence events
@@ -443,13 +443,13 @@ mergeLogs timestamp src dst =
         }
 
 -- | Check if a timeline exists
-checkTimelineExists :: (Member (Embed IO) r) => TimelineHash -> Sem r Bool
+checkTimelineExists :: (Members '[Embed IO] r) => TimelineHash -> Sem r Bool
 checkTimelineExists th = do
     -- TODO: Implement actual storage check
     pure False
 
 -- | Get a timeline log from storage
-getTimelineLog :: (Member (Embed IO) r) => TimelineHash -> Sem r (Maybe TimelineLog)
+getTimelineLog :: (Members '[Embed IO] r) => TimelineHash -> Sem r (Maybe TimelineLog)
 getTimelineLog th = do
     -- TODO: Implement actual storage retrieval
     pure Nothing
@@ -466,13 +466,13 @@ initializeTimelineLog th time actor =
         }
 
 -- | Store a timeline log
-storeTimelineLog :: (Member (Embed IO) r) => TimelineHash -> TimelineLog -> Sem r ()
+storeTimelineLog :: (Members '[Embed IO] r) => TimelineHash -> TimelineLog -> Sem r ()
 storeTimelineLog th log = do
     -- TODO: Implement actual storage
     pure ()
 
 -- | Validate that two timelines can be merged
-validateMerge :: (Member (Error TimelineErrorType) r) => TimelineLog -> TimelineLog -> Sem r ()
+validateMerge :: (Members '[Error TimelineErrorType] r) => TimelineLog -> TimelineLog -> Sem r ()
 validateMerge src dst = do
     -- Check for conflicts
     when (tlLastProcessedTime src > tlLastProcessedTime dst) $
@@ -629,15 +629,15 @@ data ActorManagement m a where
 makeSem ''ActorManagement
 
 -- | Handle logging operations
-handleLogging :: (Member (Output String) r) => String -> Sem r ()
+handleLogging :: (Members '[Output String] r) => String -> Sem r ()
 handleLogging = output
 
 -- | Handle error operations
-handleErrors :: (Member (Error AppError) r) => AppError -> Sem r a
+handleErrors :: (Members '[Error AppError] r) => AppError -> Sem r a
 handleErrors = throw
 
 -- | Handle cryptographic operations
-handleCryptoOp :: (Member CryptoOperation r) => CryptoOperation (Sem r) a -> Sem r a
+handleCryptoOp :: (Members '[CryptoOperation] r) => CryptoOperation (Sem r) a -> Sem r a
 handleCryptoOp = send
 
 -- | Handle hop step operations
@@ -716,21 +716,21 @@ interpretLogicalClock timeRef = interpret \case
              in (maxTime, maxTime)
 
 -- | Interpret the atomic transaction effect
-interpretAtomicTransaction :: (Member (Output String) r) => Sem (AtomicTransaction ': r) a -> Sem r a
-interpretAtomicTransaction = interpret $ \case
+interpretAtomicTransaction :: (Members '[Output String] r) => Sem (AtomicTransaction ': r) a -> Sem r a
+interpretAtomicTransaction = interpret \case
     BeginTransaction -> output "Transaction begun"
     CommitTransaction -> output "Transaction committed"
     RollbackTransaction -> output "Transaction rolled back"
 
 -- | Interpret the timeout effect
-interpretTimeout :: (Member (Output String) r) => Sem (Timeout ': r) a -> Sem r a
-interpretTimeout = interpret $ \case
+interpretTimeout :: (Members '[Output String] r) => Sem (Timeout ': r) a -> Sem r a
+interpretTimeout = interpret \case
     ScheduleTimeout t -> output $ "Timeout scheduled for: " ++ show t
     CancelTimeout t -> output $ "Timeout cancelled for: " ++ show t
 
 -- | Interpret the timeline proof effect
-interpretTimelineProof :: (Member (Output String) r, Member (Error AppError) r) => Sem (TimelineProof ': r) a -> Sem r a
-interpretTimelineProof = interpret $ \case
+interpretTimelineProof :: (Members '[Output String, Error AppError] r) => Sem (TimelineProof ': r) a -> Sem r a
+interpretTimelineProof = interpret \case
     GenerateProof h -> do
         output $ "Generating proof for hash: " ++ show h
         pure h -- TODO: Implement actual proof generation
@@ -739,8 +739,8 @@ interpretTimelineProof = interpret $ \case
         pure True -- TODO: Implement actual proof verification
 
 -- | Interpret the timeline messaging effect
-interpretTimelineMessage :: (Member (Output String) r, Member (Error AppError) r) => Sem (TimelineMessage ': r) a -> Sem r a
-interpretTimelineMessage = interpret $ \case
+interpretTimelineMessage :: (Members '[Output String, Error AppError] r) => Sem (TimelineMessage ': r) a -> Sem r a
+interpretTimelineMessage = interpret \case
     SendAuthenticatedMessage msg -> do
         output $ "Sending authenticated message to: " ++ maybe "broadcast" show (amDestination msg)
     -- TODO: Implement actual network sending
@@ -824,9 +824,9 @@ interpretCryptoOperation = interpret \case
 interpretEventManagement ::
     ( Members '[TimelineOps, LogicalClock, Error TimelineErrorType, Output String] r
     ) =>
-    EventManagement m a ->
+    Sem (EventManagement ': r) a ->
     Sem r a
-interpretEventManagement = \case
+interpretEventManagement = interpret \case
     RegisterTimelineEvent th event -> do
         output $ "Registering event for timeline: " <> show th
         timestamp <- send GetCurrentTime
@@ -935,9 +935,9 @@ interpretBanditSubscriptions subsRef = interpret \case
 interpretTimelineManagement ::
     ( Members '[TimelineOps, LogicalClock, Error TimelineErrorType, Output String] r
     ) =>
-    TimelineManagement m a ->
+    Sem (TimelineManagement ': r) a ->
     Sem r a
-interpretTimelineManagement = \case
+interpretTimelineManagement = interpret \case
     CreateNewTimeline th actor -> send $ CreateTimeline th actor
     MergeTimelinesWith src dst -> send $ MergeTimelines src dst
     GetTimelineEvents th -> send $ GetTimelineHistory th
