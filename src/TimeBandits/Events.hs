@@ -27,6 +27,9 @@ module TimeBandits.Events (
   EventValidator (..),
   EventStore (..),
   EventLogger (..),
+  Message (..),
+  MessageProcessor (..),
+  MessageValidator (..),
 
   -- * Event Types
   EventMetadata (..),
@@ -35,13 +38,26 @@ module TimeBandits.Events (
   EventError (..),
   LogEntry (..),
 
+  -- * Message Types
+  MessageResult (..),
+  MessageError (..),
+
   -- * Event Processing
   processEvent,
+
+  -- * Message Processing
+  processMessage,
+  messageToEvent,
+  eventToMessage,
 
   -- * Event Utilities
   createEventMetadata,
   verifyEventSignature,
   createLogEntry,
+
+  -- * Message Utilities
+  createAuthenticatedMessage,
+  verifyMessageSignature,
 ) where
 
 import Data.ByteString ()
@@ -69,7 +85,13 @@ import TimeBandits.Core (
   computeMessageHash,
   signMessage,
  )
-import TimeBandits.Types qualified as Core (verifySignature)
+import TimeBandits.Types qualified as Core (
+  Actor (..),
+  AuthenticatedMessage (..),
+  ContentAddressedMessage (..),
+  Signature (..),
+  verifySignature,
+ )
 
 -- | Core type class for events in the system
 class (Serialize e) => Event e where
@@ -319,3 +341,159 @@ instance EventLogger TimelineEvent where
   getActorLog _ _ = pure [] -- Timelines don't have actor logs
   getResourceLog _ _ = pure [] -- Timelines don't have resource logs
   appendToTimeline _ _ _ = pure () -- TODO: Implement
+
+-- | Core type class for messages in the system
+class (Serialize m) => Message m where
+  -- | Get the content hash of the message
+  messageHash :: m -> Hash
+  messageHash = computeMessageHash
+
+  -- | Get the sender of the message
+  messageSender :: m -> Core.Actor
+
+  -- | Get the destination of the message (if any)
+  messageDestination :: m -> Maybe ActorHash
+
+  -- | Get the message signature
+  messageSignature :: m -> Core.Signature
+
+  -- | Get the message content
+  messageContent :: m -> ByteString
+
+  -- | Convert message to event content (if applicable)
+  toEvent :: m -> Maybe EventContent
+
+  -- | Verify the message's signature
+  verifyMessageSignature :: m -> Bool
+
+-- | Type class for message processors
+class MessageProcessor m where
+  -- | Process a message and return a result
+  processMsg :: (Member (Error MessageError) r) => m -> Sem r (MessageResult m)
+
+  -- | Handle message delivery failure
+  handleDeliveryFailure :: (Member (Error MessageError) r) => m -> MessageError -> Sem r ()
+
+-- | Type class for message validators
+class MessageValidator m where
+  -- | Validate a message before processing
+  validateMessage :: m -> ValidationResult
+
+  -- | Check if a message can be delivered to its destination
+  canDeliver :: m -> Bool
+
+-- | Result of message processing
+data MessageResult m
+  = -- | Message processed successfully
+    MessageSuccess m
+  | -- | Message processing deferred
+    MessageDeferred m
+  | -- | Message processing failed
+    MessageFailed MessageError
+  deriving stock (Show, Eq)
+
+-- | Errors that can occur during message handling
+data MessageError
+  = -- | Message failed validation
+    MessageValidationError Text
+  | -- | Error during processing
+    MessageProcessingError Text
+  | -- | Invalid signature
+    MessageSignatureError Text
+  | -- | Delivery error
+    DeliveryError Text
+  | -- | Conversion error
+    ConversionError Text
+  deriving stock (Show, Eq)
+
+-- | Process a message through validation, execution, and potential conversion to event
+processMessage ::
+  ( Message m
+  , MessageProcessor m
+  , MessageValidator m
+  , Member (Error MessageError) r
+  ) =>
+  m ->
+  Sem r (MessageResult m)
+processMessage msg = do
+  -- Validate the message
+  case validateMessage msg of
+    Valid -> do
+      -- Verify signature
+      if verifyMessageSignature msg
+        then do
+          -- Process the message
+          processMsg msg
+        else pure $ MessageFailed (MessageSignatureError "Invalid message signature")
+    Invalid reason ->
+      pure $ MessageFailed (MessageValidationError reason)
+    MissingDependency reason ->
+      pure $ MessageDeferred msg
+
+-- | Convert a message to an event if possible
+messageToEvent ::
+  ( Message m
+  , Member (Error MessageError) r
+  ) =>
+  m ->
+  Sem r (Maybe EventContent)
+messageToEvent msg =
+  case toEvent msg of
+    Just event -> pure $ Just event
+    Nothing -> throw $ ConversionError "Cannot convert message to event"
+
+-- | Convert an event to a message
+eventToMessage ::
+  ( Event e
+  , Member (Error EventError) r
+  ) =>
+  e ->
+  PrivKey ->
+  Maybe ActorHash ->
+  Sem r (Core.AuthenticatedMessage ByteString)
+eventToMessage event privKey destination = do
+  let content = encode $ toEventContent event
+      actor = Core.Actor (EntityHash $ Hash "TODO") undefined -- TODO: Get proper actor
+  case signMessage privKey content of
+    Left err -> throw $ SignatureError "Failed to sign event as message"
+    Right signature -> do
+      let msgHash = computeMessageHash content
+          payload = Core.ContentAddressedMessage msgHash content
+      pure $ Core.AuthenticatedMessage msgHash actor destination payload signature
+
+-- | Create an authenticated message
+createAuthenticatedMessage ::
+  ( Member (Error MessageError) r
+  ) =>
+  ByteString ->
+  PrivKey ->
+  Core.Actor ->
+  Maybe ActorHash ->
+  Sem r (Core.AuthenticatedMessage ByteString)
+createAuthenticatedMessage content privKey sender destination =
+  case signMessage privKey content of
+    Left err -> throw $ MessageSignatureError "Failed to sign message"
+    Right signature -> do
+      let msgHash = computeMessageHash content
+          payload = Core.ContentAddressedMessage msgHash content
+      pure $ Core.AuthenticatedMessage msgHash sender destination payload signature
+
+-- | Instance for AuthenticatedMessage
+instance Message (Core.AuthenticatedMessage ByteString) where
+  messageSender = Core.amSender
+  messageDestination = Core.amDestination
+  messageSignature = Core.amSignature
+  messageContent = Core.camContent . Core.amPayload
+  messageHash = Core.amHash
+
+  toEvent msg =
+    -- Try to decode the message content as an EventContent
+    -- This is a simplified implementation
+    Nothing -- TODO: Implement proper conversion
+
+  verifyMessageSignature msg =
+    let content = Core.camContent $ Core.amPayload msg
+        sig = Core.amSignature msg
+        -- TODO: Get proper public key from sender
+        pubKey = PubKey "TODO"
+     in Core.verifySignature pubKey content sig
