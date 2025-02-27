@@ -75,10 +75,6 @@ module TimeBandits.Effects (
     interpretTransientStorage,
     interpretBanditSubscriptions,
 
-    -- * Effect Functions
-    verifySignature,
-    generateKeyPair,
-
     -- * Message Effect Functions
     semCreateMessage,
     semAuthenticateMessage,
@@ -127,19 +123,18 @@ module TimeBandits.Effects (
 ) where
 
 import Control.Monad ()
-import Crypto.Error (CryptoFailable (..))
+import Crypto.Error ()
 import Crypto.Hash.SHA256 qualified as SHA256
-import Crypto.PubKey.Ed25519 qualified as Ed25519
-import Data.ByteArray (convert)
+import Crypto.PubKey.Ed25519 ()
+import Data.ByteArray ()
 import Data.ByteString ()
-import Data.ByteString.Builder (byteString, toLazyByteString)
-import Data.ByteString.Lazy qualified as LBS
-import Data.IORef (atomicModifyIORef', writeIORef)
-import Data.List (sortBy, union)
+import Data.ByteString.Builder ()
+import Data.IORef ()
+import Data.List (union)
 import Data.Map.Strict qualified as Map
 import Data.Maybe ()
 import Data.Ord ()
-import Data.Serialize (Serialize, encode)
+import Data.Serialize (encode)
 import Data.Text ()
 import Polysemy (Embed, Member, Members, Sem, interpret, makeSem, runM, send)
 import Polysemy.Error (Error, runError, throw)
@@ -148,7 +143,6 @@ import Polysemy.Trace (Trace, trace, traceToStdout)
 import TimeBandits.Core (computeMessageHash, computeSha256)
 import TimeBandits.Types (
     Actor (..),
-    ActorEventType (..),
     ActorHash,
     ActorType (..),
     AppError (..),
@@ -159,20 +153,16 @@ import TimeBandits.Types (
     EventMetadata (..),
     Hash (..),
     LamportTime (..),
-    Log (..),
     LogEntry (..),
-    MapOfTime (..),
     PrivKey (..),
     PubKey (..),
     Resource (..),
-    ResourceCapability (..),
     ResourceEvent (..),
     ResourceEventType (..),
     ResourceHash,
     ResourceLog,
     ResourceTransaction (..),
     Signature (..),
-    SystemConfig (..),
     TimelineBlock (..),
     TimelineEventType (..),
     TimelineHash,
@@ -182,12 +172,10 @@ import TimeBandits.Types (
     Trie (..),
     elemsTrie,
     emTimestamp,
-    fromListTrie,
-    insertTrie,
     resourceId,
  )
 import TimeBandits.Types qualified as Types
-import Prelude hiding (atomicModifyIORef', trace, writeIORef)
+import Prelude hiding (trace)
 
 -- | Timeline operations effect
 data TimelineOps m a where
@@ -203,7 +191,7 @@ data TimelineError
     | TimelineMergeConflict TimelineHash TimelineHash
     | InvalidTimelineState Text
     | UnauthorizedTimelineAccess ActorHash
-    deriving (Show, Eq)
+    deriving stock (Show, Eq)
 
 -- | Resource-specific errors
 data ResourceError
@@ -212,7 +200,7 @@ data ResourceError
     | UnauthorizedResourceAccess ActorHash
     | InvalidResourceState Text
     | ResourceAlreadySpent ResourceHash
-    deriving (Show, Eq)
+    deriving stock (Show, Eq)
 
 -- | Actor-specific errors
 data ActorError
@@ -220,21 +208,21 @@ data ActorError
     | ActorAlreadyExists ActorHash
     | InvalidActorRole ActorType
     | UnauthorizedActorOperation ActorHash
-    deriving (Show, Eq)
+    deriving stock (Show, Eq)
 
 -- | Crypto-specific errors
 data CryptoError
     = InvalidSignature
     | InvalidKeyPair
     | SigningError Text
-    deriving (Show, Eq)
+    deriving stock (Show, Eq)
 
 -- | Storage-specific errors
 data StorageError
     = ItemNotFound Hash
     | StorageFailure Text
     | ReplicationFailure Text
-    deriving (Show, Eq)
+    deriving stock (Show, Eq)
 
 -- | Logical clock for tracking causal ordering in timelines
 data LogicalClock m a where
@@ -383,7 +371,7 @@ maybeVal ?!> err = do
 
 -- | Sort events by timestamp
 sortEventsByTimestamp :: [LogEntry a] -> [LogEntry a]
-sortEventsByTimestamp = sortBy (comparing (emTimestamp . leMetadata))
+sortEventsByTimestamp = sortWith (emTimestamp . leMetadata)
 
 -- | Convert between event types
 convertEventType :: TimelineEventType -> EventContent
