@@ -52,12 +52,6 @@ module TimeBandits.Effects (
     asCryptoError,
     asStorageError,
 
-    -- * Capability Typeclasses
-    ResourceOps (..),
-    ActorOps (..),
-    CryptoOps (..),
-    StorageOps (..),
-
     -- * Effects
     LogicalClock (..),
     AtomicTransaction (..),
@@ -88,10 +82,6 @@ module TimeBandits.Effects (
     semAuthenticateMessage,
 
     -- * Helper Functions
-    handleLogging,
-    handleErrors,
-    handleCryptoOp,
-    handleHopStep,
     emptyTrie,
     (?!>),
     assignTimeBandits,
@@ -568,50 +558,6 @@ updateTimelineLog log merkleRoot timestamp =
         , tlLastProcessedTime = timestamp
         }
 
--- | Resource management capability
-class (Monad m) => ResourceOps m where
-    -- | Allocate a new resource
-    allocateResource :: Resource -> ActorHash -> m (Either ResourceErrorType ResourceHash)
-
-    -- | Transfer resource ownership
-    transferResource :: ResourceHash -> ActorHash -> ActorHash -> m (Either ResourceErrorType Resource)
-
-    -- | Get resource history
-    getResourceHistory :: ResourceHash -> m (Either ResourceErrorType ResourceLog)
-
--- | Actor management capability
-class (Monad m) => ActorOps m where
-    -- | Register a new actor
-    registerActor :: ActorType -> PubKey -> m (Either ActorErrorType Actor)
-
-    -- | Update actor role
-    updateActorRole :: ActorHash -> ActorType -> m (Either ActorErrorType Actor)
-
-    -- | Get actor history
-    getActorHistory :: ActorHash -> m (Either ActorErrorType [LogEntry EventContent])
-
--- | Cryptographic operations capability
-class (Monad m) => CryptoOps m where
-    -- | Sign a message
-    signMessage :: PrivKey -> ByteString -> m (Either CryptoErrorType Signature)
-
-    -- | Verify a signature
-    verifySignature :: PubKey -> ByteString -> Signature -> m (Either CryptoErrorType Bool)
-
-    -- | Generate a new key pair
-    generateKeyPair :: m (Either CryptoErrorType (PubKey, PrivKey))
-
--- | Storage operations capability
-class (Monad m) => StorageOps m where
-    -- | Store an item
-    storeItem :: TransientStoredItem -> m (Either StorageErrorType Hash)
-
-    -- | Retrieve an item
-    retrieveItem :: Hash -> m (Either StorageErrorType TransientStoredItem)
-
-    -- | Delete an item
-    deleteItem :: Hash -> m (Either StorageErrorType ())
-
 -- | Actor management effect
 data ActorManagement m a where
     CreateActor :: ActorType -> ActorManagement m Actor
@@ -620,24 +566,6 @@ data ActorManagement m a where
     DeleteActor :: ActorHash -> ActorManagement m ()
 
 makeSem ''ActorManagement
-
--- | Handle logging operations
-handleLogging :: (Members '[Output String] r) => String -> Sem r ()
-handleLogging = output
-
--- | Handle error operations
-handleErrors :: (Members '[Error AppError] r) => AppError -> Sem r a
-handleErrors = throw
-
--- | Handle cryptographic operations
-handleCryptoOp :: (Members '[CryptoOperation] r) => CryptoOperation (Sem r) a -> Sem r a
-handleCryptoOp = send
-
--- | Handle hop step operations
-handleHopStep :: (Members '[LogicalClock, Error AppError] r) => Sem r a -> Sem r a
-handleHopStep action = do
-    _ <- send IncrementTime
-    action
 
 -- | Assign time bandits for a key
 assignTimeBandits :: TransientDatastore -> ByteString -> [Actor]
