@@ -23,13 +23,8 @@ It defines:
 module TimeBandits.Events (
   -- * Type Classes
   Event (..),
-  EventProcessor (..),
-  EventValidator (..),
-  EventStore (..),
   EventLogger (..),
   Message (..),
-  MessageProcessor (..),
-  MessageValidator (..),
 
   -- * Event Types
   EventMetadata (..),
@@ -41,14 +36,6 @@ module TimeBandits.Events (
   -- * Message Types
   MessageResult (..),
   MessageError (..),
-
-  -- * Event Processing
-  processEvent,
-
-  -- * Message Processing
-  processMessage,
-  messageToEvent,
-  eventToMessage,
 
   -- * Event Utilities
   createEventMetadata,
@@ -121,33 +108,6 @@ class (Serialize e) => Event e where
 rootTimelineHash :: TimelineHash
 rootTimelineHash = EntityHash $ Hash "root-timeline"
 
--- | Type class for event processors
-class EventProcessor e where
-  -- | Process an event and return a result
-  process :: (Member (Error EventError) r) => e -> Sem r (EventResult e)
-
-  -- | Roll back an event's effects
-  rollback :: (Member (Error EventError) r) => e -> Sem r ()
-
--- | Type class for event validators
-class EventValidator e where
-  -- | Validate an event before processing
-  validate :: e -> ValidationResult
-
-  -- | Check if an event can be applied to the current state
-  canApply :: e -> Bool
-
--- | Type class for event storage
-class EventStore e where
-  -- | Store an event
-  store :: (Member (Error EventError) r) => e -> Sem r ()
-
-  -- | Retrieve an event by its hash
-  retrieve :: (Member (Error EventError) r) => EntityHash e -> Sem r (Maybe e)
-
-  -- | Get all events in a timeline
-  getTimelineEvents :: (Member (Error EventError) r) => TimelineHash -> Sem r [e]
-
 -- | Type class for event logging
 class EventLogger e where
   -- | Create a log entry from an event
@@ -198,41 +158,6 @@ data EventError
   | -- | Missing or invalid dependency
     DependencyError Text
   deriving stock (Show, Eq)
-
--- | Process an event through validation, execution, storage, and logging
-processEvent ::
-  ( Event e
-  , EventProcessor e
-  , EventValidator e
-  , EventStore e
-  , EventLogger e
-  , Member (Error EventError) r
-  ) =>
-  e ->
-  Sem r (EventResult e)
-processEvent event = do
-  -- Validate the event
-  case validate event of
-    Valid -> do
-      -- Verify signature
-      if verifySignature event
-        then do
-          -- Process the event
-          result <- process event
-          case result of
-            Success e -> do
-              -- Store the event
-              store e
-              -- Create and store log entry
-              let logEntry = toLogEntry e
-              appendToTimeline e (eventTimeline e) logEntry
-              pure result
-            _ -> pure result
-        else pure $ Failed (SignatureError "Invalid event signature")
-    Invalid reason ->
-      pure $ Failed (ValidationError reason)
-    MissingDependency _ ->
-      pure $ Deferred event
 
 -- | Create event metadata with current time and signature
 createEventMetadata ::
@@ -366,22 +291,6 @@ class (Serialize m) => Message m where
   -- | Verify the message's signature
   verifyMessageSignature :: m -> Bool
 
--- | Type class for message processors
-class MessageProcessor m where
-  -- | Process a message and return a result
-  processMsg :: (Member (Error MessageError) r) => m -> Sem r (MessageResult m)
-
-  -- | Handle message delivery failure
-  handleDeliveryFailure :: (Member (Error MessageError) r) => m -> MessageError -> Sem r ()
-
--- | Type class for message validators
-class MessageValidator m where
-  -- | Validate a message before processing
-  validateMessage :: m -> ValidationResult
-
-  -- | Check if a message can be delivered to its destination
-  canDeliver :: m -> Bool
-
 -- | Result of message processing
 data MessageResult m
   = -- | Message processed successfully
@@ -405,61 +314,6 @@ data MessageError
   | -- | Conversion error
     ConversionError Text
   deriving stock (Show, Eq)
-
--- | Process a message through validation, execution, and potential conversion to event
-processMessage ::
-  ( Message m
-  , MessageProcessor m
-  , MessageValidator m
-  , Member (Error MessageError) r
-  ) =>
-  m ->
-  Sem r (MessageResult m)
-processMessage msg = do
-  -- Validate the message
-  case validateMessage msg of
-    Valid -> do
-      -- Verify signature
-      if verifyMessageSignature msg
-        then do
-          -- Process the message
-          processMsg msg
-        else pure $ MessageFailed (MessageSignatureError "Invalid message signature")
-    Invalid reason ->
-      pure $ MessageFailed (MessageValidationError reason)
-    MissingDependency reason ->
-      pure $ MessageDeferred msg
-
--- | Convert a message to an event if possible
-messageToEvent ::
-  ( Message m
-  , Member (Error MessageError) r
-  ) =>
-  m ->
-  Sem r (Maybe EventContent)
-messageToEvent msg =
-  case toEvent msg of
-    Just event -> pure $ Just event
-    Nothing -> throw $ ConversionError "Cannot convert message to event"
-
--- | Convert an event to a message
-eventToMessage ::
-  ( Event e
-  , Member (Error EventError) r
-  ) =>
-  e ->
-  PrivKey ->
-  Maybe ActorHash ->
-  Sem r (Core.AuthenticatedMessage ByteString)
-eventToMessage event privKey destination = do
-  let content = encode $ toEventContent event
-      actor = Core.Actor (EntityHash $ Hash "TODO") undefined -- TODO: Get proper actor
-  case signMessage privKey content of
-    Left err -> throw $ SignatureError "Failed to sign event as message"
-    Right signature -> do
-      let msgHash = computeMessageHash content
-          payload = Core.ContentAddressedMessage msgHash content
-      pure $ Core.AuthenticatedMessage msgHash actor destination payload signature
 
 -- | Create an authenticated message
 createAuthenticatedMessage ::
