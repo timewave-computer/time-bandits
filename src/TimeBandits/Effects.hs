@@ -122,11 +122,9 @@ module TimeBandits.Effects (
 
     -- * Timeline Management
     TimelineManagement (..),
-    interpretTimelineManagement,
 
     -- * Event Management
     EventManagement (..),
-    interpretEventManagement,
 ) where
 
 import Control.Monad ()
@@ -148,6 +146,7 @@ import Polysemy.Error (Error, runError, throw)
 import Polysemy.Output (Output, output, runOutputList)
 import Polysemy.Trace (Trace, trace, traceToStdout)
 import TimeBandits.Core (computeMessageHash, computeSha256)
+import TimeBandits.Events hiding (StorageError, getTimelineLog)
 import TimeBandits.Types (
     Actor (..),
     ActorErrorType (..),
@@ -256,9 +255,11 @@ data TimelineProof m a where
 
 -- | Timeline-specific messaging and communication
 data TimelineMessage m a where
-    SendAuthenticatedMessage :: AuthenticatedMessage ByteString -> TimelineMessage m ()
-    BroadcastAuthenticatedMessage :: AuthenticatedMessage ByteString -> TimelineMessage m ()
-    ReceiveAuthenticatedMessage :: TimelineMessage m (AuthenticatedMessage ByteString)
+    SendMessage :: (Message msg) => msg -> TimelineMessage m ()
+    BroadcastMessage :: (Message msg) => msg -> TimelineMessage m ()
+    ReceiveMessage :: TimelineMessage m (AuthenticatedMessage ByteString)
+    ConvertEventToMessage :: (Event e) => e -> PrivKey -> Maybe ActorHash -> TimelineMessage m (AuthenticatedMessage ByteString)
+    ConvertMessageToEvent :: (Message msg) => msg -> TimelineMessage m (Maybe EventContent)
 
 -- | Resource operations for managing timeline resources
 data TimelineResource m a where
@@ -506,8 +507,8 @@ mergeExistingTimelines ::
     Sem r (Either TimelineErrorType TimelineLog)
 mergeExistingTimelines src dst = do
     output $ "Merging timelines: " <> show src <> " -> " <> show dst
-    srcLog <- getTimelineLog src ?!> TimelineNotFound src
-    dstLog <- getTimelineLog dst ?!> TimelineNotFound dst
+    srcLog <- TimeBandits.Effects.getTimelineLog src ?!> TimelineNotFound src
+    dstLog <- TimeBandits.Effects.getTimelineLog dst ?!> TimelineNotFound dst
     validateMerge srcLog dstLog
     timestamp <- send GetCurrentTime
     let mergedLog = mergeLogs timestamp srcLog dstLog
@@ -522,7 +523,7 @@ getTimelineEventHistory ::
     Sem r (Either TimelineErrorType [LogEntry EventContent])
 getTimelineEventHistory th = do
     output $ "Getting timeline history: " <> show th
-    timelineLog <- getTimelineLog th ?!> TimelineNotFound th
+    timelineLog <- TimeBandits.Effects.getTimelineLog th ?!> TimelineNotFound th
     let timelineEvents = sortEventsByTimestamp $ elemsTrie $ tlEvents timelineLog
         contentEvents = map convertLogEntry timelineEvents
     pure $ Right contentEvents
@@ -536,7 +537,7 @@ finalizeTimelineEvents ::
     Sem r (Either TimelineErrorType TimelineBlock)
 finalizeTimelineEvents th events = do
     output $ "Finalizing events for timeline: " <> show th
-    timelineLog <- getTimelineLog th ?!> TimelineNotFound th
+    timelineLog <- TimeBandits.Effects.getTimelineLog th ?!> TimelineNotFound th
     timelineEvents <- convertEventsOrThrow events
     validateEvents timelineLog events
     timestamp <- send GetCurrentTime
@@ -688,15 +689,16 @@ interpretAppEffects timeRef logRef storeRef subsRef action = do
             )
         . runOutputList
         . runError @AppError
-        $ interpretCryptoOperation
-        $ interpretLogicalClock timeRef
-        $ interpretAtomicTransaction
-        $ interpretTimeout
-        $ interpretTimelineProof
-        $ interpretTimelineMessage
-        $ interpretTimelineResource logRef
-        $ interpretTransientStorage storeRef
-        $ interpretBanditSubscriptions subsRef action
+        . interpretCryptoOperation
+        . interpretLogicalClock timeRef
+        . interpretAtomicTransaction
+        . interpretTimeout
+        . interpretTimelineProof
+        . interpretTimelineMessage
+        . interpretTimelineResource logRef
+        . interpretTransientStorage storeRef
+        . interpretBanditSubscriptions subsRef
+        $ action
 
 -- | Interpret the logical clock effect
 interpretLogicalClock :: (Members '[Trace, Embed IO] r) => IORef LamportTime -> Sem (LogicalClock ': r) a -> Sem r a
@@ -739,35 +741,42 @@ interpretTimelineProof = interpret \case
         pure True -- TODO: Implement actual proof verification
 
 -- | Interpret the timeline messaging effect
-interpretTimelineMessage :: (Members '[Output String, Error AppError] r) => Sem (TimelineMessage ': r) a -> Sem r a
+interpretTimelineMessage :: (Members '[Output String, Error AppError, CryptoOperation] r) => Sem (TimelineMessage ': r) a -> Sem r a
 interpretTimelineMessage = interpret \case
-    SendAuthenticatedMessage msg -> do
-        output $ "Sending authenticated message to: " ++ maybe "broadcast" show (amDestination msg)
-    -- TODO: Implement actual network sending
-    BroadcastAuthenticatedMessage msg -> do
-        output "Broadcasting authenticated message to all nodes"
-    -- TODO: Implement actual network broadcasting
-    ReceiveAuthenticatedMessage -> do
-        output "Waiting for authenticated message"
+    SendMessage msg -> do
+        output $ "Sending message to: " ++ maybe "broadcast" show (messageDestination msg)
+        -- TODO: Implement actual network sending
+        pure ()
+    BroadcastMessage msg -> do
+        output "Broadcasting message to all nodes"
+        -- TODO: Implement actual network broadcasting
+        pure ()
+    ReceiveMessage -> do
+        output "Waiting for message"
         -- TODO: Implement actual message receiving
         throw $ NetworkError "Message receiving not implemented"
-
--- | Helper function to create a new log entry
-createLogEntry :: ResourceEvent -> ResourceLog -> LogEntry ResourceEventType
-createLogEntry event currentLog =
-    LogEntry
-        { leHash = computeSha256 $ encode event
-        , leContent = reContent event
-        , leMetadata = reMetadata event
-        , lePrevHash = case currentLog of
-            [] -> Nothing
-            (entry : _) -> Just $ leHash entry
-        }
+    ConvertEventToMessage event privKey destination -> do
+        output "Converting event to message"
+        -- Implement directly instead of using Events module function
+        let content = encode $ toEventContent event
+            actor = Actor (EntityHash $ Hash "TODO") Validator -- TODO: Get proper actor
+        sig <- send $ SignMessage privKey content
+        case sig of
+            Left err -> throw $ NetworkError "Failed to sign event as message"
+            Right signature -> do
+                let msgHash = computeMessageHash content
+                    payload = ContentAddressedMessage msgHash content
+                pure $ AuthenticatedMessage msgHash actor destination payload signature
+    ConvertMessageToEvent msg -> do
+        output "Converting message to event"
+        -- Implement directly instead of using Events module function
+        -- This is a simplified implementation
+        pure Nothing -- TODO: Implement proper conversion
 
 -- | Helper function to find a resource by its hash in the log
 findResourceInLog :: Hash -> ResourceLog -> Maybe Resource
 findResourceInLog hash log =
-    listToMaybe [res | LogEntry{leContent = ResourceCreated res} <- log, Types.unEntityHash (resourceId res) == hash]
+    listToMaybe [res | LogEntry{leContent = ResourceCreated res} <- log, unEntityHash (resourceId res) == hash]
 
 -- | Helper function to find a transaction by its hash in the log
 findTransactionInLog :: Hash -> ResourceLog -> Maybe ResourceTransaction
@@ -791,7 +800,16 @@ interpretTimelineResource logRef = interpret \case
     LogResourceEvent event -> do
         trace "Logging new resource event"
         currentLog <- liftIO $ readIORef logRef
-        let newEntry = createLogEntry event currentLog
+        -- Create a log entry using the Events module's function
+        let newEntry =
+                LogEntry
+                    { leHash = computeSha256 $ encode event
+                    , leContent = reContent event
+                    , leMetadata = reMetadata event
+                    , lePrevHash = case currentLog of
+                        [] -> Nothing
+                        (entry : _) -> Just $ leHash entry
+                    }
         liftIO $ writeIORef logRef (newEntry : currentLog)
         pure ()
 
@@ -819,81 +837,6 @@ interpretCryptoOperation = interpret \case
     GenerateKeyPair seed -> do
         output $ "Generating key pair with seed: " <> show seed
         pure $ Right (PubKey "TODO", PrivKey "TODO")
-
--- | Interpret event management
-interpretEventManagement ::
-    ( Members '[TimelineOps, LogicalClock, Error TimelineErrorType, Output String] r
-    ) =>
-    Sem (EventManagement ': r) a ->
-    Sem r a
-interpretEventManagement = interpret \case
-    RegisterTimelineEvent th event -> do
-        output $ "Registering event for timeline: " <> show th
-        timestamp <- send GetCurrentTime
-        let metadata =
-                EventMetadata
-                    { emTimestamp = timestamp
-                    , emCreatedAt = undefined -- TODO: Fix timestamp type
-                    , emActor = undefined -- TODO: Get proper actor
-                    , emTimeline = th
-                    , emSignature = undefined -- TODO: Get proper signature
-                    , emSigner = PubKey "TODO" -- TODO: Get proper signer
-                    }
-            entry =
-                LogEntry
-                    { leHash = computeSha256 $ encode event
-                    , leContent = event
-                    , leMetadata = metadata
-                    , lePrevHash = Nothing -- TODO: Track previous events
-                    }
-        pure $ Right entry
-    GetObjectEventHistory th objHash -> do
-        output $ "Getting object history from timeline: " <> show th
-        pure $ Right []
-    GetEventsAfterMerkle th merkleRoot -> do
-        output $ "Getting events after Merkle root: " <> show merkleRoot
-        pure $ Right []
-    GetPendingEvents th -> do
-        output $ "Getting pending events for timeline: " <> show th
-        pure $ Right []
-
--- | Interpret actor management operations
-interpretActorManagement :: (Members '[Error ActorErrorType, Output String, Embed IO] r) => Sem (ActorManagement ': r) a -> Sem r a
-interpretActorManagement = interpret \case
-    CreateActor actorType -> do
-        output $ "Creating actor of type: " <> show actorType
-        pure $ Actor (EntityHash $ Hash "TODO") actorType
-    GetActor hash -> do
-        output $ "Getting actor: " <> show hash
-        pure Nothing
-    UpdateActor actor -> do
-        output $ "Updating actor: " <> show (actorId actor)
-        pure ()
-    DeleteActor hash -> do
-        output $ "Deleting actor: " <> show hash
-        pure ()
-
--- | Create an authenticated message
-semCreateMessage :: (Members '[CryptoOperation, Error AppError] r) => ByteString -> PrivKey -> Sem r (Either AppError (AuthenticatedMessage ByteString))
-semCreateMessage msg privKey = do
-    sig <- send $ SignMessage privKey msg
-    case sig of
-        Left err -> pure $ Left err
-        Right signature -> do
-            let msgHash = Hash "TODO" -- TODO: Compute actual hash
-                actor = Actor (EntityHash $ Hash "TODO") Validator
-                payload = ContentAddressedMessage msgHash msg
-            pure $ Right $ AuthenticatedMessage msgHash actor Nothing payload signature
-
--- | Authenticate a message
-semAuthenticateMessage :: (Members '[CryptoOperation, Error AppError] r) => AuthenticatedMessage ByteString -> Sem r (Either AppError Bool)
-semAuthenticateMessage msg = do
-    let content = camContent $ amPayload msg
-        sig = amSignature msg
-    result <- send $ VerifySignature (PubKey "TODO") content sig -- TODO: Get proper public key from actor
-    if result
-        then pure $ Right True
-        else pure $ Left (CryptoError InvalidSignatureError)
 
 -- | Interpret the transient storage effect
 interpretTransientStorage :: (Members '[Trace, Embed IO, Output String, Error AppError] r) => IORef TransientDatastore -> Sem (TransientStorage ': r) a -> Sem r a
@@ -931,26 +874,37 @@ interpretBanditSubscriptions subsRef = interpret \case
         output $ "Setting subscriptions to: " ++ show hs
         liftIO $ writeIORef subsRef hs
 
--- | Interpret timeline management using TimelineOps
-interpretTimelineManagement ::
-    ( Members '[TimelineOps, LogicalClock, Error TimelineErrorType, Output String] r
-    ) =>
-    Sem (TimelineManagement ': r) a ->
-    Sem r a
-interpretTimelineManagement = interpret \case
-    CreateNewTimeline th actor -> send $ CreateTimeline th actor
-    MergeTimelinesWith src dst -> send $ MergeTimelines src dst
-    GetTimelineEvents th -> send $ GetTimelineHistory th
-    FinalizeTimelineBlock th events -> send $ FinalizeEvents th events
+-- | Interpret actor management operations
+interpretActorManagement :: (Members '[Error ActorErrorType, Output String, Embed IO] r) => Sem (ActorManagement ': r) a -> Sem r a
+interpretActorManagement = interpret \case
+    CreateActor actorType -> do
+        output $ "Creating actor of type: " <> show actorType
+        pure $ Actor (EntityHash $ Hash "TODO") actorType
+    GetActor hash -> do
+        output $ "Getting actor: " <> show hash
+        pure Nothing
+    UpdateActor actor -> do
+        output $ "Updating actor: " <> show (actorId actor)
+        pure ()
+    DeleteActor hash -> do
+        output $ "Deleting actor: " <> show hash
+        pure ()
 
--- | Interpret timeline operations
-interpretTimelineOps ::
-    ( Members '[LogicalClock, Error TimelineErrorType, Output String, Embed IO] r
-    ) =>
-    Sem (TimelineOps ': r) a ->
-    Sem r a
-interpretTimelineOps = interpret \case
-    CreateTimeline th actor -> createNewTimeline th actor
-    MergeTimelines src dst -> mergeExistingTimelines src dst
-    GetTimelineHistory th -> getTimelineEventHistory th
-    FinalizeEvents th events -> finalizeTimelineEvents th events
+-- | Create an authenticated message
+semCreateMessage :: (Members '[CryptoOperation, Error AppError] r) => ByteString -> PrivKey -> Sem r (Either AppError (AuthenticatedMessage ByteString))
+semCreateMessage msg privKey = do
+    sig <- send $ SignMessage privKey msg
+    case sig of
+        Left err -> pure $ Left err
+        Right signature -> do
+            let actor = Actor (EntityHash $ Hash "TODO") Validator
+                msgHash = computeMessageHash msg
+                payload = ContentAddressedMessage msgHash msg
+            pure $ Right $ AuthenticatedMessage msgHash actor Nothing payload signature
+
+-- | Authenticate a message
+semAuthenticateMessage :: (Members '[CryptoOperation, Error AppError] r) => AuthenticatedMessage ByteString -> Sem r (Either AppError Bool)
+semAuthenticateMessage msg = do
+    if verifyMessageSignature msg
+        then pure $ Right True
+        else pure $ Left (CryptoError InvalidSignatureError)
