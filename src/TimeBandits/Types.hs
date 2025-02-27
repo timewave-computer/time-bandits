@@ -39,7 +39,6 @@ module TimeBandits.Types (
   EventContent (..),
 
   -- * Log Types
-  LogContent (..),
   LogEntry (..),
   Log (..),
   MapOfTime (MapOfTime, mtTimelines, mtSyncPoints, mtGlobalTime),
@@ -268,43 +267,7 @@ data TimelineEvent = TimelineEvent
   deriving stock (Generic)
   deriving anyclass (S.Serialize)
 
--- | Represents an entry in an append-only log.
-data LogContent a
-  = Regular
-      { lcContent :: a -- Standard log entry
-      , lcTimestamp :: LamportTime -- Logical timestamp
-      }
-  | Upgrade
-      { newLogPointer :: Hash -- Points to a new log (for version upgrades)
-      , upgradeCondition :: Int -- Condition triggering the upgrade (e.g., height threshold)
-      , lcTimestamp :: LamportTime -- Logical timestamp
-      }
-  deriving stock (Eq, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | A content-addressed message
-data ContentAddressedMessage a = ContentAddressedMessage
-  { camHash :: Hash -- Hash of the message content
-  , camContent :: a -- The actual message content
-  }
-  deriving stock (Eq, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | A content-addressed authenticated message
-data AuthenticatedMessage a = AuthenticatedMessage
-  { amHash :: Hash -- Hash of the message content and metadata
-  , amSender :: Actor -- Sender actor
-  , amDestination :: Maybe ActorHash -- Optional recipient hash (if direct messaging)
-  , amPayload :: ContentAddressedMessage a -- Message payload
-  , amSignature :: Signature -- Cryptographic proof of authenticity
-  }
-  deriving stock (Eq, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | A content-addressed log entry
+-- | Represents a log entry in an append-only log.
 data LogEntry a = LogEntry
   { leHash :: Hash -- Hash of the entry content and metadata
   , leContent :: a -- The event content
@@ -339,15 +302,6 @@ data SyncPoint = SyncPoint
   deriving stock (Eq, Show)
   deriving stock (Generic)
   deriving anyclass (S.Serialize)
-
--- | Represents an authenticated message exchanged between actors.
-data AuthorizationPolicy = AuthorizationPolicy
-  { policyRequiredSignatures :: Int
-  , policyAllowedKeys :: [ActorHash] -- List of allowed actor hashes
-  , policyOperation :: Text
-  , policyResource :: Maybe Resource
-  }
-  deriving stock (Show, Eq)
 
 -- | Represents the decentralized transient storage network
 data TransientDatastore = TransientDatastore
@@ -562,3 +516,24 @@ verifySignature (PubKey pubKey) msg (Signature sig) =
       case Ed25519.signature sig of
         CryptoFailed _ -> False
         CryptoPassed sig' -> Ed25519.verify pk msg sig'
+
+-- | A content-addressed message
+data ContentAddressedMessage a = ContentAddressedMessage
+  { camHash :: Hash -- Hash of the message content
+  , camContent :: a -- The actual message content
+  }
+  deriving stock (Eq, Show)
+  deriving stock (Generic)
+  deriving anyclass (S.Serialize)
+
+-- | A content-addressed authenticated message
+data AuthenticatedMessage a = AuthenticatedMessage
+  { amHash :: Hash -- Hash of the message content and metadata
+  , amSender :: Actor -- Sender actor
+  , amDestination :: Maybe ActorHash -- Optional recipient hash (if direct messaging)
+  , amPayload :: ContentAddressedMessage a -- Message payload
+  , amSignature :: Signature -- Cryptographic proof of authenticity
+  }
+  deriving stock (Eq, Show)
+  deriving stock (Generic)
+  deriving anyclass (S.Serialize)
