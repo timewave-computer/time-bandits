@@ -53,7 +53,6 @@ module TimeBandits.Effects (
     asStorageError,
 
     -- * Capability Typeclasses
-    TimelineOps (..),
     ResourceOps (..),
     ActorOps (..),
     CryptoOps (..),
@@ -70,6 +69,7 @@ module TimeBandits.Effects (
     AuthenticatedMessage (..),
     TransientStorage (..),
     BanditSubscriptions (..),
+    TimelineEffect (..),
 
     -- * Effect Interpreters
     interpretLogicalClock,
@@ -81,6 +81,7 @@ module TimeBandits.Effects (
     interpretCryptoOperation,
     interpretTransientStorage,
     interpretBanditSubscriptions,
+    interpretTimelineEffect,
 
     -- * Message Effect Functions
     semCreateMessage,
@@ -120,11 +121,8 @@ module TimeBandits.Effects (
     -- * Resource Operations
     transferResourceOp,
 
-    -- * Timeline Management
-    TimelineManagement (..),
-
-    -- * Event Management
-    EventManagement (..),
+    -- * Helper function to trace the effect stack
+    traceEffectStack,
 ) where
 
 import Control.Monad ()
@@ -193,13 +191,6 @@ data LogicalClock m a where
     GetCurrentTime :: LogicalClock m LamportTime
     IncrementTime :: LogicalClock m LamportTime
     UpdateTime :: LamportTime -> LogicalClock m LamportTime
-
--- | Timeline operations effect
-data TimelineOps m a where
-    CreateTimeline :: TimelineHash -> ActorHash -> TimelineOps m (Either TimelineErrorType TimelineLog)
-    MergeTimelines :: TimelineHash -> TimelineHash -> TimelineOps m (Either TimelineErrorType TimelineLog)
-    GetTimelineHistory :: TimelineHash -> TimelineOps m (Either TimelineErrorType [LogEntry EventContent])
-    FinalizeEvents :: TimelineHash -> [LogEntry EventContent] -> TimelineOps m (Either TimelineErrorType TimelineBlock)
 
 -- | Error conversion helper functions
 asTimelineError :: (Members '[Error AppError] r) => TimelineErrorType -> Sem r a
@@ -282,29 +273,30 @@ data BanditSubscriptions m a where
     RemoveSubscription :: TimelineHash -> BanditSubscriptions m ()
     SetSubscriptions :: [TimelineHash] -> BanditSubscriptions m ()
 
--- | Timeline management effect
-data TimelineManagement m a where
-    CreateNewTimeline :: TimelineHash -> ActorHash -> TimelineManagement m (Either TimelineErrorType TimelineLog)
-    MergeTimelinesWith :: TimelineHash -> TimelineHash -> TimelineManagement m (Either TimelineErrorType TimelineLog)
-    GetTimelineEvents :: TimelineHash -> TimelineManagement m (Either TimelineErrorType [LogEntry EventContent])
-    FinalizeTimelineBlock :: TimelineHash -> [LogEntry EventContent] -> TimelineManagement m (Either TimelineErrorType TimelineBlock)
-
--- | Event management effect
-data EventManagement m a where
-    RegisterTimelineEvent :: TimelineHash -> EventContent -> EventManagement m (Either TimelineErrorType (LogEntry EventContent))
-    GetObjectEventHistory :: TimelineHash -> Hash -> EventManagement m (Either TimelineErrorType [LogEntry EventContent])
-    GetEventsAfterMerkle :: TimelineHash -> Hash -> EventManagement m (Either TimelineErrorType [LogEntry EventContent])
-    GetPendingEvents :: TimelineHash -> EventManagement m (Either TimelineErrorType [LogEntry EventContent])
-
 -- | Cryptographic operations effect
 data CryptoOperation m a where
     SignMessage :: PrivKey -> ByteString -> CryptoOperation m (Either AppError Signature)
     VerifySignature :: PubKey -> ByteString -> Signature -> CryptoOperation m Bool
     GenerateKeyPair :: ByteString -> CryptoOperation m (Either AppError (PubKey, PrivKey))
 
+-- | Consolidated timeline effect
+data TimelineEffect m a where
+    -- Timeline creation and management
+    CreateNewTimeline :: TimelineHash -> ActorHash -> TimelineEffect m (Either TimelineErrorType TimelineLog)
+    MergeTimelines :: TimelineHash -> TimelineHash -> TimelineEffect m (Either TimelineErrorType TimelineLog)
+    -- Event registration and retrieval
+    RegisterEvent :: TimelineHash -> EventContent -> TimelineEffect m (Either TimelineErrorType (LogEntry EventContent))
+    GetTimelineHistory :: TimelineHash -> TimelineEffect m (Either TimelineErrorType [LogEntry EventContent])
+    GetObjectHistory :: TimelineHash -> Hash -> TimelineEffect m (Either TimelineErrorType [LogEntry EventContent])
+    GetEventsAfterMerkle :: TimelineHash -> Hash -> TimelineEffect m (Either TimelineErrorType [LogEntry EventContent])
+    GetPendingEvents :: TimelineHash -> TimelineEffect m (Either TimelineErrorType [LogEntry EventContent])
+    -- Block finalization
+    FinalizeTimelineBlock :: TimelineHash -> [LogEntry EventContent] -> TimelineEffect m (Either TimelineErrorType TimelineBlock)
+
 -- | The core effect stack for the Time Bandits application
 type AppEffects r =
-    '[ BanditSubscriptions
+    '[ TimelineEffect
+     , BanditSubscriptions
      , TransientStorage
      , TimelineResource
      , TimelineMessage
@@ -669,15 +661,11 @@ Each interpreter follows the naming convention of starting with "interpret" and
 is responsible for handling a specific effect type.
 -}
 
-{- | Interpret the complete application effect stack into a final IO action.
-This interpreter composes all other interpreters in the correct order to
-ensure proper effect handling and type safety.
+-- | Helper function to trace the effect stack
+traceEffectStack :: (Member Trace r) => String -> Sem r ()
+traceEffectStack location = trace $ "Effect stack at " ++ location
 
-The result type provides:
-* Error handling via 'Either AppError'
-* Collected logs via '[String]'
-* The final computation result 'a'
--}
+-- | Interpret the complete application effect stack into a final IO action.
 interpretAppEffects :: IORef LamportTime -> IORef ResourceLog -> IORef TransientDatastore -> IORef [TimelineHash] -> Sem (AppEffects r) a -> IO (Either AppError ([String], a))
 interpretAppEffects timeRef logRef storeRef subsRef action = do
     runM
@@ -689,15 +677,16 @@ interpretAppEffects timeRef logRef storeRef subsRef action = do
             )
         . runOutputList
         . runError @AppError
-        . interpretCryptoOperation
-        . interpretLogicalClock timeRef
-        . interpretAtomicTransaction
-        . interpretTimeout
-        . interpretTimelineProof
-        . interpretTimelineMessage
-        . interpretTimelineResource logRef
-        . interpretTransientStorage storeRef
-        . interpretBanditSubscriptions subsRef
+        . (\r -> trace "Before interpretCryptoOperation" >> interpretCryptoOperation r)
+        . (\r -> trace "Before interpretLogicalClock" >> interpretLogicalClock timeRef r)
+        . (\r -> trace "Before interpretAtomicTransaction" >> interpretAtomicTransaction r)
+        . (\r -> trace "Before interpretTimeout" >> interpretTimeout r)
+        . (\r -> trace "Before interpretTimelineProof" >> interpretTimelineProof r)
+        . (\r -> trace "Before interpretTimelineMessage" >> interpretTimelineMessage r)
+        . (\r -> trace "Before interpretTimelineResource" >> interpretTimelineResource logRef r)
+        . (\r -> trace "Before interpretTransientStorage" >> interpretTransientStorage storeRef r)
+        . (\r -> trace "Before interpretBanditSubscriptions" >> interpretBanditSubscriptions subsRef r)
+        . (\r -> trace "Before interpretTimelineEffect" >> interpretTimelineEffect r)
         $ action
 
 -- | Interpret the logical clock effect
@@ -737,7 +726,7 @@ interpretTimelineProof = interpret \case
         output $ "Generating proof for hash: " ++ show h
         pure h -- TODO: Implement actual proof generation
     VerifyProof h p -> do
-        output $ "Verifying proof for hash: " ++ show h
+        output $ "Verifying proof for hash: " <> show h
         pure True -- TODO: Implement actual proof verification
 
 -- | Interpret the timeline messaging effect
@@ -857,6 +846,65 @@ interpretTransientStorage storeRef = interpret \case
     UpdateDatastore newStore -> do
         output $ "Updating transient datastore with " ++ show (length $ tdTimeBandits newStore) ++ " nodes"
         liftIO $ writeIORef storeRef newStore
+
+-- | Helper function to convert TimelineErrorType to AppError
+timelineErrorToAppError :: TimelineErrorType -> AppError
+timelineErrorToAppError = TimelineError
+
+-- | Helper function to unwrap nested Either types
+unwrapEither :: Either a (Either a b) -> Either a b
+unwrapEither (Left err) = Left err
+unwrapEither (Right (Left err)) = Left err
+unwrapEither (Right (Right val)) = Right val
+
+-- | Interpret the consolidated timeline effect
+interpretTimelineEffect ::
+    ( Members '[LogicalClock, Error AppError, Output String, Embed IO] r
+    ) =>
+    Sem (TimelineEffect ': r) a ->
+    Sem r a
+interpretTimelineEffect = interpret \case
+    CreateNewTimeline th actor -> do
+        result <- runError $ createNewTimeline th actor
+        pure $ unwrapEither result
+    MergeTimelines src dst -> do
+        result <- runError $ mergeExistingTimelines src dst
+        pure $ unwrapEither result
+    RegisterEvent th event -> do
+        output $ "Registering event for timeline: " <> show th
+        timestamp <- send GetCurrentTime
+        let metadata =
+                EventMetadata
+                    { emTimestamp = timestamp
+                    , emCreatedAt = undefined -- TODO: Fix timestamp type
+                    , emActor = undefined -- TODO: Get proper actor
+                    , emTimeline = th
+                    , emSignature = undefined -- TODO: Get proper signature
+                    , emSigner = PubKey "TODO" -- TODO: Get proper signer
+                    }
+            entry =
+                LogEntry
+                    { leHash = computeSha256 $ encode event
+                    , leContent = event
+                    , leMetadata = metadata
+                    , lePrevHash = Nothing -- TODO: Track previous events
+                    }
+        pure $ Right entry
+    GetTimelineHistory th -> do
+        result <- runError $ getTimelineEventHistory th
+        pure $ unwrapEither result
+    GetObjectHistory th objHash -> do
+        output $ "Getting object history from timeline: " <> show th
+        pure $ Right []
+    GetEventsAfterMerkle th merkleRoot -> do
+        output $ "Getting events after Merkle root: " <> show merkleRoot
+        pure $ Right []
+    GetPendingEvents th -> do
+        output $ "Getting pending events for timeline: " <> show th
+        pure $ Right []
+    FinalizeTimelineBlock th events -> do
+        result <- runError $ finalizeTimelineEvents th events
+        pure $ unwrapEither result
 
 -- | Interpret the bandit subscriptions effect
 interpretBanditSubscriptions :: (Members '[Embed IO, Output String] r) => IORef [TimelineHash] -> Sem (BanditSubscriptions ': r) a -> Sem r a
