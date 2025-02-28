@@ -1,6 +1,26 @@
 # Repo-specific hlint rules go here:
 - ignore: { name: Use camelCase }
 
+# Polysemy-specific rules
+- ignore: { name: "Use <$>" }
+- ignore: { name: "Use <=<" }
+- ignore: { name: "Use =<<" }
+- ignore: { name: "Use >>" }
+- ignore: { name: "Use >>=", within: [interpretTimelineEffect, interpretTimelineResource, interpretTransientStorage, interpretCryptoOperation] }
+- ignore: { name: "Redundant do", within: [interpretTimelineEffect, interpretTimelineResource, interpretTransientStorage, interpretCryptoOperation] }
+- ignore: { name: "Avoid lambda", within: [interpretAppEffects] }
+- ignore: { name: "Use const", within: [interpretAppEffects] }
+
+# GADT and effect-specific rules
+- ignore: { name: "Use record patterns", within: [LogicalClock, AtomicTransaction, Timeout, TimelineProof, TimelineMessage, TimelineResource, CryptoOperation, TransientStorage, BanditSubscriptions, TimelineEffect, ActorManagement] }
+- ignore: { name: "Redundant bracket", within: [interpretAppEffects] }
+- ignore: { name: "Eta reduce", within: [interpretLogicalClock, interpretAtomicTransaction, interpretTimeout, interpretTimelineProof, interpretTimelineMessage, interpretTimelineResource, interpretCryptoOperation, interpretTransientStorage, interpretBanditSubscriptions, interpretTimelineEffect, interpretActorManagement] }
+
+# Cryptography and serialization specific rules
+- ignore: { name: "Use ByteString.Char8.pack", within: [computeSha256, computeHash, computeMessageHash] }
+- ignore: { name: "Use <$>", within: [signMessage, verifySignature] }
+- ignore: { name: "Use maybe", within: [computeHash] }
+
 # Relude's .hlint.yaml goes here:
 # https://github.com/kowainik/relude/blob/main/.hlint.yaml
 - arguments:

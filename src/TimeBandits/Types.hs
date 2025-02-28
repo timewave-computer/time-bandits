@@ -93,6 +93,10 @@ module TimeBandits.Types (
   -- * Cryptographic Functions
   signMessage,
   verifySignature,
+
+  -- * Unified Resource Transaction Types
+  UnifiedResourceTransaction (..),
+  TransactionValidationResult (..),
 ) where
 
 import Data.ByteString ()
@@ -200,7 +204,7 @@ defaultSystemConfig =
     , scMaxRetries = 3
     }
 
--- | A digital object tracked across timelines.
+-- | A digital object tracked across timelines with UTXO-like structure.
 data Resource = Resource
   { resourceId :: ResourceHash -- Unique identifier (SHA-256)
   , resourceOrigin :: TimelineHash -- Origin timeline
@@ -209,6 +213,8 @@ data Resource = Resource
   , resourceMeta :: ByteString -- Arbitrary metadata
   , resourceSpentBy :: Maybe Hash -- Hash of the transaction that spent this resource
   , resourceParents :: [ResourceHash] -- Parent resources that were consumed to create this one
+  , resourceTimestamp :: LamportTime -- When the resource was created
+  , resourceProvenanceChain :: [TimelineHash] -- Tracks resource movement across timelines
   }
   deriving stock (Eq, Show)
   deriving stock (Generic)
@@ -343,11 +349,17 @@ data ActorEventType
 data ResourceEventType
   = ResourceCreated Resource -- Resource was created
   | ResourceConsumed ResourceTransaction -- Resource was consumed and new ones created
+  | ResourceTransferred UnifiedResourceTransaction -- Resource was transferred to a new owner
   | ResourceCapabilityChecked -- Check if a resource is unspent and has capability
       { rcCheckedResource :: ResourceHash
       , rcCheckedFor :: ActorHash
       , rcCapability :: ResourceCapability
       , rcResult :: Bool
+      }
+  | ResourceVerified -- Resource was verified as valid
+      { rvResource :: ResourceHash
+      , rvVerifier :: ActorHash
+      , rvResult :: Bool
       }
   deriving stock (Eq, Show)
   deriving stock (Generic)
@@ -474,6 +486,31 @@ data ResourceTransaction = ResourceTransaction
   , rtSigner :: PubKey -- Who authorized the transaction
   , rtSignature :: Signature -- Proof of authorization
   }
+  deriving stock (Eq, Show)
+  deriving stock (Generic)
+  deriving anyclass (S.Serialize)
+
+{- | A unified resource transaction that integrates with the message system
+This represents a bundle of messages that form a transaction
+-}
+data UnifiedResourceTransaction = UnifiedResourceTransaction
+  { urtInputs :: [AuthenticatedMessage Resource] -- Input resources (must be unspent)
+  , urtOutputs :: [ContentAddressedMessage Resource] -- Output resources to be created
+  , urtMetadata :: ByteString -- Additional transaction metadata
+  , urtTimestamp :: LamportTime -- When the transaction occurred
+  , urtSigner :: Actor -- Who authorized the transaction
+  , urtSignature :: Signature -- Proof of authorization
+  , urtProvenanceChain :: [TimelineHash] -- Tracks resource movement across timelines
+  }
+  deriving stock (Eq, Show)
+  deriving stock (Generic)
+  deriving anyclass (S.Serialize)
+
+-- | Result of a resource transaction validation
+data TransactionValidationResult
+  = TransactionValid -- Transaction is valid
+  | TransactionInvalid ByteString -- Transaction is invalid with reason
+  | TransactionDeferred -- Transaction validation deferred (e.g., waiting for inputs)
   deriving stock (Eq, Show)
   deriving stock (Generic)
   deriving anyclass (S.Serialize)

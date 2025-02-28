@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -111,29 +112,41 @@ module TimeBandits.Effects (
     -- * Resource Operations
     transferResourceOp,
 
-    -- * Helper function to trace the effect stack
-    traceEffectStack,
+    -- * Resource operations for managing timeline resources
+    ResourceOps (..),
+
+    -- * Resource operations effect
+    ResourceOperationEffect (..),
+    -- | Get transaction history for a resource
+    getTransactionHistoryOp,
+    -- | Demonstrate how to use the unified resource transaction model
+    -- This function creates a resource, transfers it to another actor, and then consumes it
+    demonstrateUnifiedTransactionModel,
 ) where
 
-import Control.Monad ()
-import Crypto.Error ()
+import Control.Monad (forM, forM_, when)
+import Crypto.Error (CryptoFailable (..))
 import Crypto.Hash.SHA256 qualified as SHA256
-import Crypto.PubKey.Ed25519 ()
-import Data.ByteArray ()
-import Data.ByteString ()
-import Data.ByteString.Builder ()
+import Crypto.PubKey.Ed25519 qualified as Ed25519
+import Data.ByteArray (convert)
+import Data.ByteString (ByteString)
+import Data.ByteString.Char8 qualified as BS
 import Data.IORef ()
-import Data.List (union)
+import Data.List (nub, union)
+import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe ()
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 import Data.Ord ()
-import Data.Serialize (encode)
-import Data.Text ()
+import Data.Serialize (decode, encode)
+import Data.Text (Text, pack, unpack)
+import Data.Time.Clock (UTCTime, getCurrentTime)
 import Polysemy (Embed, Member, Members, Sem, interpret, makeSem, runM, send)
 import Polysemy.Error (Error, runError, throw)
 import Polysemy.Output (Output, output, runOutputList)
+import Polysemy.Reader
+import Polysemy.State
 import Polysemy.Trace (Trace, trace, traceToStdout)
-import TimeBandits.Core (computeMessageHash, computeSha256)
+import TimeBandits.Core (computeHash, computeMessageHash, computePubKeyHash, computeSha256)
 import TimeBandits.Events hiding (StorageError, getTimelineLog)
 import TimeBandits.Types (
     Actor (..),
@@ -166,15 +179,21 @@ import TimeBandits.Types (
     TimelineEventType (..),
     TimelineHash,
     TimelineLog (..),
+    TransactionValidationResult (..),
     TransientDatastore (..),
     TransientStoredItem (..),
     Trie (..),
+    UnifiedResourceTransaction (..),
     elemsTrie,
     emTimestamp,
     resourceId,
  )
 import TimeBandits.Types qualified as Types
 import Prelude hiding (trace)
+
+-- | Get the public key from an actor
+getActorPubKey :: Actor -> PubKey
+getActorPubKey actor = PubKey $ BS.pack $ show $ actorId actor -- This is a placeholder implementation
 
 -- | Logical clock for tracking causal ordering in timelines
 data LogicalClock m a where
@@ -247,7 +266,6 @@ data TimelineResource m a where
     GetResourceTime :: TimelineResource m LamportTime
     LogResourceEvent :: ResourceEvent -> TimelineResource m ()
     GetResourceByHash :: Hash -> TimelineResource m (Maybe Resource)
-    GetTransactionByHash :: Hash -> TimelineResource m (Maybe ResourceTransaction)
 
 -- | Transient storage effect for P2P data storage
 data TransientStorage m a where
@@ -319,10 +337,6 @@ isRelevantEvent hash entry = case leContent entry of
     ResourceCreated res -> resourceId res == hash
     ResourceConsumed tx -> hash `elem` rtInputs tx || any ((== hash) . resourceId) (rtOutputs tx)
     ResourceCapabilityChecked{rcCheckedResource = checkedHash} -> checkedHash == hash
-
--- | Helper function to compute a transaction's hash
-computeTransactionHash :: ResourceTransaction -> Hash
-computeTransactionHash tx = Hash $ SHA256.hash $ encode (rtInputs tx, rtOutputs tx, rtTimestamp tx, rtSigner tx)
 
 -- | Root timeline hash for actor events
 rootTimelineHash :: TimelineHash
@@ -589,10 +603,6 @@ Each interpreter follows the naming convention of starting with "interpret" and
 is responsible for handling a specific effect type.
 -}
 
--- | Helper function to trace the effect stack
-traceEffectStack :: (Member Trace r) => String -> Sem r ()
-traceEffectStack location = trace $ "Effect stack at " ++ location
-
 -- | Interpret the complete application effect stack into a final IO action.
 interpretAppEffects :: IORef LamportTime -> IORef ResourceLog -> IORef TransientDatastore -> IORef [TimelineHash] -> Sem (AppEffects r) a -> IO (Either AppError ([String], a))
 interpretAppEffects timeRef logRef storeRef subsRef action = do
@@ -693,12 +703,183 @@ interpretTimelineMessage = interpret \case
 -- | Helper function to find a resource by its hash in the log
 findResourceInLog :: Hash -> ResourceLog -> Maybe Resource
 findResourceInLog hash log =
-    listToMaybe [res | LogEntry{leContent = ResourceCreated res} <- log, unEntityHash (resourceId res) == hash]
+    case [res | LogEntry{leContent = ResourceCreated res} <- log, unEntityHash (resourceId res) == hash] of
+        [] -> Nothing
+        (res : _) -> Just res
 
--- | Helper function to find a transaction by its hash in the log
-findTransactionInLog :: Hash -> ResourceLog -> Maybe ResourceTransaction
-findTransactionInLog hash log =
-    listToMaybe [tx | LogEntry{leContent = ResourceConsumed tx} <- log, computeMessageHash tx == hash]
+-- | Helper function to find a unified transaction by its hash in the log
+findUnifiedTransactionInLog :: Hash -> ResourceLog -> Maybe UnifiedResourceTransaction
+findUnifiedTransactionInLog hash log =
+    listToMaybe [tx | LogEntry{leContent = ResourceTransferred tx} <- log, computeHash tx Nothing == hash]
+
+-- | Create a unified resource transaction
+createUnifiedTransactionOp ::
+    (Members '[CryptoOperation, Error AppError, Trace] r) =>
+    [Resource] ->
+    [Resource] ->
+    Actor ->
+    TimelineHash ->
+    LamportTime ->
+    PrivKey ->
+    Sem r (Either AppError UnifiedResourceTransaction)
+createUnifiedTransactionOp inputs outputs actor timeline timestamp privKey = do
+    -- Convert inputs to authenticated messages
+    inputMsgs <- forM inputs $ \input -> do
+        let content = encode input
+        sig <- send $ SignMessage privKey content
+        case sig of
+            Left err -> throw $ CryptoError InvalidSignatureError
+            Right signature -> do
+                let msgHash = computeMessageHash content
+                    payload = ContentAddressedMessage msgHash input
+                pure $ AuthenticatedMessage msgHash actor Nothing payload signature
+
+    -- Convert outputs to content-addressed messages
+    let outputMsgs =
+            map
+                ( \output ->
+                    let content = encode output
+                        msgHash = computeMessageHash content
+                     in ContentAddressedMessage msgHash output
+                )
+                outputs
+
+    -- Create transaction metadata
+    let metadata = encode (map resourceId inputs, map resourceId outputs)
+
+    -- Create provenance chain from input resources
+    let provenanceChain = nub $ concatMap resourceProvenanceChain inputs ++ [timeline]
+
+    -- Sign the transaction
+    let txContent = encode (inputMsgs, outputMsgs, metadata, timestamp, actor, provenanceChain)
+    sig <- send $ SignMessage privKey txContent
+    case sig of
+        Left err -> throw $ CryptoError InvalidSignatureError
+        Right signature -> do
+            let transaction =
+                    UnifiedResourceTransaction
+                        { urtInputs = inputMsgs
+                        , urtOutputs = outputMsgs
+                        , urtMetadata = metadata
+                        , urtTimestamp = timestamp
+                        , urtSigner = actor
+                        , urtSignature = signature
+                        , urtProvenanceChain = provenanceChain
+                        }
+            pure $ Right transaction
+
+-- | Check if a transaction validation result is invalid
+isInvalid :: TransactionValidationResult -> Bool
+isInvalid (TransactionInvalid _) = True
+isInvalid _ = False
+
+-- | Validate a unified resource transaction
+validateTransactionOp ::
+    (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
+    UnifiedResourceTransaction ->
+    Sem r (Either AppError TransactionValidationResult)
+validateTransactionOp tx = do
+    -- Verify transaction signature
+    let txContent = encode (urtInputs tx, urtOutputs tx, urtMetadata tx, urtTimestamp tx, urtSigner tx, urtProvenanceChain tx)
+        pubKey = getActorPubKey (urtSigner tx)
+
+    sigValid <- send $ VerifySignature pubKey txContent (urtSignature tx)
+
+    if not sigValid
+        then pure $ Right $ TransactionInvalid $ BS.pack "Transaction signature verification failed"
+        else do
+            -- Verify all input resources exist and are unspent
+            inputsValid <- forM (urtInputs tx) $ \inputMsg -> do
+                -- Extract the content from the authenticated message
+                let res = camContent (amPayload inputMsg)
+                resourceExists <- send $ ResourceOpGetResourceById (resourceId res)
+                case resourceExists of
+                    Left err -> pure TransactionDeferred -- Resource not found, might be pending
+                    Right foundRes -> do
+                        -- Check if resource is unspent
+                        if isJust (resourceSpentBy foundRes)
+                            then pure $ TransactionInvalid $ BS.pack "Input resource already spent"
+                            else do
+                                -- Verify resource ownership
+                                if resourceOwner foundRes == actorId (urtSigner tx)
+                                    then pure TransactionValid
+                                    else pure $ TransactionInvalid $ BS.pack "Resource not owned by transaction signer"
+
+            -- If any input is invalid, the transaction is invalid
+            if any isInvalid inputsValid
+                then case [iv | iv@(TransactionInvalid _) <- inputsValid] of
+                    (invalidResult : _) -> pure $ Right invalidResult
+                    [] -> pure $ Right $ TransactionInvalid $ BS.pack "Unknown validation error"
+                else
+                    if any (== TransactionDeferred) inputsValid
+                        then pure $ Right TransactionDeferred
+                        else pure $ Right TransactionValid
+
+-- | Execute a unified resource transaction
+executeTransactionOp ::
+    (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
+    UnifiedResourceTransaction ->
+    Sem r (Either AppError [Resource])
+executeTransactionOp tx = do
+    -- First validate the transaction
+    validationResult <- validateTransactionOp tx
+
+    case validationResult of
+        Left err -> pure $ Left err
+        Right (TransactionInvalid reason) -> pure $ Left $ ResourceError $ InvalidResourceState $ pack $ BS.unpack reason
+        Right TransactionDeferred -> pure $ Left $ ResourceError $ ResourceNotFound (EntityHash $ Hash "Transaction inputs not available")
+        Right TransactionValid -> do
+            -- Mark all input resources as spent
+            let txHash = computeHash tx Nothing
+
+            forM_ (urtInputs tx) $ \inputMsg -> do
+                -- Extract the content from the authenticated message
+                let res = camContent (amPayload inputMsg)
+                -- Mark resource as spent
+                let updatedRes = res{resourceSpentBy = Just txHash}
+                send $ ResourceOpUpdateResource updatedRes
+
+            -- Create all output resources
+            outputResources <- forM (urtOutputs tx) $ \outputMsg -> do
+                -- For ContentAddressedMessage Resource, we can directly access the content
+                let res = camContent outputMsg
+                -- Create the resource
+                send $ ResourceOpCreateResource res
+                pure res
+
+            -- Return the created resources
+            pure $ Right outputResources
+
+-- | Get transaction history for a resource
+getTransactionHistoryOp ::
+    (Members '[ResourceOperationEffect, Error AppError] r) =>
+    ResourceHash ->
+    Sem r (Either AppError [UnifiedResourceTransaction])
+getTransactionHistoryOp resourceHash = do
+    -- Get the resource
+    resourceResult <- send $ ResourceOpGetResourceById resourceHash
+    case resourceResult of
+        Left err -> pure $ Left err
+        Right resource -> do
+            -- Get all transactions that created this resource
+            parentTxs <- forM (resourceParents resource) $ \parentHash -> do
+                txResult <- send $ ResourceOpGetTransactionByOutput parentHash
+                case txResult of
+                    Left _ -> pure Nothing
+                    Right tx -> pure (Just tx)
+            let validParentTxs = catMaybes parentTxs
+
+            -- Get all transactions that spent this resource
+            spentTx <- case resourceSpentBy resource of
+                Nothing -> pure []
+                Just txHash -> do
+                    txResult <- send $ ResourceOpGetUnifiedTransactionByHash txHash
+                    case txResult of
+                        Left _ -> pure []
+                        Right tx -> pure [tx]
+
+            -- Return all transactions
+            pure $ Right $ validParentTxs ++ spentTx
 
 -- | Interpret the timeline resource effect
 interpretTimelineResource ::
@@ -709,13 +890,9 @@ interpretTimelineResource ::
     Sem r a
 interpretTimelineResource logRef = interpret \case
     -- Get the current resource time from the logical clock
-    GetResourceTime -> do
-        trace "Getting current logical time for resource"
-        send GetCurrentTime
-
+    GetResourceTime -> send GetCurrentTime
     -- Log a new resource event
     LogResourceEvent event -> do
-        trace "Logging new resource event"
         currentLog <- liftIO $ readIORef logRef
         -- Create a log entry using the Events module's function
         let newEntry =
@@ -732,15 +909,8 @@ interpretTimelineResource logRef = interpret \case
 
     -- Lookup a resource by its hash
     GetResourceByHash hash -> do
-        trace $ "Looking up resource with hash: " <> show hash
         log <- liftIO $ readIORef logRef
         pure $ findResourceInLog hash log
-
-    -- Lookup a transaction by its hash
-    GetTransactionByHash hash -> do
-        trace $ "Looking up transaction with hash: " <> show hash
-        log <- liftIO $ readIORef logRef
-        pure $ findTransactionInLog hash log
 
 -- | Interpret cryptographic operations
 interpretCryptoOperation :: (Members '[Error AppError, Output String] r) => Sem (CryptoOperation ': r) a -> Sem r a
@@ -884,3 +1054,219 @@ semAuthenticateMessage msg = do
     if verifyMessageSignature msg
         then pure $ Right True
         else pure $ Left (CryptoError InvalidSignatureError)
+
+-- | Resource operations for managing timeline resources
+class ResourceOps m where
+    createResource :: ByteString -> ActorHash -> TimelineHash -> m (Either AppError Resource)
+    transferResource :: Resource -> ActorHash -> TimelineHash -> m (Either AppError Resource)
+    consumeResource :: Resource -> m (Either AppError ())
+    verifyResource :: Resource -> m (Either AppError Bool)
+    getResourceById :: ResourceHash -> m (Either AppError Resource)
+    getResourcesByOwner :: ActorHash -> m (Either AppError [Resource])
+    getResourcesByTimeline :: TimelineHash -> m (Either AppError [Resource])
+
+    -- New unified transaction methods
+    createUnifiedTransaction :: [Resource] -> [Resource] -> Actor -> TimelineHash -> m (Either AppError UnifiedResourceTransaction)
+    validateTransaction :: UnifiedResourceTransaction -> m (Either AppError TransactionValidationResult)
+    executeTransaction :: UnifiedResourceTransaction -> m (Either AppError [Resource])
+    getTransactionHistory :: ResourceHash -> m (Either AppError [UnifiedResourceTransaction])
+
+-- | Resource operations effect
+data ResourceOperationEffect m a where
+    ResourceOpCreateResource :: Resource -> ResourceOperationEffect m Resource
+    ResourceOpUpdateResource :: Resource -> ResourceOperationEffect m Resource
+    ResourceOpGetResourceById :: ResourceHash -> ResourceOperationEffect m (Either AppError Resource)
+    ResourceOpGetResourcesByOwner :: ActorHash -> ResourceOperationEffect m [Resource]
+    ResourceOpGetResourcesByTimeline :: TimelineHash -> ResourceOperationEffect m [Resource]
+    ResourceOpGetUnifiedTransactionByHash :: Hash -> ResourceOperationEffect m (Either AppError UnifiedResourceTransaction)
+    ResourceOpGetTransactionByOutput :: ResourceHash -> ResourceOperationEffect m (Either AppError UnifiedResourceTransaction)
+
+makeSem ''ResourceOperationEffect
+
+-- | Interpret the timeline resource effect
+interpretResourceOp :: (Members '[Polysemy.State.State ResourceLog, Error AppError, Trace] r) => Sem (ResourceOperationEffect ': r) a -> Sem r a
+interpretResourceOp = interpret \case
+    ResourceOpCreateResource resource -> do
+        -- Add resource to the log
+        let event =
+                ResourceEvent
+                    { reContent = ResourceCreated resource
+                    , reMetadata = undefined -- TODO: Fix this
+                    , rePreviousEvent = Nothing
+                    }
+            eventHash = computeHash event Nothing
+            entry =
+                LogEntry
+                    { leContent = ResourceCreated resource
+                    , leMetadata = undefined -- TODO: Fix this
+                    , leHash = eventHash
+                    , lePrevHash = Nothing
+                    }
+        Polysemy.State.modify (\log -> entry : log)
+        pure resource
+    ResourceOpUpdateResource resource -> do
+        -- Update resource in the log
+        let event =
+                ResourceEvent
+                    { reContent = ResourceCreated resource -- Using ResourceCreated as a temporary fix
+                    , reMetadata = undefined -- TODO: Fix this
+                    , rePreviousEvent = Nothing
+                    }
+            eventHash = computeHash event Nothing
+            entry =
+                LogEntry
+                    { leContent = ResourceCreated resource -- Using ResourceCreated as a temporary fix
+                    , leMetadata = undefined -- TODO: Fix this
+                    , leHash = eventHash
+                    , lePrevHash = Nothing
+                    }
+        Polysemy.State.modify (\log -> entry : log)
+        pure resource
+    ResourceOpGetResourceById resourceHash -> do
+        log <- Polysemy.State.get
+        case findResourceInLog (unEntityHash resourceHash) log of
+            Nothing ->
+                pure $ Left $ ResourceError $ ResourceNotFound resourceHash
+            Just resource ->
+                pure $ Right resource
+    ResourceOpGetResourcesByOwner ownerHash -> do
+        log <- Polysemy.State.get
+        let resources = [res | LogEntry{leContent = ResourceCreated res} <- log, resourceOwner res == ownerHash]
+        pure resources
+    ResourceOpGetResourcesByTimeline timelineHash -> do
+        log <- Polysemy.State.get
+        let resources = [res | LogEntry{leContent = ResourceCreated res} <- log, resourceOrigin res == timelineHash]
+        pure resources
+    ResourceOpGetUnifiedTransactionByHash txHash -> do
+        log <- Polysemy.State.get
+        case findUnifiedTransactionInLog txHash log of
+            Nothing ->
+                pure $ Left $ ResourceError $ ResourceNotFound (EntityHash $ Hash "Transaction not found")
+            Just tx ->
+                pure $ Right tx
+    ResourceOpGetTransactionByOutput resourceHash -> do
+        log <- Polysemy.State.get
+        let transactions =
+                [ tx | LogEntry{leContent = ResourceTransferred tx} <- log, any (\output -> resourceId (camContent output) == resourceHash) (urtOutputs tx)
+                ]
+        case listToMaybe transactions of
+            Nothing ->
+                pure $ Left $ ResourceError $ ResourceNotFound (EntityHash $ Hash "Transaction not found")
+            Just tx ->
+                pure $ Right tx
+
+-- | Implement the ResourceOps class for the Sem monad
+instance (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) => ResourceOps (Sem r) where
+    createResource metadata ownerHash timelineHash = do
+        -- Create a new resource
+        let resourceId = EntityHash $ computeSha256 $ encode (metadata, ownerHash, timelineHash)
+            resource =
+                Resource
+                    { resourceId = resourceId
+                    , resourceOrigin = timelineHash
+                    , resourceOwner = ownerHash
+                    , resourceCapabilities = [Types.TransferCapability, Types.UpdateCapability]
+                    , resourceMeta = metadata
+                    , resourceSpentBy = Nothing
+                    , resourceParents = []
+                    , resourceTimestamp = LamportTime 0 -- TODO: Get proper timestamp
+                    , resourceProvenanceChain = [timelineHash]
+                    }
+        -- Add resource to the log
+        createdResource <- send $ ResourceOpCreateResource resource
+        pure $ Right createdResource
+
+    transferResource resource newOwnerHash timelineHash = do
+        -- Check if resource is already spent
+        let resourceHash = resourceId resource
+        existingResource <- send $ ResourceOpGetResourceById resourceHash
+        case existingResource of
+            Left err -> pure $ Left err
+            Right foundResource ->
+                if isJust (resourceSpentBy foundResource)
+                    then pure $ Left $ ResourceError $ InvalidResourceState "Resource already spent"
+                    else do
+                        -- Create a new resource with new owner
+                        let transferredResource =
+                                resource
+                                    { resourceOwner = newOwnerHash
+                                    , resourceOrigin = timelineHash
+                                    , resourceProvenanceChain = resourceProvenanceChain resource ++ [timelineHash]
+                                    }
+                        -- Mark original as spent
+                        let spentResource = resource{resourceSpentBy = Just $ computeHash transferredResource Nothing}
+                        _ <- send $ ResourceOpUpdateResource spentResource
+                        updatedResource <- send $ ResourceOpCreateResource transferredResource
+                        pure $ Right updatedResource
+
+    consumeResource resource = do
+        -- Check if resource is already spent
+        let resourceHash = resourceId resource
+        existingResource <- send $ ResourceOpGetResourceById resourceHash
+        case existingResource of
+            Left err -> pure $ Left err
+            Right foundResource ->
+                if isJust (resourceSpentBy foundResource)
+                    then pure $ Left $ ResourceError $ InvalidResourceState "Resource already spent"
+                    else do
+                        -- Mark resource as spent with a placeholder transaction
+                        let spentResource = resource{resourceSpentBy = Just $ Hash "Consumed"}
+                        _ <- send $ ResourceOpUpdateResource spentResource
+                        pure $ Right ()
+
+{- | Demonstrate how to use the unified resource transaction model
+This function creates a resource, transfers it to another actor, and then consumes it
+-}
+demonstrateUnifiedTransactionModel ::
+    (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
+    Actor ->
+    Actor ->
+    TimelineHash ->
+    Sem r (Either AppError [Resource])
+demonstrateUnifiedTransactionModel actor1 actor2 timeline = do
+    -- 1. Create a resource owned by actor1
+    let metadata = "1234" :: ByteString -- More idiomatic with OverloadedStrings
+
+    -- Create a new resource
+    let resId = EntityHash $ computeSha256 $ encode (metadata, actorId actor1, timeline)
+        resource =
+            Resource
+                { resourceId = resId
+                , resourceOrigin = timeline
+                , resourceOwner = actorId actor1
+                , resourceCapabilities = [Types.TransferCapability, Types.DelegateCapability]
+                , resourceMeta = metadata
+                , resourceSpentBy = Nothing
+                , resourceParents = []
+                , resourceTimestamp = LamportTime 0 -- TODO: Get proper timestamp
+                , resourceProvenanceChain = [timeline]
+                }
+    createdResource <- send $ ResourceOpCreateResource resource
+
+    -- 2. Transfer the resource to actor2
+    -- Create a new resource with new owner
+    let transferredResource =
+            createdResource
+                { resourceOwner = actorId actor2
+                , resourceOrigin = timeline
+                , resourceProvenanceChain = resourceProvenanceChain createdResource ++ [timeline]
+                }
+    -- Mark original as spent
+    let spentResource = createdResource{resourceSpentBy = Just $ computeHash transferredResource Nothing}
+    _ <- send $ ResourceOpUpdateResource spentResource
+    updatedResource <- send $ ResourceOpCreateResource transferredResource
+
+    -- 3. Create a transaction that consumes the resource and creates two new resources
+    let outputResource1 = updatedResource{resourceMeta = "ABCD" :: ByteString} -- Using ByteString literals
+        outputResource2 = updatedResource{resourceMeta = "EFGH" :: ByteString} -- Using ByteString literals
+
+    -- Create the unified transaction
+    txResult <- createUnifiedTransactionOp [updatedResource] [outputResource1, outputResource2] actor2 timeline (LamportTime 1) (PrivKey "TODO")
+    case txResult of
+        Left err -> pure $ Left err
+        Right transaction -> do
+            -- 4. Execute the transaction
+            executeResult <- executeTransactionOp transaction
+            case executeResult of
+                Left err -> pure $ Left err
+                Right outputResources -> pure $ Right outputResources
