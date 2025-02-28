@@ -132,14 +132,14 @@ import Data.ByteArray (convert)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS
 import Data.IORef ()
-import Data.List (nub, union)
+import Data.List (nub, sortBy, union)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
-import Data.Ord ()
+import Data.Ord (comparing)
 import Data.Serialize (decode, encode)
 import Data.Text (Text, pack, unpack)
-import Data.Time.Clock (UTCTime, getCurrentTime)
+import Data.Time.Clock (getCurrentTime)
 import Polysemy (Embed, Member, Members, Sem, interpret, makeSem, runM, send)
 import Polysemy.Error (Error, runError, throw)
 import Polysemy.Output (Output, output, runOutputList)
@@ -171,7 +171,6 @@ import TimeBandits.Types (
     ResourceEventType (..),
     ResourceHash,
     ResourceLog,
-    ResourceTransaction (..),
     Signature (..),
     StorageErrorType (..),
     TimelineBlock (..),
@@ -335,8 +334,9 @@ getResourceWithLineage targetHash log =
 isRelevantEvent :: ResourceHash -> LogEntry ResourceEventType -> Bool
 isRelevantEvent hash entry = case leContent entry of
     ResourceCreated res -> resourceId res == hash
-    ResourceConsumed tx -> hash `elem` rtInputs tx || any ((== hash) . resourceId) (rtOutputs tx)
+    ResourceTransferred tx -> any (\output -> resourceId (camContent output) == hash) (urtOutputs tx)
     ResourceCapabilityChecked{rcCheckedResource = checkedHash} -> checkedHash == hash
+    ResourceVerified{rvResource = verifiedHash} -> verifiedHash == hash
 
 -- | Root timeline hash for actor events
 rootTimelineHash :: TimelineHash

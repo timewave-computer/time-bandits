@@ -87,9 +87,6 @@ module TimeBandits.Types (
   -- * Resource Capabilities
   ResourceCapability (..),
 
-  -- * Resource Transaction Types
-  ResourceTransaction (..),
-
   -- * Cryptographic Functions
   signMessage,
   verifySignature,
@@ -345,10 +342,9 @@ data ActorEventType
   deriving stock (Generic)
   deriving anyclass (S.Serialize)
 
--- | Types of resource events
+-- | Resource event types
 data ResourceEventType
   = ResourceCreated Resource -- Resource was created
-  | ResourceConsumed ResourceTransaction -- Resource was consumed and new ones created
   | ResourceTransferred UnifiedResourceTransaction -- Resource was transferred to a new owner
   | ResourceCapabilityChecked -- Check if a resource is unspent and has capability
       { rcCheckedResource :: ResourceHash
@@ -478,13 +474,22 @@ data StorageErrorType
   | ReplicationFailure Text
   deriving stock (Show, Eq)
 
--- | A resource transaction that consumes and creates resources
-data ResourceTransaction = ResourceTransaction
-  { rtInputs :: [ResourceHash] -- Resources to be consumed
-  , rtOutputs :: [Resource] -- New resources to be created
-  , rtTimestamp :: LamportTime -- When the transaction occurred
-  , rtSigner :: PubKey -- Who authorized the transaction
-  , rtSignature :: Signature -- Proof of authorization
+-- | A content-addressed message
+data ContentAddressedMessage a = ContentAddressedMessage
+  { camHash :: Hash -- Hash of the message content
+  , camContent :: a -- The actual message content
+  }
+  deriving stock (Eq, Show)
+  deriving stock (Generic)
+  deriving anyclass (S.Serialize)
+
+-- | A content-addressed authenticated message
+data AuthenticatedMessage a = AuthenticatedMessage
+  { amHash :: Hash -- Hash of the message content and metadata
+  , amSender :: Actor -- Sender actor
+  , amDestination :: Maybe ActorHash -- Optional recipient hash (if direct messaging)
+  , amPayload :: ContentAddressedMessage a -- Message payload
+  , amSignature :: Signature -- Cryptographic proof of authenticity
   }
   deriving stock (Eq, Show)
   deriving stock (Generic)
@@ -553,24 +558,3 @@ verifySignature (PubKey pubKey) msg (Signature sig) =
       case Ed25519.signature sig of
         CryptoFailed _ -> False
         CryptoPassed sig' -> Ed25519.verify pk msg sig'
-
--- | A content-addressed message
-data ContentAddressedMessage a = ContentAddressedMessage
-  { camHash :: Hash -- Hash of the message content
-  , camContent :: a -- The actual message content
-  }
-  deriving stock (Eq, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | A content-addressed authenticated message
-data AuthenticatedMessage a = AuthenticatedMessage
-  { amHash :: Hash -- Hash of the message content and metadata
-  , amSender :: Actor -- Sender actor
-  , amDestination :: Maybe ActorHash -- Optional recipient hash (if direct messaging)
-  , amPayload :: ContentAddressedMessage a -- Message payload
-  , amSignature :: Signature -- Cryptographic proof of authenticity
-  }
-  deriving stock (Eq, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
