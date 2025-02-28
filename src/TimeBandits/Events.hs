@@ -19,6 +19,8 @@ It defines:
 2. Event validation and verification
 3. Event processing and effects
 4. Common event utilities
+
+Note: Common utilities have been moved to TimeBandits.Utils module for better organization.
 -}
 module TimeBandits.Events (
   -- * Type Classes
@@ -29,34 +31,31 @@ module TimeBandits.Events (
   EventMetadata (..),
   LogEntry (..),
 
-  -- * Event Utilities
+  -- * Re-exports from Utils
+
+  -- ** Crypto Utilities
+  derivePubKeyFromPrivKey,
+
+  -- ** Event Utilities
   createEventMetadata,
   verifyEventSignature,
   createLogEntry,
+  rootTimelineHash,
 
-  -- * Message Utilities
+  -- ** Message Utilities
   createAuthenticatedMessage,
-  verifyMessageSignature,
+  verifyMessageSignatureWithKey,
 ) where
 
-import Crypto.Error (CryptoFailable (..))
-import Crypto.PubKey.Ed25519 qualified as Ed25519
-import Data.ByteArray (convert)
-import Data.ByteString ()
-import Data.Map.Strict ()
+import Data.ByteString (ByteString)
 import Data.Serialize (Serialize, encode)
-import Data.Text ()
-import Data.Time.Clock (UTCTime)
-import Polysemy
-import Polysemy.Error (Error, throw)
 import TimeBandits.Core (
   ActorEvent (..),
   ActorHash,
   EntityHash (..),
   EventContent (..),
   EventMetadata (..),
-  Hash (..),
-  LamportTime,
+  Hash,
   LogEntry (..),
   PrivKey (..),
   PubKey (..),
@@ -65,7 +64,6 @@ import TimeBandits.Core (
   TimelineEvent (..),
   TimelineHash,
   computeMessageHash,
-  signMessage,
  )
 import TimeBandits.Types qualified as Core (
   Actor (..),
@@ -74,6 +72,19 @@ import TimeBandits.Types qualified as Core (
   Signature (..),
   verifySignature,
  )
+import TimeBandits.Utils (
+  createAuthenticatedMessage,
+  createEventMetadata,
+  createLogEntry,
+  derivePubKeyFromPrivKey,
+  rootTimelineHash,
+  verifyEventSignature,
+  verifyMessageSignatureWithKey,
+ )
+
+-- -----------------------------------------------------------------------------
+-- Type Classes
+-- -----------------------------------------------------------------------------
 
 {- | Core type class for events in the system
 This typeclass provides a unified interface for all event types, enabling:
@@ -108,78 +119,42 @@ class (Serialize e) => Event e where
   -- | Verify the event's signature
   verifySignature :: e -> Bool
 
--- | Root timeline hash for actor events
-rootTimelineHash :: TimelineHash
-rootTimelineHash = EntityHash $ Hash "root-timeline"
-
-{- | Create event metadata with current time and signature
-This function generates the metadata required for an event, including:
-- Timestamp for ordering events
-- Creation time for real-world reference
-- Digital signature for authenticity verification
-- Public key of the signer
-- Actor and timeline association
+{- | Core type class for messages in the system
+This typeclass provides a unified interface for all message types, enabling:
+- Content addressing through message hashing
+- Sender and destination identification
+- Signature verification for authenticity
+- Content access
+- Conversion between messages and events when applicable
+This abstraction allows the system to handle different message types uniformly
+and integrate with the event system.
 -}
-createEventMetadata ::
-  ( Member (Error Text) r
-  ) =>
-  LamportTime ->
-  UTCTime ->
-  PrivKey ->
-  ActorHash ->
-  TimelineHash ->
-  ByteString ->
-  Sem r EventMetadata
-createEventMetadata timestamp now privKey actor timeline content =
-  case signMessage privKey content of
-    Left err -> throw $ "Failed to sign event: " <> err
-    Right signature ->
-      pure $
-        EventMetadata
-          { emTimestamp = timestamp
-          , emCreatedAt = now
-          , emSignature = signature
-          , emSigner = derivePubKey privKey
-          , emActor = actor
-          , emTimeline = timeline
-          }
+class (Serialize m) => Message m where
+  -- | Get the content hash of the message
+  messageHash :: m -> Hash
+  messageHash = computeMessageHash
 
--- | Verify an event's signature
-verifyEventSignature :: (Event e) => e -> Bool
-verifyEventSignature event =
-  let meta = metadata event
-      pubKey = emSigner meta
-      sig = emSignature meta
-      content = toEventContent event
-   in Core.verifySignature pubKey (encode content) sig
+  -- | Get the sender of the message
+  messageSender :: m -> Core.Actor
 
-{- | Helper function to derive public key from private key
-Uses the Ed25519 elliptic curve to derive the corresponding public key
-from a private key, ensuring cryptographic security.
--}
-derivePubKey :: PrivKey -> PubKey
-derivePubKey (PrivKey priv) =
-  case Ed25519.secretKey priv of
-    CryptoFailed _ -> PubKey priv -- Fallback for invalid keys
-    CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
+  -- | Get the destination of the message (if any)
+  messageDestination :: m -> Maybe ActorHash
 
-{- | Create a log entry from an event and metadata
-This function converts an event into a log entry for storage in an append-only log.
-The log entry includes:
-- The event content (what happened)
-- The event metadata (when, who, and authentication)
-- The previous event hash (for maintaining the chain)
-- The entry's own hash (for content addressing)
-This structure ensures the integrity and auditability of the event log.
--}
-createLogEntry :: (Event e) => e -> LogEntry EventContent
-createLogEntry event =
-  LogEntry
-    { leContent = toEventContent event
-    , leMetadata = metadata event
-    , lePrevHash = previousEventHash event
-    , leHash = contentHash event
-    }
+  -- | Get the message signature
+  messageSignature :: m -> Core.Signature
+
+  -- | Get the message content
+  messageContent :: m -> ByteString
+
+  -- | Convert message to event content (if applicable)
+  toEvent :: m -> Maybe EventContent
+
+  -- | Verify the message's signature
+  verifyMessageSignature :: m -> Bool
+
+-- -----------------------------------------------------------------------------
+-- Type Class Instances
+-- -----------------------------------------------------------------------------
 
 -- | Instance for ActorEvent
 instance Event ActorEvent where
@@ -219,64 +194,6 @@ instance Event TimelineEvent where
         sig = emSignature meta
         content = encode $ teContent event
      in Core.verifySignature (emSigner meta) content sig
-
-{- | Core type class for messages in the system
-This typeclass provides a unified interface for all message types, enabling:
-- Content addressing through message hashing
-- Sender and destination identification
-- Signature verification for authenticity
-- Content access
-- Conversion between messages and events when applicable
-This abstraction allows the system to handle different message types uniformly
-and integrate with the event system.
--}
-class (Serialize m) => Message m where
-  -- | Get the content hash of the message
-  messageHash :: m -> Hash
-  messageHash = computeMessageHash
-
-  -- | Get the sender of the message
-  messageSender :: m -> Core.Actor
-
-  -- | Get the destination of the message (if any)
-  messageDestination :: m -> Maybe ActorHash
-
-  -- | Get the message signature
-  messageSignature :: m -> Core.Signature
-
-  -- | Get the message content
-  messageContent :: m -> ByteString
-
-  -- | Convert message to event content (if applicable)
-  toEvent :: m -> Maybe EventContent
-
-  -- | Verify the message's signature
-  verifyMessageSignature :: m -> Bool
-
-{- | Create an authenticated message
-This function creates a signed, authenticated message that can be securely
-transmitted between actors. The message includes:
-- The content to be transmitted
-- The sender's identity
-- An optional destination
-- A cryptographic signature proving authenticity
-This ensures secure communication within the distributed system.
--}
-createAuthenticatedMessage ::
-  ( Member (Error Text) r
-  ) =>
-  ByteString ->
-  PrivKey ->
-  Core.Actor ->
-  Maybe ActorHash ->
-  Sem r (Core.AuthenticatedMessage ByteString)
-createAuthenticatedMessage content privKey sender destination =
-  case signMessage privKey content of
-    Left err -> throw $ "Failed to sign message: " <> err
-    Right signature -> do
-      let msgHash = computeMessageHash content
-          payload = Core.ContentAddressedMessage msgHash content
-      pure $ Core.AuthenticatedMessage msgHash sender destination payload signature
 
 -- | Instance for AuthenticatedMessage
 instance Message (Core.AuthenticatedMessage ByteString) where
