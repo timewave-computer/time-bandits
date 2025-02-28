@@ -8,7 +8,7 @@ maintainer:         sam@hxrts.com
 category:           Development
 synopsis:           Distributed time travel
 description:
-  A Haskell library for managing distributed timelines and resource transfers
+  A Haskell library for distributed time travel.
 
 extra-source-files:
   LICENSE
@@ -79,6 +79,7 @@ library
     TimeBandits.Effects
     TimeBandits.Events
     TimeBandits.Types
+    TimeBandits.Utils
 
 executable time-bandits
   import:         shared
