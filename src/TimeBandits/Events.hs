@@ -23,19 +23,11 @@ It defines:
 module TimeBandits.Events (
   -- * Type Classes
   Event (..),
-  EventLogger (..),
   Message (..),
 
   -- * Event Types
   EventMetadata (..),
-  EventResult (..),
-  ValidationResult (..),
-  EventError (..),
   LogEntry (..),
-
-  -- * Message Types
-  MessageResult (..),
-  MessageError (..),
 
   -- * Event Utilities
   createEventMetadata,
@@ -80,7 +72,16 @@ import TimeBandits.Types qualified as Core (
   verifySignature,
  )
 
--- | Core type class for events in the system
+{- | Core type class for events in the system
+This typeclass provides a unified interface for all event types, enabling:
+- Consistent hashing and content addressing
+- Conversion between specific event types and generic event content
+- Timeline and actor association
+- Event chaining through previous event references
+- Access to event metadata
+- Signature verification for authenticity
+This abstraction allows the system to handle different event types uniformly.
+-}
 class (Serialize e) => Event e where
   -- | Get the content hash of the event
   contentHash :: e -> Hash
@@ -108,60 +109,16 @@ class (Serialize e) => Event e where
 rootTimelineHash :: TimelineHash
 rootTimelineHash = EntityHash $ Hash "root-timeline"
 
--- | Type class for event logging
-class EventLogger e where
-  -- | Create a log entry from an event
-  toLogEntry :: e -> LogEntry EventContent
-
-  -- | Get all log entries for a timeline
-  getTimelineLog :: (Member (Error EventError) r) => e -> TimelineHash -> Sem r [LogEntry EventContent]
-
-  -- | Get all log entries for an actor
-  getActorLog :: (Member (Error EventError) r) => e -> ActorHash -> Sem r [LogEntry EventContent]
-
-  -- | Get all log entries for a resource
-  getResourceLog :: (Member (Error EventError) r) => e -> ResourceHash -> Sem r [LogEntry EventContent]
-
-  -- | Append a log entry to a timeline
-  appendToTimeline :: (Member (Error EventError) r) => e -> TimelineHash -> LogEntry EventContent -> Sem r ()
-
--- | Result of event processing
-data EventResult e
-  = -- | Event processed successfully
-    Success e
-  | -- | Event processing deferred (e.g., missing deps)
-    Deferred e
-  | -- | Event processing failed
-    Failed EventError
-  deriving stock (Show, Eq)
-
--- | Result of event validation
-data ValidationResult
-  = -- | Event is valid
-    Valid
-  | -- | Event is invalid with reason
-    Invalid Text
-  | -- | Event depends on missing data
-    MissingDependency Text
-  deriving stock (Show, Eq)
-
--- | Errors that can occur during event handling
-data EventError
-  = -- | Event failed validation
-    ValidationError Text
-  | -- | Error during processing
-    ProcessingError Text
-  | -- | Error storing/retrieving event
-    StorageError Text
-  | -- | Invalid signature
-    SignatureError Text
-  | -- | Missing or invalid dependency
-    DependencyError Text
-  deriving stock (Show, Eq)
-
--- | Create event metadata with current time and signature
+{- | Create event metadata with current time and signature
+This function generates the metadata required for an event, including:
+- Timestamp for ordering events
+- Creation time for real-world reference
+- Digital signature for authenticity verification
+- Public key of the signer
+- Actor and timeline association
+-}
 createEventMetadata ::
-  ( Member (Error EventError) r
+  ( Member (Error Text) r
   ) =>
   LamportTime ->
   UTCTime ->
@@ -172,7 +129,7 @@ createEventMetadata ::
   Sem r EventMetadata
 createEventMetadata timestamp now privKey actor timeline content =
   case signMessage privKey content of
-    Left err -> throw $ SignatureError "Failed to sign event"
+    Left err -> throw $ "Failed to sign event: " <> err
     Right signature ->
       pure $
         EventMetadata
@@ -197,7 +154,15 @@ verifyEventSignature event =
 derivePubKey :: PrivKey -> PubKey
 derivePubKey (PrivKey priv) = PubKey priv -- TODO: Implement proper public key derivation
 
--- | Create a log entry from an event and metadata
+{- | Create a log entry from an event and metadata
+This function converts an event into a log entry for storage in an append-only log.
+The log entry includes:
+- The event content (what happened)
+- The event metadata (when, who, and authentication)
+- The previous event hash (for maintaining the chain)
+- The entry's own hash (for content addressing)
+This structure ensures the integrity and auditability of the event log.
+-}
 createLogEntry :: (Event e) => e -> LogEntry EventContent
 createLogEntry event =
   LogEntry
@@ -220,13 +185,6 @@ instance Event ActorEvent where
         content = encode $ aeContent event
      in Core.verifySignature (emSigner meta) content sig
 
-instance EventLogger ActorEvent where
-  toLogEntry = createLogEntry
-  getTimelineLog _ _ = undefined -- TODO: Implement
-  getActorLog _ _ = undefined -- TODO: Implement
-  getResourceLog _ _ = pure [] -- Actors don't have resource logs
-  appendToTimeline _ _ _ = undefined -- TODO: Implement
-
 -- | Instance for ResourceEvent
 instance Event ResourceEvent where
   toEventContent event = ResourceEventContent $ reContent event
@@ -239,13 +197,6 @@ instance Event ResourceEvent where
         sig = emSignature meta
         content = encode $ reContent event
      in Core.verifySignature (emSigner meta) content sig
-
-instance EventLogger ResourceEvent where
-  toLogEntry = createLogEntry
-  getTimelineLog _ _ = undefined -- TODO: Implement
-  getActorLog _ _ = pure [] -- Resources don't have actor logs
-  getResourceLog _ _ = undefined -- TODO: Implement
-  appendToTimeline _ _ _ = undefined -- TODO: Implement
 
 -- | Instance for TimelineEvent
 instance Event TimelineEvent where
@@ -260,14 +211,16 @@ instance Event TimelineEvent where
         content = encode $ teContent event
      in Core.verifySignature (emSigner meta) content sig
 
-instance EventLogger TimelineEvent where
-  toLogEntry = createLogEntry
-  getTimelineLog _ _ = pure [] -- Timelines don't have timeline logs
-  getActorLog _ _ = pure [] -- Timelines don't have actor logs
-  getResourceLog _ _ = pure [] -- Timelines don't have resource logs
-  appendToTimeline _ _ _ = pure () -- TODO: Implement
-
--- | Core type class for messages in the system
+{- | Core type class for messages in the system
+This typeclass provides a unified interface for all message types, enabling:
+- Content addressing through message hashing
+- Sender and destination identification
+- Signature verification for authenticity
+- Content access
+- Conversion between messages and events when applicable
+This abstraction allows the system to handle different message types uniformly
+and integrate with the event system.
+-}
 class (Serialize m) => Message m where
   -- | Get the content hash of the message
   messageHash :: m -> Hash
@@ -291,33 +244,17 @@ class (Serialize m) => Message m where
   -- | Verify the message's signature
   verifyMessageSignature :: m -> Bool
 
--- | Result of message processing
-data MessageResult m
-  = -- | Message processed successfully
-    MessageSuccess m
-  | -- | Message processing deferred
-    MessageDeferred m
-  | -- | Message processing failed
-    MessageFailed MessageError
-  deriving stock (Show, Eq)
-
--- | Errors that can occur during message handling
-data MessageError
-  = -- | Message failed validation
-    MessageValidationError Text
-  | -- | Error during processing
-    MessageProcessingError Text
-  | -- | Invalid signature
-    MessageSignatureError Text
-  | -- | Delivery error
-    DeliveryError Text
-  | -- | Conversion error
-    ConversionError Text
-  deriving stock (Show, Eq)
-
--- | Create an authenticated message
+{- | Create an authenticated message
+This function creates a signed, authenticated message that can be securely
+transmitted between actors. The message includes:
+- The content to be transmitted
+- The sender's identity
+- An optional destination
+- A cryptographic signature proving authenticity
+This ensures secure communication within the distributed system.
+-}
 createAuthenticatedMessage ::
-  ( Member (Error MessageError) r
+  ( Member (Error Text) r
   ) =>
   ByteString ->
   PrivKey ->
@@ -326,7 +263,7 @@ createAuthenticatedMessage ::
   Sem r (Core.AuthenticatedMessage ByteString)
 createAuthenticatedMessage content privKey sender destination =
   case signMessage privKey content of
-    Left err -> throw $ MessageSignatureError "Failed to sign message"
+    Left err -> throw $ "Failed to sign message: " <> err
     Right signature -> do
       let msgHash = computeMessageHash content
           payload = Core.ContentAddressedMessage msgHash content

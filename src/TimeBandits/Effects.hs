@@ -147,7 +147,12 @@ import Polysemy.Reader
 import Polysemy.State
 import Polysemy.Trace (Trace, trace, traceToStdout)
 import TimeBandits.Core (computeHash, computeMessageHash, computePubKeyHash, computeSha256)
-import TimeBandits.Events hiding (StorageError, getTimelineLog)
+import TimeBandits.Events (
+    Event (..),
+    Message (..),
+    createLogEntry,
+    verifyEventSignature,
+ )
 import TimeBandits.Types (
     Actor (..),
     ActorErrorType (..),
@@ -356,7 +361,7 @@ maybeVal ?!> err = do
 
 -- | Sort events by timestamp
 sortEventsByTimestamp :: [LogEntry a] -> [LogEntry a]
-sortEventsByTimestamp = sortWith (emTimestamp . leMetadata)
+sortEventsByTimestamp = sortBy (comparing (emTimestamp . leMetadata))
 
 -- | Convert between event types
 convertEventType :: TimelineEventType -> EventContent
@@ -815,7 +820,13 @@ validateTransactionOp tx = do
                         then pure $ Right TransactionDeferred
                         else pure $ Right TransactionValid
 
--- | Execute a unified resource transaction
+{- | Execute a unified resource transaction
+This function processes a validated transaction by:
+1. Marking all input resources as spent by updating their resourceSpentBy field
+2. Creating all output resources in the datastore
+3. Returning the newly created resources upon success
+The function maintains the UTXO model integrity by ensuring proper resource lifecycle.
+-}
 executeTransactionOp ::
     (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
     UnifiedResourceTransaction ->
@@ -850,7 +861,12 @@ executeTransactionOp tx = do
             -- Return the created resources
             pure $ Right outputResources
 
--- | Get transaction history for a resource
+{- | Get transaction history for a resource
+Retrieves the complete transaction history for a resource by:
+1. Finding all parent transactions that created this resource
+2. Finding any transaction that spent this resource
+This provides a complete audit trail of the resource's lifecycle.
+-}
 getTransactionHistoryOp ::
     (Members '[ResourceOperationEffect, Error AppError] r) =>
     ResourceHash ->
@@ -881,7 +897,13 @@ getTransactionHistoryOp resourceHash = do
             -- Return all transactions
             pure $ Right $ validParentTxs ++ spentTx
 
--- | Interpret the timeline resource effect
+{- | Interpret the timeline resource effect
+This interpreter handles resource-related operations within a timeline:
+- Tracking resource time using the logical clock
+- Logging resource events to maintain history
+- Looking up resources by their hash
+It maintains the resource state in an append-only log for auditability.
+-}
 interpretTimelineResource ::
     ( Members '[Trace, Embed IO, LogicalClock, Output String, Error AppError] r
     ) =>
@@ -1215,7 +1237,13 @@ instance (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Tr
                         pure $ Right ()
 
 {- | Demonstrate how to use the unified resource transaction model
-This function creates a resource, transfers it to another actor, and then consumes it
+This function creates a resource, transfers it to another actor, and then consumes it.
+It serves as a complete example of the resource lifecycle:
+1. Resource creation - Initializing a new resource owned by actor1
+2. Resource transfer - Transferring ownership to actor2 while maintaining provenance
+3. Resource consumption - Creating a transaction that consumes the resource and creates two new ones
+This demonstrates the UTXO-based resource model where resources are neither created nor destroyed,
+but rather transformed through transactions.
 -}
 demonstrateUnifiedTransactionModel ::
     (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>

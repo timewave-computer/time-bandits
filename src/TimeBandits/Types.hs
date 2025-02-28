@@ -201,7 +201,14 @@ defaultSystemConfig =
     , scMaxRetries = 3
     }
 
--- | A digital object tracked across timelines with UTXO-like structure.
+{- | A digital object tracked across timelines with UTXO-like structure.
+Resources are the fundamental units of value in the system and follow
+an unspent transaction output (UTXO) model where:
+- Resources are created as outputs of transactions
+- Resources can be consumed (spent) only once as inputs to new transactions
+- Resources maintain their provenance chain across timelines
+- Resources have capabilities that determine what actions can be performed with them
+-}
 data Resource = Resource
   { resourceId :: ResourceHash -- Unique identifier (SHA-256)
   , resourceOrigin :: TimelineHash -- Origin timeline
@@ -385,9 +392,6 @@ data TimelineBlock = TimelineBlock
 -- | Log of events for a specific resource
 type ResourceLog = [LogEntry ResourceEventType]
 
--- | Log of events for a specific actor
-type ActorLog = [LogEntry ActorEventType]
-
 -- | A timeline-specific log containing all events
 data TimelineLog = TimelineLog
   { tlEvents :: Trie (LogEntry TimelineEventType)
@@ -496,7 +500,13 @@ data AuthenticatedMessage a = AuthenticatedMessage
   deriving anyclass (S.Serialize)
 
 {- | A unified resource transaction that integrates with the message system
-This represents a bundle of messages that form a transaction
+This represents a bundle of messages that form a transaction.
+The transaction follows the UTXO model where:
+- Input resources are consumed (marked as spent)
+- Output resources are created
+- The transaction is signed by an actor with appropriate capabilities
+- The transaction maintains the provenance chain across timelines
+This design ensures atomic operations and maintains a complete audit trail.
 -}
 data UnifiedResourceTransaction = UnifiedResourceTransaction
   { urtInputs :: [AuthenticatedMessage Resource] -- Input resources (must be unspent)
@@ -511,7 +521,13 @@ data UnifiedResourceTransaction = UnifiedResourceTransaction
   deriving stock (Generic)
   deriving anyclass (S.Serialize)
 
--- | Result of a resource transaction validation
+{- | Result of a resource transaction validation
+This represents the three possible states of transaction validation:
+- Valid: The transaction can be executed
+- Invalid: The transaction cannot be executed (with reason)
+- Deferred: The transaction validation is postponed (e.g., waiting for inputs)
+This allows for flexible transaction processing in distributed environments.
+-}
 data TransactionValidationResult
   = TransactionValid -- Transaction is valid
   | TransactionInvalid ByteString -- Transaction is invalid with reason
