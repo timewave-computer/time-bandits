@@ -40,7 +40,7 @@ main = Utf8.withUtf8 $ do
 
   -- Initialize empty logs
   resourceLogRef <- newIORef [] -- Empty resource log
-  actorLogRef <- newIORef (Log []) -- Empty actor log (MapOfTime)
+  actorLogRef <- newIORef (Log []) -- Empty actor log
   timelineLogRef <- newIORef (Log []) -- Empty timeline log
 
   -- Initialize empty transient datastore
