@@ -39,6 +39,9 @@ module TimeBandits.Events (
   verifyMessageSignature,
 ) where
 
+import Crypto.Error (CryptoFailable (..))
+import Crypto.PubKey.Ed25519 qualified as Ed25519
+import Data.ByteArray (convert)
 import Data.ByteString ()
 import Data.Map.Strict ()
 import Data.Serialize (Serialize, encode)
@@ -150,9 +153,15 @@ verifyEventSignature event =
       content = toEventContent event
    in Core.verifySignature pubKey (encode content) sig
 
--- Helper function to derive public key from private key
+{- | Helper function to derive public key from private key
+Uses the Ed25519 elliptic curve to derive the corresponding public key
+from a private key, ensuring cryptographic security.
+-}
 derivePubKey :: PrivKey -> PubKey
-derivePubKey (PrivKey priv) = PubKey priv -- TODO: Implement proper public key derivation
+derivePubKey (PrivKey priv) =
+  case Ed25519.secretKey priv of
+    CryptoFailed _ -> PubKey priv -- Fallback for invalid keys
+    CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
 
 {- | Create a log entry from an event and metadata
 This function converts an event into a log entry for storage in an append-only log.

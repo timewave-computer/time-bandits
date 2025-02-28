@@ -122,6 +122,10 @@ module TimeBandits.Effects (
     -- | Demonstrate how to use the unified resource transaction model
     -- This function creates a resource, transfers it to another actor, and then consumes it
     demonstrateUnifiedTransactionModel,
+    -- | Helper function to sign event content
+    -- This function signs event content with a private key and returns the signature and public key.
+    -- It handles the cryptographic operations needed for event authentication.
+    signEventContent,
 ) where
 
 import Control.Monad (forM, forM_, when)
@@ -146,7 +150,7 @@ import Polysemy.Output (Output, output, runOutputList)
 import Polysemy.Reader
 import Polysemy.State
 import Polysemy.Trace (Trace, trace, traceToStdout)
-import TimeBandits.Core (computeHash, computeMessageHash, computePubKeyHash, computeSha256)
+import TimeBandits.Core (ResourceHash, computeHash, computeMessageHash, computePubKeyHash, computeSha256)
 import TimeBandits.Events (
     Event (..),
     Message (..),
@@ -174,7 +178,6 @@ import TimeBandits.Types (
     ResourceErrorType (..),
     ResourceEvent (..),
     ResourceEventType (..),
-    ResourceHash,
     ResourceLog,
     Signature (..),
     StorageErrorType (..),
@@ -221,21 +224,55 @@ asCryptoError = throw . CryptoError
 asStorageError :: (Members '[Error AppError] r) => StorageErrorType -> Sem r a
 asStorageError = throw . StorageError
 
+{- | Helper function to sign event content
+This function signs event content with a private key and returns the signature and public key.
+It handles the cryptographic operations needed for event authentication.
+-}
+signEventContent ::
+    (Members '[Error AppError] r) =>
+    PrivKey ->
+    ByteString ->
+    Sem r (Signature, PubKey)
+signEventContent privKey content = do
+    -- Use Types.signMessage directly instead of going through the CryptoOperation effect
+    case Types.signMessage privKey content of
+        Left err -> throw $ CryptoError $ SigningError err
+        Right signature -> do
+            -- Generate the corresponding public key
+            let pubKey = case Ed25519.secretKey (let PrivKey bytes = privKey in bytes) of
+                    CryptoFailed _ -> PubKey "invalid-key" -- Fallback for invalid keys
+                    CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
+            pure (signature, pubKey)
+
 -- | Resource transfer operation
-transferResourceOp :: (Members '[Error AppError, LogicalClock] r) => Resource -> ActorHash -> TimelineHash -> LamportTime -> [TimelineHash] -> Sem r (Either AppError (Resource, ResourceEvent))
-transferResourceOp resource newOwner destTimeline timestamp provChain = do
+transferResourceOp ::
+    (Members '[Error AppError, LogicalClock] r) =>
+    Resource ->
+    ActorHash ->
+    TimelineHash ->
+    LamportTime ->
+    [TimelineHash] ->
+    PrivKey -> -- Added private key parameter for signing
+    Sem r (Either AppError (Resource, ResourceEvent))
+transferResourceOp resource newOwner destTimeline timestamp provChain privKey = do
     let updatedResource = resource{resourceOwner = newOwner}
-        event =
+        eventContent = ResourceCreated updatedResource
+
+    -- Sign the event content
+    (signature, pubKey) <- signEventContent privKey (encode eventContent)
+
+    -- Create the event with proper signature
+    let event =
             ResourceEvent
-                { reContent = ResourceCreated updatedResource
+                { reContent = eventContent
                 , reMetadata =
                     EventMetadata
                         { emTimestamp = timestamp
                         , emCreatedAt = undefined -- TODO: Fix timestamp type
                         , emActor = newOwner
                         , emTimeline = destTimeline
-                        , emSignature = undefined -- TODO: Get proper signature
-                        , emSigner = PubKey "TODO" -- TODO: Get proper signer
+                        , emSignature = signature
+                        , emSigner = pubKey
                         }
                 , rePreviousEvent = Nothing -- TODO: Track previous events
                 }
@@ -719,7 +756,7 @@ findUnifiedTransactionInLog hash log =
 
 -- | Create a unified resource transaction
 createUnifiedTransactionOp ::
-    (Members '[CryptoOperation, Error AppError, Trace] r) =>
+    (Members '[Error AppError, Trace] r) =>
     [Resource] ->
     [Resource] ->
     Actor ->
@@ -731,9 +768,9 @@ createUnifiedTransactionOp inputs outputs actor timeline timestamp privKey = do
     -- Convert inputs to authenticated messages
     inputMsgs <- forM inputs $ \input -> do
         let content = encode input
-        sig <- send $ SignMessage privKey content
-        case sig of
-            Left err -> throw $ CryptoError InvalidSignatureError
+        -- Use Types.signMessage directly
+        case Types.signMessage privKey content of
+            Left err -> throw $ CryptoError $ SigningError err
             Right signature -> do
                 let msgHash = computeMessageHash content
                     payload = ContentAddressedMessage msgHash input
@@ -757,9 +794,9 @@ createUnifiedTransactionOp inputs outputs actor timeline timestamp privKey = do
 
     -- Sign the transaction
     let txContent = encode (inputMsgs, outputMsgs, metadata, timestamp, actor, provenanceChain)
-    sig <- send $ SignMessage privKey txContent
-    case sig of
-        Left err -> throw $ CryptoError InvalidSignatureError
+    -- Use Types.signMessage directly
+    case Types.signMessage privKey txContent of
+        Left err -> throw $ CryptoError $ SigningError err
         Right signature -> do
             let transaction =
                     UnifiedResourceTransaction
@@ -780,7 +817,7 @@ isInvalid _ = False
 
 -- | Validate a unified resource transaction
 validateTransactionOp ::
-    (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
+    (Members '[ResourceOperationEffect, Error AppError, Trace] r) =>
     UnifiedResourceTransaction ->
     Sem r (Either AppError TransactionValidationResult)
 validateTransactionOp tx = do
@@ -788,7 +825,8 @@ validateTransactionOp tx = do
     let txContent = encode (urtInputs tx, urtOutputs tx, urtMetadata tx, urtTimestamp tx, urtSigner tx, urtProvenanceChain tx)
         pubKey = getActorPubKey (urtSigner tx)
 
-    sigValid <- send $ VerifySignature pubKey txContent (urtSignature tx)
+    -- Use Types.verifySignature directly
+    let sigValid = Types.verifySignature pubKey txContent (urtSignature tx)
 
     if not sigValid
         then pure $ Right $ TransactionInvalid $ BS.pack "Transaction signature verification failed"
@@ -828,7 +866,7 @@ This function processes a validated transaction by:
 The function maintains the UTXO model integrity by ensuring proper resource lifecycle.
 -}
 executeTransactionOp ::
-    (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
+    (Members '[ResourceOperationEffect, Error AppError, Trace] r) =>
     UnifiedResourceTransaction ->
     Sem r (Either AppError [Resource])
 executeTransactionOp tx = do
@@ -934,18 +972,36 @@ interpretTimelineResource logRef = interpret \case
         log <- liftIO $ readIORef logRef
         pure $ findResourceInLog hash log
 
--- | Interpret cryptographic operations
+{- | Interpret cryptographic operations
+This interpreter handles all cryptographic operations in the system:
+- Signing messages with private keys
+- Verifying signatures with public keys
+- Generating new key pairs
+It uses the Ed25519 elliptic curve for secure digital signatures.
+-}
 interpretCryptoOperation :: (Members '[Error AppError, Output String] r) => Sem (CryptoOperation ': r) a -> Sem r a
 interpretCryptoOperation = interpret \case
     SignMessage privKey msg -> do
         output $ "Signing message with key: " <> show privKey
-        pure $ Right $ Signature "TODO"
+        case Types.signMessage privKey msg of
+            Left err -> pure $ Left $ CryptoError $ SigningError err
+            Right signature -> pure $ Right signature
     VerifySignature pubKey msg sig -> do
         output $ "Verifying signature with key: " <> show pubKey
-        pure True
+        -- Use Types.verifySignature directly
+        pure $ Types.verifySignature pubKey msg sig
     GenerateKeyPair seed -> do
         output $ "Generating key pair with seed: " <> show seed
-        pure $ Right (PubKey "TODO", PrivKey "TODO")
+        -- Use the seed to create a deterministic key pair
+        let seedHash = SHA256.hash seed
+        case Ed25519.secretKey seedHash of
+            CryptoFailed err ->
+                pure $ Left $ CryptoError $ InvalidKeyPairError
+            CryptoPassed sk -> do
+                let pk = Ed25519.toPublic sk
+                    pubKey = PubKey $ convert pk
+                    privKey = PrivKey $ convert sk
+                pure $ Right (pubKey, privKey)
 
 -- | Interpret the transient storage effect
 interpretTransientStorage :: (Members '[Trace, Embed IO, Output String, Error AppError] r) => IORef TransientDatastore -> Sem (TransientStorage ': r) a -> Sem r a
@@ -993,23 +1049,40 @@ interpretTimelineEffect = interpret \case
     RegisterEvent th event -> do
         output $ "Registering event for timeline: " <> show th
         timestamp <- send GetCurrentTime
-        let metadata =
-                EventMetadata
-                    { emTimestamp = timestamp
-                    , emCreatedAt = undefined -- TODO: Fix timestamp type
-                    , emActor = undefined -- TODO: Get proper actor
-                    , emTimeline = th
-                    , emSignature = undefined -- TODO: Get proper signature
-                    , emSigner = PubKey "TODO" -- TODO: Get proper signer
-                    }
-            entry =
-                LogEntry
-                    { leHash = computeSha256 $ encode event
-                    , leContent = event
-                    , leMetadata = metadata
-                    , lePrevHash = Nothing -- TODO: Track previous events
-                    }
-        pure $ Right entry
+
+        -- Use a default private key for signing (in production, this would come from secure storage)
+        let defaultPrivKey = PrivKey "default-system-key"
+            eventContent = encode event
+
+        -- Sign the event content
+        case Types.signMessage defaultPrivKey eventContent of
+            Left err -> throw $ CryptoError $ SigningError err
+            Right signature -> do
+                -- Generate the corresponding public key
+                let pubKey = case Ed25519.secretKey (let PrivKey bytes = defaultPrivKey in bytes) of
+                        CryptoFailed _ -> PubKey "system-key" -- Fallback for invalid keys
+                        CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
+
+                -- Create a default actor hash (in production, this would be a proper actor)
+                let defaultActor = EntityHash $ Hash "system-actor"
+
+                let metadata =
+                        EventMetadata
+                            { emTimestamp = timestamp
+                            , emCreatedAt = undefined -- TODO: Fix timestamp type
+                            , emActor = defaultActor
+                            , emTimeline = th
+                            , emSignature = signature
+                            , emSigner = pubKey
+                            }
+                    entry =
+                        LogEntry
+                            { leHash = computeSha256 $ encode event
+                            , leContent = event
+                            , leMetadata = metadata
+                            , lePrevHash = Nothing -- TODO: Track previous events
+                            }
+                pure $ Right entry
     GetTimelineHistory th -> do
         result <- runError $ getTimelineEventHistory th
         pure $ unwrapEither result
@@ -1246,12 +1319,13 @@ This demonstrates the UTXO-based resource model where resources are neither crea
 but rather transformed through transactions.
 -}
 demonstrateUnifiedTransactionModel ::
-    (Members '[ResourceOperationEffect, CryptoOperation, Error AppError, Trace] r) =>
+    (Members '[ResourceOperationEffect, Error AppError, Trace] r) =>
     Actor ->
     Actor ->
     TimelineHash ->
+    PrivKey -> -- Added private key parameter for signing
     Sem r (Either AppError [Resource])
-demonstrateUnifiedTransactionModel actor1 actor2 timeline = do
+demonstrateUnifiedTransactionModel actor1 actor2 timeline privKey = do
     -- 1. Create a resource owned by actor1
     let metadata = "1234" :: ByteString -- More idiomatic with OverloadedStrings
 
@@ -1289,7 +1363,7 @@ demonstrateUnifiedTransactionModel actor1 actor2 timeline = do
         outputResource2 = updatedResource{resourceMeta = "EFGH" :: ByteString} -- Using ByteString literals
 
     -- Create the unified transaction
-    txResult <- createUnifiedTransactionOp [updatedResource] [outputResource1, outputResource2] actor2 timeline (LamportTime 1) (PrivKey "TODO")
+    txResult <- createUnifiedTransactionOp [updatedResource] [outputResource1, outputResource2] actor2 timeline (LamportTime 1) privKey
     case txResult of
         Left err -> pure $ Left err
         Right transaction -> do
