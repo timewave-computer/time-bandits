@@ -39,27 +39,69 @@ This is a protoype for working through various ideas about how to write a secure
 - UTXO-like resource system
 - Tracks ownership and metadata with append-only log
 
+### Effect System
 
-## Status
+The application uses a composable effect system built with Polysemy, which allows for separation of concerns via type-safe handling of side effects.
 
-### Implemented
-- Core type system and data structures
-- Event processing
-- Cryptographic operations
-- Basic effect system
-- Resource model
+TA modular interpreter system allows for configurable trace logging, selective effect inclusion/exclusion, and consistent ordering of interpreters.
 
-### In Progress
-- Timeline synchronization
-- Cross-timeline operations
-- Event storage
-- Actor registration
-- P2P message routing via rendezvous hashing
-- Code restructuring
-- Program that does anything useful
+Trace configuration:
 
-### Planned
-- Test suite
-- Effect composition DSL
-- State snapshots and pruning
-- P2P node discovery
+- `NoTracing` - Disable all trace logs
+- `SimpleTracing` - Enable standard trace logs
+- `VerboseTracing` - Enable detailed trace logs with timestamps
+
+The verbose tracing mode adds timestamps to each trace message, providing more detailed context about when each operation occurs. This is particularly useful for debugging timing issues or understanding the sequence of operations.
+
+```haskell
+-- | Interpreter configuration for controlling effect inclusion
+data InterpreterConfig = InterpreterConfig
+    { -- | How to handle trace logs
+      traceConfig :: TraceConfig
+    }
+
+-- | Default interpreter configuration
+defaultConfig :: InterpreterConfig
+defaultConfig = InterpreterConfig
+    { traceConfig = SimpleTracing
+    }
+```
+
+You can run the application with different configurations:
+
+```haskell
+-- Using default configuration
+result <- interpretAppEffects timeRef resourceLogRef storeRef subsRef program
+
+-- Using verbose configuration
+result <- interpretWithConfig verboseConfig timeRef resourceLogRef storeRef subsRef program
+
+-- Using silent configuration
+result <- interpretWithConfig silentConfig timeRef resourceLogRef storeRef subsRef program
+```
+
+The application supports command line options for controlling logging:
+
+- `--verbose` - Enable verbose logging with timestamps
+- `--silent` - Disable all tracing
+- (default) - Standard logging without timestamps
+
+## Development, Building, and Running
+
+```bash
+# Enter the development shell
+nix develop
+
+# Build the project
+nix build
+
+# Run the application
+nix run
+
+# Run with verbose logging
+nix run -- --verbose
+
+# Run with tracing disabled
+nix run -- --silent
+```
+
