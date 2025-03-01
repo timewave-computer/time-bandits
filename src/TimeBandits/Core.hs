@@ -24,17 +24,71 @@ module TimeBandits.Core (
   computeAuthMessageHash,
   computeLogEntryHash,
   computeStoredItemHash,
+  
+  -- * P2P Helpers
+  computeNodeScore,
+  selectNodesForKey,
+  
+  -- * Error Handling
   eitherToError,
 ) where
 
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString ()
-
--- For instances
 import Data.Serialize (Serialize, encode)
 import Polysemy
 import Polysemy.Error (Error, throw)
 import TimeBandits.Types
+
+-- Add necessary imports for P2P functions
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import Data.Ord (Down(..))
+import Data.List (sortOn)
+import Data.Word (Word64)
+
+-- Add this helper for consistent node selection
+{- | Compute a score for a node based on its hash and a key.
+This is a core building block for rendezvous hashing, allowing
+deterministic selection of nodes based on content.
+-}
+computeNodeScore :: ActorHash -> ByteString -> Word64
+computeNodeScore nodeHash key = 
+  let nodeBytes = case nodeHash of 
+        EntityHash (Hash bytes) -> bytes
+      
+      -- Combine key and node id for hashing
+      combinedBytes = key <> nodeBytes
+      
+      -- Compute hash
+      hash = SHA256.hash combinedBytes
+      
+      -- Use first 8 bytes as a score (convert to Word64)
+      scoreBytes = BS.take 8 hash
+      scoreWord = byteStringToWord64 scoreBytes
+  in
+  scoreWord
+
+{- | Convert ByteString to Word64 (big-endian)
+Safely converts a hash fragment to a numeric score.
+-}
+byteStringToWord64 :: ByteString -> Word64
+byteStringToWord64 bs =
+  let bs' = BS.append (BS.replicate (8 - BS.length bs) 0) bs
+      w64 = LBS.fromStrict bs'
+  in fromIntegral $ LBS.foldr (\b a -> a * 256 + fromIntegral b) 0 w64
+
+{- | Select nodes for a key using rendezvous hashing.
+Given a key and a list of nodes, returns the best nodes to handle
+that key based on their computed scores.
+-}
+selectNodesForKey :: ByteString -> [ActorHash] -> Int -> [ActorHash]
+selectNodesForKey key nodes count =
+  let scoredNodes = map (\node -> (node, computeNodeScore node key)) nodes
+      -- Sort by score (highest first)
+      sortedNodes = map fst $ sortOn (Down . snd) scoredNodes
+  in
+  take count sortedNodes
 
 {- | Computes the SHA-256 hash of a given ByteString.
 This is the fundamental hashing function used throughout the system.
