@@ -41,9 +41,21 @@ module TimeBandits.Effects (
     ResourceOperationEffect (..),
     interpretResourceOp,
 
+    -- * Logical Clock
+    LogicalClock (..),
+    interpretLogicalClock,
+
     -- * Application Effects
     AppEffects,
     interpretAppEffects,
+
+    -- * Modular Interpreter System
+    TraceConfig (..),
+    InterpreterConfig (..),
+    defaultConfig,
+    verboseConfig,
+    silentConfig,
+    interpretWithConfig,
 ) where
 
 import Control.Monad (forM, forM_, when)
@@ -67,7 +79,7 @@ import Polysemy.Error (Error, runError, throw)
 import Polysemy.Output (Output, output, runOutputList)
 import Polysemy.Reader
 import Polysemy.State
-import Polysemy.Trace (Trace, trace, traceToStdout)
+import Polysemy.Trace (Trace (..), ignoreTrace, trace, traceToStdout)
 import TimeBandits.Core (ResourceHash, computeHash, computeMessageHash, computePubKeyHash, computeSha256)
 import TimeBandits.Events (
     Event (..),
@@ -170,7 +182,7 @@ transferResourceOp ::
     TimelineHash ->
     LamportTime ->
     [TimelineHash] ->
-    PrivKey -> -- Added private key parameter for signing
+    PrivKey ->
     Sem r (Either AppError (Resource, ResourceEvent))
 transferResourceOp resource newOwner destTimeline timestamp provChain privKey = do
     let updatedResource = resource{resourceOwner = newOwner}
@@ -406,7 +418,83 @@ interpretLogicalClock timeRef = interpret \case
         embed @IO $ IORef.writeIORef timeRef t
         pure t
 
--- | Interpret all application effects
+-- | Trace configuration options
+data TraceConfig
+    = -- | Disable all tracing
+      NoTracing
+    | -- | Enable standard tracing
+      SimpleTracing
+    | -- | Enable verbose tracing
+      VerboseTracing
+    deriving (Eq, Show)
+
+-- | Interpreter configuration for controlling effect inclusion
+data InterpreterConfig = InterpreterConfig
+    { traceConfig :: TraceConfig
+    -- ^ How to handle trace logs
+    }
+
+-- | Default interpreter configuration
+defaultConfig :: InterpreterConfig
+defaultConfig =
+    InterpreterConfig
+        { traceConfig = SimpleTracing
+        }
+
+-- | Verbose configuration with detailed logging
+verboseConfig :: InterpreterConfig
+verboseConfig =
+    defaultConfig
+        { traceConfig = VerboseTracing
+        }
+
+-- | Silent configuration with no tracing
+silentConfig :: InterpreterConfig
+silentConfig =
+    defaultConfig
+        { traceConfig = NoTracing
+        }
+
+-- | Custom verbose trace interpreter that adds timestamps and context
+traceVerbose :: (Member (Embed IO) r) => Sem (Trace ': r) a -> Sem r a
+traceVerbose = interpret \case
+    Trace message -> do
+        timestamp <- embed @IO getCurrentTime
+        embed @IO $ putStrLn $ "[VERBOSE][" ++ show timestamp ++ "] " ++ message
+
+-- | Apply a configuration to an interpreter chain
+interpretWithConfig ::
+    InterpreterConfig ->
+    IORef.IORef LamportTime ->
+    IORef.IORef ResourceLog ->
+    IORef.IORef TransientDatastore ->
+    IORef.IORef [TimelineHash] ->
+    Sem (LogicalClock ': AppEffects r) a ->
+    IO (Either AppError ([String], a))
+interpretWithConfig config timeRef resourceLogRef storeRef subsRef program = do
+    -- Choose the appropriate trace interpreter based on configuration
+    let traceInterpreter = case traceConfig config of
+            NoTracing -> ignoreTrace
+            SimpleTracing -> traceToStdout
+            VerboseTracing -> traceVerbose
+
+    -- Run the program with the configured interpreters
+    result <-
+        runM
+            . runError
+            . runOutputList
+            . traceInterpreter
+            . Polysemy.State.runStateIORef resourceLogRef
+            . interpretResourceOp
+            . interpretLogicalClock timeRef
+            $ program
+
+    -- Process the result
+    pure $ case result of
+        Left err -> Left err
+        Right (logs, value) -> Right (logs, value)
+
+-- | Interpret all application effects with default configuration
 interpretAppEffects ::
     IORef.IORef LamportTime ->
     IORef.IORef ResourceLog ->
@@ -414,16 +502,4 @@ interpretAppEffects ::
     IORef.IORef [TimelineHash] ->
     Sem (LogicalClock ': AppEffects r) a ->
     IO (Either AppError ([String], a))
-interpretAppEffects timeRef resourceLogRef storeRef subsRef program = do
-    result <-
-        runM
-            . runError
-            . runOutputList
-            . traceToStdout
-            . Polysemy.State.runStateIORef resourceLogRef
-            . interpretResourceOp
-            . interpretLogicalClock timeRef
-            $ program
-    pure $ case result of
-        Left err -> Left err
-        Right (logs, value) -> Right (logs, value)
+interpretAppEffects = interpretWithConfig defaultConfig
