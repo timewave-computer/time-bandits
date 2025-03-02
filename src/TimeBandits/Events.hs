@@ -37,15 +37,15 @@ module TimeBandits.Events (
   verifyMessageSignatureEffect,
 ) where
 
-import Crypto.Error (CryptoFailable(..))
-import Crypto.PubKey.Ed25519 qualified as Ed25519
-import Data.ByteArray (convert)
-import Data.ByteString (ByteString)
+import Crypto.Error ()
+import Crypto.PubKey.Ed25519()
+import Data.ByteArray ()
+import Data.ByteString ()
 import Data.ByteString.Char8 qualified as BS
 import Data.IORef qualified as IORef
 import Data.Map.Strict qualified as Map
-import Data.Serialize (Serialize, encode, decode)
-import Polysemy (Sem, Member, interpret, embed, makeSem)
+import Data.Serialize (encode, decode)
+import Polysemy (Sem, Member, embed)
 import Polysemy.Embed (Embed)
 import Polysemy.Error (Error, throw)
 import System.IO.Unsafe (unsafePerformIO)
@@ -56,6 +56,19 @@ import TimeBandits.Core (
   computePubKeyHash
   )
 import TimeBandits.Types
+    ( EventMetadata(..),
+      EventContent(ActorEventContent, TimelineEventContent,
+                   ResourceEventContent),
+      LogEntry(..),
+      TimelineEvent(teContent, teActor, tePreviousEvent, teMetadata),
+      ResourceEvent(reContent, rePreviousEvent, reMetadata),
+      ActorEvent(aeContent, aePreviousEvent, aeMetadata),
+      Actor(actorId),
+      Signature,
+      PrivKey,
+      PubKey(..),
+      ActorHash,
+      EntityHash(unEntityHash) )
 import TimeBandits.Types qualified as Types
 import TimeBandits.Core qualified as Core
 import TimeBandits.Utils

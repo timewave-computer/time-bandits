@@ -64,31 +64,32 @@ module TimeBandits.Network
     RouteResult (..),
   ) where
 
-import Control.Monad (forM_, when)
-import Crypto.Hash.SHA256 qualified as SHA256
-import Data.Binary (encode)
-import Data.ByteString (ByteString)
+import Control.Monad ()
+import Crypto.Hash.SHA256()
+import Data.Binary ()
+import Data.ByteString ()
 import Data.ByteString qualified as BS
-import Data.ByteString.Lazy qualified as LBS
+import Data.ByteString.Lazy()
 import Data.ByteString.Char8 qualified as BS8
-import Data.IORef qualified as IORef
-import Data.List (sortOn, nubBy)
-import Data.Map.Strict (Map)
+import Data.IORef()
+import Data.List ()
+import Data.Map.Strict ()
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, catMaybes, isNothing)
-import Data.Ord (Down(..))
+import Data.Maybe ()
+import Data.Ord ()
 import Data.Set qualified as Set
-import Data.Text (Text, pack)
+import Data.Text (pack)
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
-import Data.Word (Word64)
-import GHC.Generics (Generic)
+import Data.Word ()
+import GHC.Generics ()
 import Network.Socket (SockAddr(..), tupleToHostAddress)
 import Polysemy
 import Polysemy.Error
 import Polysemy.State qualified as PS
 import Polysemy.Trace qualified as PT
-import System.Random (randomIO, randomRIO)
-import Relude (viaNonEmpty)
+import System.Random (randomIO)
+import Relude ()
+import Relude.Extra.Tuple (fmapToFst)
 
 import TimeBandits.Core qualified as Core
 import TimeBandits.Types
@@ -112,7 +113,7 @@ data P2PNode = P2PNode
   , pnStats :: !P2PStats
   -- ^ Statistics for this peer
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | Capabilities a P2P node can support
 data P2PCapability
@@ -126,7 +127,7 @@ data P2PCapability
   -- ^ Read-only capability
   | FullNode
   -- ^ Has all capabilities
-  deriving (Show, Eq, Ord, Generic)
+  deriving stock (Show, Eq, Ord, Generic)
 
 -- | Statistics for a P2P node
 data P2PStats = P2PStats
@@ -141,7 +142,7 @@ data P2PStats = P2PStats
   , psUptime :: !Double
   -- ^ Uptime in seconds
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | P2P message types for inter-node communication
 data P2PMessage
@@ -178,7 +179,7 @@ data P2PMessage
     , pmNodeLoad :: !Double
     , pmOriginalTimestamp :: !UTCTime
     }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | Result of a routing operation
 data RouteResult a
@@ -188,7 +189,7 @@ data RouteResult a
   -- ^ Delivered to some nodes with issues
   | FailedDelivery !Text
   -- ^ Failed to deliver
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | Health status of a peer
 data PeerHealth
@@ -200,7 +201,7 @@ data PeerHealth
   -- ^ Node is unresponsive or has serious issues
   | Unknown
   -- ^ Health status is unknown
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | Configuration for the P2P network
 data P2PConfig = P2PConfig
@@ -221,7 +222,7 @@ data P2PConfig = P2PConfig
   , pcMaxMessageSize :: !Int
   -- ^ Maximum message size (bytes)
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | Default P2P configuration
 defaultP2PConfig :: P2PConfig
@@ -260,7 +261,7 @@ makeSem ''P2PNetwork
 -- | Compute a score for a node using rendezvous hashing
 -- Returns the node's score for the given key
 computeNodeScore :: P2PNode -> ByteString -> Word64
-computeNodeScore node key = Core.computeNodeScore (pnId node) key
+computeNodeScore node = Core.computeNodeScore (pnId node)
 
 -- | Interpret the P2P Network effect
 interpretP2PNetwork :: 
@@ -327,22 +328,21 @@ interpretP2PNetwork config self pubKey = interpret \case
     -- Discover new peers if needed
     updatedPeers <- if length healthyPeers < pcNodeCapacity config `div` 2
       then do
-        -- Instead of using discoverPeers or send DiscoverPeers, implement the logic directly
         PT.trace "Discovering peers in the P2P network"
         -- Get current list of peers
-        currentPeers <- PS.get
+        -- currentPeers <- PS.get  -- Removing redundant PS.get since we already have healthyPeers
         
         -- Connect to seed nodes if we have no peers
-        newPeers <- if null currentPeers
+        newPeers <- if null healthyPeers
           then do
             PT.trace $ "Connecting to " <> show (length (pcSeedNodes config)) <> " seed nodes"
             results <- mapM connectToSeedNode (pcSeedNodes config)
             return $ catMaybes results
           else do
             -- Select a subset of current peers to ask for more peers
-            let sampleSize = min 5 (length currentPeers)
+            let sampleSize = min 5 (length healthyPeers)
             timestamp <- embed getCurrentTime
-            let sortedPeers = take sampleSize $ sortOn pnLastSeen currentPeers
+            let sortedPeers = take sampleSize $ sortOn pnLastSeen healthyPeers
             
             -- Request peers from each sample peer
             PT.trace $ "Requesting peers from " <> show sampleSize <> " existing peers"
@@ -353,7 +353,7 @@ interpretP2PNetwork config self pubKey = interpret \case
                 uniquePeers = nubPeersByHash allPeers
             
             -- Filter out peers we already know
-            let knownHashes = Set.fromList $ map pnId currentPeers
+            let knownHashes = Set.fromList $ map pnId healthyPeers
                 newUniquePeers = filter (\p -> not $ Set.member (pnId p) knownHashes) uniquePeers
             
             PT.trace $ "Discovered " <> show (length newUniquePeers) <> " new peers"
@@ -385,7 +385,7 @@ interpretP2PNetwork config self pubKey = interpret \case
       health <- checkPeerHealth p timestamp
       return (p, scoreNodeHealth health p)) activePeers
     
-    let sortedPeers = map fst $ sortOn (Down . snd) healthStatuses
+    let sortedPeers = map fst $ sortWith (Down . snd) healthStatuses
         prunedPeers = take (pcNodeCapacity config) sortedPeers
         removedCount = length currentPeers - length prunedPeers
     
@@ -474,13 +474,13 @@ interpretP2PNetwork config self pubKey = interpret \case
             PT.trace "No routing nodes available"
             return $ FailedDelivery "No routing nodes available"
           else do
-            results <- mapM (\n -> sendMessageToNode n msg) routingNodes
-            let successes = [r | Right r <- results]
-                failures = [e | Left e <- results]
+            results <- mapM (`sendMessageToNode` msg) routingNodes
+            let successes = rights results
+                failures = lefts results
             
             if null successes
               then case viaNonEmpty head failures of
-                Just firstFailure -> return $ FailedDelivery $ pack (show firstFailure)
+                Just firstFailure -> return $ FailedDelivery $ show firstFailure
                 Nothing -> return $ FailedDelivery "Unknown error"
               else case viaNonEmpty head successes of
                 Just firstSuccess -> return $ Delivered firstSuccess
@@ -505,7 +505,7 @@ interpretP2PNetwork config self pubKey = interpret \case
           sendMessageToNode node msg
         
         let successes = length [() | Right _ <- results]
-            failures = length [e | Left e <- results]
+            failures = length (lefts results)
         
         if successes == 0
           then return $ FailedDelivery "Failed to deliver to any timeline nodes"
@@ -563,8 +563,8 @@ requestPeersFromNode :: (Member (Embed IO) r) => P2PNode -> Sem r [P2PNode]
 requestPeersFromNode _ = do
   -- Simulate peer discovery
   embed $ do
-    count <- customRandomRIO (0, 5)
-    mapM (\_ -> generateRandomNode) [1..count]
+    count <- customRandomRIO (0, 5) :: IO Int
+    mapM (const generateRandomNode) [1..count]
 
 -- Utility functions
 
@@ -607,7 +607,7 @@ simulateConnectionAttempt _ = do
 
 -- | Remove duplicate peers by hash
 nubPeersByHash :: [P2PNode] -> [P2PNode]
-nubPeersByHash = Map.elems . Map.fromList . map (\p -> (pnId p, p))
+nubPeersByHash = Map.elems . Map.fromList . fmapToFst pnId
 
 -- | Check peer health
 checkPeerHealth :: (Member (Embed IO) r) => P2PNode -> UTCTime -> Sem r PeerHealth
@@ -636,5 +636,5 @@ scoreNodeHealth health node =
       -- Adjust by stats
       statsScore = (psSuccessRate (pnStats node) * 0.4) +
                    (1.0 - min 1.0 (psResponseTime (pnStats node) / 200.0)) * 0.4 +
-                   (min 1.0 (psUptime (pnStats node) / 86400.0)) * 0.2
+                   min 1.0 (psUptime (pnStats node) / 86400.0) * 0.2
   in baseScore * 0.7 + statsScore * 0.3 

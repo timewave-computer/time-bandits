@@ -70,20 +70,20 @@ module TimeBandits.Effects (
 import Crypto.Error (CryptoFailable (..))
 import Crypto.PubKey.Ed25519 qualified as Ed25519
 import Data.ByteArray (convert)
-import Data.ByteString (ByteString)
+import Data.ByteString ()
 import Data.ByteString.Char8 qualified as BS
 import Data.IORef qualified as IORef
-import Data.List (find, sortBy)
+import Data.List ()
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isNothing, listToMaybe, mapMaybe)
-import Data.Ord (Down(..), comparing)
+import Data.Maybe ()
+import Data.Ord ()
 import Data.Serialize (encode)
-import Data.Time.Clock (getCurrentTime)
+import Data.Time.Clock ()
 import Polysemy (Embed (..), Member, Members, Sem, embed, interpret, makeSem, send)
-import Polysemy.Error (Error, throw)
+import Polysemy.Error (Error)
 import Polysemy.Output (Output)
 import Polysemy.Trace (Trace (..), trace)
-import System.Random (randomIO)
+import System.Random ()
 import TimeBandits.Core (
     ResourceHash, 
     computeHash, 
@@ -94,13 +94,11 @@ import TimeBandits.Core (
     )
 import TimeBandits.Types (
     Actor (..),
-    ActorErrorType (..),
     ActorHash,
     ActorType (..),
     AppError (..),
     AuthenticatedMessage (..),
     ContentAddressedMessage (..),
-    CryptoErrorType (..),
     EntityHash (..),
     EventContent (..),
     EventMetadata (..),
@@ -111,19 +109,15 @@ import TimeBandits.Types (
     PubKey (..),
     Resource (..),
     ResourceErrorType (..),
-    ResourceEvent (..),
     ResourceEventType (..),
     ResourceLog,
     Signature (..),
-    StorageErrorType (..),
-    TimelineErrorType (..),
     TimelineHash,
     TransactionValidationResult (..),
     TransientDatastore (..),
     UnifiedResourceTransaction (..),
     emTimestamp,
-    resourceId,
-    signMessage
+    resourceId
    )
 import TimeBandits.Types qualified as Types
 import Prelude hiding (trace)
@@ -132,8 +126,8 @@ import TimeBandits.Network (
   P2PNode
   )
 import Polysemy.State qualified as PS
-import Data.Text (Text, pack)
-import qualified System.Random as Random
+import Data.Text (Text)
+import System.Random qualified as Random
 
 -- | Logical clock for tracking causal ordering in timelines
 data LogicalClock m a where

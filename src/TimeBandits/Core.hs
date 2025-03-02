@@ -85,8 +85,7 @@ import TimeBandits.Types
 -- Add necessary imports for P2P functions
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import Data.Ord (Down(..))
-import Data.List (sortOn)
+import Relude (Down(..), sortOn)
 import Data.Word (Word64)
 
 -- | Core type class for events in the system
