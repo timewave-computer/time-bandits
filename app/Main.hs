@@ -13,27 +13,20 @@
 
 module Main where
 
-import Data.IORef (IORef, newIORef)
+import Data.IORef (newIORef)
 import Main.Utf8 qualified as Utf8
-import Polysemy (Member, Members, Sem, runM, Embed, interpret, embed)
+import Polysemy (Member, Sem, runM, Embed, interpret, embed)
 import Polysemy.Error (Error, runError)
 import Polysemy.Output (Output, output, runOutputList)
-import Polysemy.State (State)
 import Polysemy.State qualified as PS
 import Polysemy.Trace (Trace, ignoreTrace, traceToStdout, Trace(Trace))
 import Polysemy.Trace qualified as Trace (trace)
 import System.Environment qualified as Env
-import TimeBandits.Core
+import TimeBandits.Core (EntityHash(..), Hash(..), TimelineHash)
 import TimeBandits.Effects (
-  AppEffects,
   InterpreterConfig (..),
-  LogicalClock,
-  ResourceOperationEffect,
   TraceConfig (..),
   defaultConfig,
-  interpretAppEffects,
-  interpretLogicalClock,
-  interpretResourceOp,
   silentConfig,
   verboseConfig,
  )
@@ -42,9 +35,7 @@ import TimeBandits.Network qualified as Network
   , P2PNode
   , P2PConfig(..)
   , defaultP2PConfig
-  , discoverPeers
   , interpretP2PNetwork
-  , selectNodesForKey
   )
 import TimeBandits.Types (
   Actor (..),
@@ -52,14 +43,13 @@ import TimeBandits.Types (
   AppError,
   LamportTime (..),
   Log (..),
+  PubKey(..), 
   ResourceLog,
-  TimelineLog,
-  TransientDatastore (..),
+  TransientDatastore (..)
  )
 import Network.Socket (SockAddr(..), tupleToHostAddress)
 import Prelude hiding (newIORef)
 import Data.Time.Clock (getCurrentTime)
-import Data.ByteString.Char8 qualified as BS8
 
 -- | Main entry point
 main :: IO ()
@@ -72,9 +62,9 @@ main = Utf8.withUtf8 $ do
   timeRef <- newIORef (LamportTime 0)
 
   -- Initialize empty logs
-  resourceLogRef <- newIORef [] -- Empty resource log
-  actorLogRef <- newIORef (Log []) -- Empty actor log
-  timelineLogRef <- newIORef (Log []) -- Empty timeline log
+  _resourceLogRef <- newIORef [] -- Empty resource log
+  _actorLogRef <- newIORef (Log []) -- Empty actor log
+  _timelineLogRef <- newIORef (Log []) -- Empty timeline log
 
   -- Initialize empty transient datastore
   let initialStore =
@@ -91,7 +81,7 @@ main = Utf8.withUtf8 $ do
   p2pNodesRef <- newIORef []
 
   -- Run the main program with configured effects
-  result <- Main.interpretWithConfig config timeRef resourceLogRef storeRef subsRef p2pNodesRef mainProgram
+  result <- Main.interpretWithConfig config timeRef _resourceLogRef storeRef subsRef p2pNodesRef mainProgram
   case result of
     Left err -> putStrLn $ "Error: " ++ show err
     Right (logs, _) -> mapM_ putStrLn logs
@@ -136,9 +126,9 @@ interpretWithConfig ::
        , Embed IO
        ] a
     -> IO (Either AppError ([String], a))
-interpretWithConfig config timeRef resourceLogRef storeRef subsRef p2pNodesRef program = do
+interpretWithConfig config _timeRef _resourceLogRef _storeRef _subsRef p2pNodesRef program = do
     -- Create a dummy local actor for P2P networking
-    now <- getCurrentTime
+    _now <- getCurrentTime
     let dummyActor = Actor (EntityHash (Hash "local-node")) TimeTraveler
         dummyPubKey = PubKey "local-node-key"
         -- Modify the default P2P configuration with a valid bind address
@@ -161,7 +151,7 @@ interpretWithConfig config timeRef resourceLogRef storeRef subsRef p2pNodesRef p
             . runError
             . runOutputList
             . traceInterpreter
-            . PS.runStateIORef resourceLogRef
+            . PS.runStateIORef _resourceLogRef
             . PS.runStateIORef p2pNodesRef
             . Network.interpretP2PNetwork p2pConfig dummyActor dummyPubKey
             $ program

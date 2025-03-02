@@ -11,17 +11,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-{- |
-This module provides a unified event system using type classes to handle
-different event types consistently and efficiently.
-It defines:
-1. Core type classes for events
-2. Event validation and verification
-3. Event processing and effects
-4. Common event utilities
-
-Note: Common utilities have been moved to TimeBandits.Utils module for better organization.
--}
 module TimeBandits.Events (
   -- * Type Classes
   Event (..),
@@ -32,129 +21,44 @@ module TimeBandits.Events (
   LogEntry (..),
 
   -- * Re-exports from Utils
-
-  -- ** Crypto Utilities
   derivePubKeyFromPrivKey,
-
-  -- ** Event Utilities
   createEventMetadata,
   verifyEventSignature,
   createLogEntry,
   rootTimelineHash,
-
-  -- ** Message Utilities
   createAuthenticatedMessage,
   verifyMessageSignatureWithKey,
 ) where
 
 import Data.ByteString (ByteString)
-import Data.Serialize (Serialize, encode)
-import TimeBandits.Core (
-  ActorEvent (..),
-  ActorHash,
-  EntityHash (..),
-  EventContent (..),
-  EventMetadata (..),
-  Hash,
-  LogEntry (..),
-  PrivKey (..),
-  PubKey (..),
-  ResourceEvent (..),
-  ResourceHash,
-  TimelineEvent (..),
-  TimelineHash,
-  computeMessageHash,
- )
-import TimeBandits.Types qualified as Core (
-  Actor (..),
-  AuthenticatedMessage (..),
-  ContentAddressedMessage (..),
-  Signature (..),
-  verifySignature,
- )
-import TimeBandits.Utils (
-  createAuthenticatedMessage,
-  createEventMetadata,
-  createLogEntry,
-  derivePubKeyFromPrivKey,
-  rootTimelineHash,
-  verifyEventSignature,
-  verifyMessageSignatureWithKey,
- )
+import Data.ByteString.Char8 qualified as BS
+import Data.Serialize (Serialize, encode, decode)
+import TimeBandits.Core (computeMessageHash)
+import TimeBandits.Types
+import TimeBandits.Core qualified as Core
+import TimeBandits.Utils
 
--- -----------------------------------------------------------------------------
--- Type Classes
--- -----------------------------------------------------------------------------
-
-{- | Core type class for events in the system
-This typeclass provides a unified interface for all event types, enabling:
-- Consistent hashing and content addressing
-- Conversion between specific event types and generic event content
-- Timeline and actor association
-- Event chaining through previous event references
-- Access to event metadata
-- Signature verification for authenticity
-This abstraction allows the system to handle different event types uniformly.
--}
+-- | Core type class for events in the system
 class (Serialize e) => Event e where
-  -- | Get the content hash of the event
   contentHash :: e -> Hash
   contentHash = computeMessageHash
-
-  -- | Convert event to event content
   toEventContent :: e -> EventContent
-
-  -- | Get the timeline this event belongs to
   eventTimeline :: e -> TimelineHash
-
-  -- | Get the actor who created this event
   eventActor :: e -> ActorHash
-
-  -- | Get the previous event hash (if any)
   previousEventHash :: e -> Maybe Hash
-
-  -- | Get the event's metadata
   metadata :: e -> EventMetadata
-
-  -- | Verify the event's signature
   verifySignature :: e -> Bool
 
-{- | Core type class for messages in the system
-This typeclass provides a unified interface for all message types, enabling:
-- Content addressing through message hashing
-- Sender and destination identification
-- Signature verification for authenticity
-- Content access
-- Conversion between messages and events when applicable
-This abstraction allows the system to handle different message types uniformly
-and integrate with the event system.
--}
+-- | Core type class for messages in the system
 class (Serialize m) => Message m where
-  -- | Get the content hash of the message
   messageHash :: m -> Hash
   messageHash = computeMessageHash
-
-  -- | Get the sender of the message
   messageSender :: m -> Core.Actor
-
-  -- | Get the destination of the message (if any)
   messageDestination :: m -> Maybe ActorHash
-
-  -- | Get the message signature
   messageSignature :: m -> Core.Signature
-
-  -- | Get the message content
   messageContent :: m -> ByteString
-
-  -- | Convert message to event content (if applicable)
   toEvent :: m -> Maybe EventContent
-
-  -- | Verify the message's signature
   verifyMessageSignature :: m -> Bool
-
--- -----------------------------------------------------------------------------
--- Type Class Instances
--- -----------------------------------------------------------------------------
 
 -- | Instance for ActorEvent
 instance Event ActorEvent where
@@ -205,12 +109,24 @@ instance Message (Core.AuthenticatedMessage ByteString) where
 
   toEvent msg =
     -- Try to decode the message content as an EventContent
-    -- This is a simplified implementation
-    Nothing -- TODO: Implement proper conversion
+    case decode (Core.camContent $ Core.amPayload msg) of
+      Right eventContent -> Just eventContent
+      Left _ -> Nothing
 
   verifyMessageSignature msg =
     let content = Core.camContent $ Core.amPayload msg
         sig = Core.amSignature msg
-        -- TODO: Get proper public key from sender
-        pubKey = PubKey "TODO"
+        -- In a real implementation, we would need to retrieve the public key associated with 
+        -- the sender actor from a registry or lookup service.
+        -- Use a deterministic key derivation based on actor ID for demonstration
+        sender = Core.amSender msg
+        senderActorId = actorId sender
+        pubKey = PubKey $ "key-for-" <> BS.pack (show senderActorId)
      in Core.verifySignature pubKey content sig
+
+-- | Helper to get a public key for an actor (would connect to a key management system)
+getPublicKeyForActor :: ActorHash -> PubKey
+getPublicKeyForActor actorId = 
+    -- In a real implementation, this would query a key management system
+    -- For demonstration purposes, we're generating a deterministic key based on actor ID
+    PubKey $ "key-for-" <> BS.pack (show actorId)

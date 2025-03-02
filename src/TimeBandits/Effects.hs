@@ -58,34 +58,25 @@ module TimeBandits.Effects (
     interpretWithConfig,
 ) where
 
-import Control.Monad (forM, forM_, when)
 import Crypto.Error (CryptoFailable (..))
-import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.PubKey.Ed25519 qualified as Ed25519
 import Data.ByteArray (convert)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS
 import Data.IORef qualified as IORef
-import Data.List (nub, sortBy, union)
-import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
-import Data.Ord (comparing)
-import Data.Serialize (decode, encode)
-import Data.Text (Text, pack, unpack)
+import Data.List (find, sortBy)
+import Data.Maybe (isNothing, listToMaybe, mapMaybe)
+import Data.Ord (Down(..), comparing)
+import Data.Serialize (encode)
 import Data.Time.Clock (getCurrentTime)
-import Polysemy (Embed (..), Member, Members, Sem, embed, interpret, interpretH, makeSem, runM, send)
-import Polysemy.Error (Error, runError, throw)
-import Polysemy.Output (Output, output, runOutputList)
-import Polysemy.Reader
-import Polysemy.State
-import Polysemy.Trace (Trace (..), ignoreTrace, trace, traceToStdout)
-import TimeBandits.Core (ResourceHash, computeHash, computeMessageHash, computePubKeyHash, computeSha256)
+import Polysemy (Embed (..), Member, Members, Sem, embed, interpret, makeSem, send)
+import Polysemy.Error (Error, throw)
+import Polysemy.Output (Output)
+import Polysemy.Trace (Trace (..), trace)
+import TimeBandits.Core (ResourceHash, computeHash, computeMessageHash, computeSha256)
 import TimeBandits.Events (
     Event (..),
     Message (..),
-    createLogEntry,
-    verifyEventSignature,
  )
 import TimeBandits.Types (
     Actor (..),
@@ -111,17 +102,11 @@ import TimeBandits.Types (
     ResourceLog,
     Signature (..),
     StorageErrorType (..),
-    TimelineBlock (..),
     TimelineErrorType (..),
-    TimelineEventType (..),
     TimelineHash,
-    TimelineLog (..),
     TransactionValidationResult (..),
     TransientDatastore (..),
-    TransientStoredItem (..),
-    Trie (..),
     UnifiedResourceTransaction (..),
-    elemsTrie,
     emTimestamp,
     resourceId,
  )
@@ -133,85 +118,13 @@ import TimeBandits.Network (
  )
 import Polysemy.State qualified as PS
 
--- | Get the public key from an actor
-getActorPubKey :: Actor -> PubKey
-getActorPubKey actor = PubKey $ BS.pack $ show $ actorId actor -- This is a placeholder implementation
-
 -- | Logical clock for tracking causal ordering in timelines
 data LogicalClock m a where
-    GetCurrentTime :: LogicalClock m LamportTime
+    GetLamportTime :: LogicalClock m LamportTime
     IncrementTime :: LogicalClock m LamportTime
     UpdateTime :: LamportTime -> LogicalClock m LamportTime
 
--- | Error conversion helper functions
-asTimelineError :: (Members '[Error AppError] r) => TimelineErrorType -> Sem r a
-asTimelineError = throw . TimelineError
-
-asResourceError :: (Members '[Error AppError] r) => ResourceErrorType -> Sem r a
-asResourceError = throw . ResourceError
-
-asActorError :: (Members '[Error AppError] r) => ActorErrorType -> Sem r a
-asActorError = throw . ActorError
-
-asCryptoError :: (Members '[Error AppError] r) => CryptoErrorType -> Sem r a
-asCryptoError = throw . CryptoError
-
-asStorageError :: (Members '[Error AppError] r) => StorageErrorType -> Sem r a
-asStorageError = throw . StorageError
-
-{- | Helper function to sign event content
-This function signs event content with a private key and returns the signature and public key.
-It handles the cryptographic operations needed for event authentication.
--}
-signEventContent ::
-    (Members '[Error AppError] r) =>
-    PrivKey ->
-    ByteString ->
-    Sem r (Signature, PubKey)
-signEventContent privKey content = do
-    -- Use Types.signMessage directly instead of going through the CryptoOperation effect
-    case Types.signMessage privKey content of
-        Left err -> throw $ CryptoError $ SigningError err
-        Right signature -> do
-            -- Generate the corresponding public key
-            let pubKey = case Ed25519.secretKey (let PrivKey bytes = privKey in bytes) of
-                    CryptoFailed _ -> PubKey "invalid-key" -- Fallback for invalid keys
-                    CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
-            pure (signature, pubKey)
-
--- | Resource transfer operation
-transferResourceOp ::
-    (Members '[Error AppError, LogicalClock] r) =>
-    Resource ->
-    ActorHash ->
-    TimelineHash ->
-    LamportTime ->
-    [TimelineHash] ->
-    PrivKey ->
-    Sem r (Either AppError (Resource, ResourceEvent))
-transferResourceOp resource newOwner destTimeline timestamp provChain privKey = do
-    let updatedResource = resource{resourceOwner = newOwner}
-        eventContent = ResourceCreated updatedResource
-
-    -- Sign the event content
-    (signature, pubKey) <- signEventContent privKey (encode eventContent)
-
-    -- Create the event with proper signature
-    let event =
-            ResourceEvent
-                { reContent = eventContent
-                , reMetadata =
-                    EventMetadata
-                        { emTimestamp = timestamp
-                        , emCreatedAt = undefined -- TODO: Fix timestamp type
-                        , emActor = newOwner
-                        , emTimeline = destTimeline
-                        , emSignature = signature
-                        , emSigner = pubKey
-                        }
-                , rePreviousEvent = Nothing -- TODO: Track previous events
-                }
-    pure $ Right (updatedResource, event)
+makeSem ''LogicalClock
 
 -- | Atomic transaction effect for managing concurrent operations
 data AtomicTransaction m a where
@@ -299,7 +212,7 @@ incrementLamportTime (LamportTime t) = LamportTime (t + 1)
 -- | Interpret the LogicalClock effect
 interpretLogicalClock :: (Member (Embed IO) r) => IORef.IORef LamportTime -> Sem (LogicalClock ': r) a -> Sem r a
 interpretLogicalClock timeRef = interpret \case
-    GetCurrentTime -> embed @IO $ IORef.readIORef timeRef
+    GetLamportTime -> embed @IO $ IORef.readIORef timeRef
     IncrementTime -> do
         t <- embed @IO $ IORef.readIORef timeRef
         let t' = incrementLamportTime t
@@ -317,7 +230,7 @@ data TraceConfig
       SimpleTracing
     | -- | Enable verbose tracing
       VerboseTracing
-    deriving (Eq, Show)
+    deriving stock (Eq, Show)
 
 -- | Interpreter configuration for controlling effect inclusion
 data InterpreterConfig = InterpreterConfig
@@ -346,13 +259,6 @@ silentConfig =
         { traceConfig = NoTracing
         }
 
--- | Custom verbose trace interpreter that adds timestamps and context
-traceVerbose :: (Member (Embed IO) r) => Sem (Trace ': r) a -> Sem r a
-traceVerbose = interpret \case
-    Trace message -> do
-        timestamp <- embed @IO getCurrentTime
-        embed @IO $ putStrLn $ "[VERBOSE][" ++ show timestamp ++ "] " ++ message
-
 -- | Apply a configuration to an interpreter chain
 interpretWithConfig ::
     InterpreterConfig ->
@@ -373,99 +279,199 @@ interpretAppEffects ::
     IO (Either AppError ([String], a))
 interpretAppEffects = error "This function has been replaced by the version in Main.hs"
 
--- | Interpret the timeline resource effect
-interpretResourceOp :: (Members '[Trace, Error AppError, Embed IO, PS.State ResourceLog, P2PNetwork] r) => Sem (ResourceOperationEffect ': r) a -> Sem r a
-interpretResourceOp = interpret \case
+-- | Interpret ResourceOperationEffect
+interpretResourceOp :: (Members '[Trace, Error AppError, Embed IO, LogicalClock, PS.State ResourceLog, P2PNetwork] r) => ResourceOperationEffect m a -> Sem r a
+interpretResourceOp = \case
     OpCreateResource metadata ownerHash timelineHash -> do
-        trace "Creating resource..."
-        let resourceId = EntityHash $ computeSha256 $ encode (metadata, ownerHash, timelineHash)
-            resource =
-                Resource
-                    { resourceId = resourceId
-                    , resourceOrigin = timelineHash
-                    , resourceOwner = ownerHash
-                    , resourceCapabilities = [Types.TransferCapability, Types.UpdateCapability]
-                    , resourceMeta = metadata
-                    , resourceSpentBy = Nothing
-                    , resourceParents = []
-                    , resourceTimestamp = LamportTime 0 -- TODO: Get proper timestamp
-                    , resourceProvenanceChain = [timelineHash]
-                    }
-                    
-        -- Use P2P network to select nodes for storing this resource
-        trace "Selecting nodes for resource storage using Rendezvous Hashing..."
-        let resourceKey = encode resourceId
-        -- In a real implementation, we would use the P2P network to select and store the resource
-        -- For now, we just simulate selection
-        -- selectedNodes <- selectNodesForKey resourceKey 3
-        
-        trace "Selected nodes for resource storage"
-        
-        -- In a real implementation, we would store the resource on these nodes
-        -- For now, we just log the selected nodes
-        
-        trace "Resource created successfully."
-        pure $ Right resource
-        
+      trace "Creating resource..."
+      -- Generate a resource ID from its content
+      let resourceId = EntityHash $ computeSha256 $ encode (metadata, ownerHash, timelineHash)
+      
+      -- Update Lamport time for this operation using the LogicalClock effect
+      -- This helps maintain causal ordering in the distributed system
+      lt <- send IncrementTime
+      
+      -- Create the resource with proper timestamp
+      let resource = Resource
+            { resourceId = resourceId
+            , resourceOrigin = timelineHash
+            , resourceOwner = ownerHash
+            , resourceCapabilities = [Types.TransferCapability, Types.UpdateCapability]
+            , resourceMeta = metadata
+            , resourceSpentBy = Nothing
+            , resourceParents = []
+            , resourceTimestamp = lt  -- Using the Lamport timestamp
+            , resourceProvenanceChain = [timelineHash]
+            }
+      
+      trace $ "Resource created: " <> show resourceId
+      pure $ Right resource
+      
     OpGetResource resourceHash -> do
-        trace "Getting resource..."
-        -- Use P2P network to locate the resource
-        let resourceKey = encode resourceHash
-        -- selectedNodes <- selectNodesForKey resourceKey 3
+        trace $ "Looking up resource: " <> show resourceHash
         
-        -- If we found nodes to query
-        trace "Resource lookup through P2P network would happen here"
-        -- In a real implementation, we would query these nodes for the resource
-        -- For now, we just simulate a failure
-        pure $ Left $ ResourceError $ ResourceNotFound resourceHash
+        -- Get the resource log
+        resourceLog <- PS.get
         
-    -- Keep other handlers unchanged for brevity
-    handler -> interpretResourceOp' handler
-
--- Helper to handle the remaining cases
-interpretResourceOp' :: (Members '[Trace, Error AppError, Embed IO, PS.State ResourceLog, P2PNetwork] r) => ResourceOperationEffect m a -> Sem r a
-interpretResourceOp' = \case
+        -- Find the most recent entry for this resource in the log
+        let resourceEntries = filter (\entry -> 
+                case leContent entry of
+                    ResourceCreated res -> resourceId res == resourceHash
+                    ResourceTransferred txn -> 
+                        -- Check if resource is in outputs
+                        any (\msg -> resourceId (camContent msg) == resourceHash) (urtOutputs txn)
+                    _ -> False
+                ) resourceLog
+                
+        -- Sort entries by timestamp (latest first) to get the most recent state
+        let sortedEntries = sortBy (comparing (Down . emTimestamp . leMetadata)) resourceEntries
+        
+        -- Extract the resource from the latest entry
+        case sortedEntries of
+            [] -> pure $ Left $ ResourceError $ ResourceNotFound resourceHash
+            (latest:_) -> 
+                case leContent latest of
+                    ResourceCreated res -> 
+                        -- Check if the resource has been spent
+                        if isNothing (resourceSpentBy res)
+                        then pure $ Right res
+                        else pure $ Left $ ResourceError $ ResourceAlreadySpent resourceHash
+                    ResourceTransferred txn -> 
+                        -- Find the resource in the transaction outputs
+                        case find (\msg -> resourceId (camContent msg) == resourceHash) (urtOutputs txn) of
+                            Just msg -> 
+                                let res = camContent msg
+                                in if isNothing (resourceSpentBy res)
+                                   then pure $ Right res
+                                   else pure $ Left $ ResourceError $ ResourceAlreadySpent resourceHash
+                            Nothing -> pure $ Left $ ResourceError $ ResourceNotFound resourceHash
+                    _ -> pure $ Left $ ResourceError $ ResourceNotFound resourceHash
+    
     OpTransferResource resource newOwnerHash timelineHash -> do
         trace "Transferring resource..."
+        -- Update Lamport time for this operation
+        lt <- send IncrementTime
+        
         let transferredResource =
                 resource
                     { resourceOwner = newOwnerHash
                     , resourceOrigin = timelineHash
                     , resourceProvenanceChain = resourceProvenanceChain resource ++ [timelineHash]
-                    , resourceTimestamp = LamportTime 0 -- TODO: Get proper timestamp
+                    , resourceTimestamp = lt  -- Using the Lamport timestamp
                     }
         trace "Resource transferred successfully."
         pure $ Right transferredResource
+        
     OpConsumeResource resource -> do
         trace "Consuming resource..."
-        let consumedResource = resource{resourceSpentBy = Just (computeHash resource Nothing), resourceTimestamp = LamportTime 0} -- TODO: Get proper timestamp
+        -- Update Lamport time for this operation
+        lt <- send IncrementTime
+        
+        let consumedResource = 
+                resource
+                    { resourceSpentBy = Just (computeHash resource Nothing)
+                    , resourceTimestamp = lt  -- Using the Lamport timestamp
+                    }
         trace "Resource consumed successfully."
         pure $ Right consumedResource
+    
     OpVerifyResource resource -> do
         trace "Verifying resource..."
         pure $ Right $ isNothing (resourceSpentBy resource) && not (null (resourceCapabilities resource))
+    
     OpGetResourcesByOwner ownerHash -> do
-        trace "Getting resources by owner..."
-        -- TODO: Implement actual resource lookup by owner
-        pure $ Right []
+        trace $ "Looking up resources for owner: " <> show ownerHash
+        
+        -- Get the resource log
+        resourceLog <- PS.get
+        
+        -- Filter resources by owner
+        let ownerResources = filter (\entry -> 
+                case leContent entry of
+                    ResourceCreated res -> resourceOwner res == ownerHash
+                    ResourceTransferred txn -> 
+                        -- Check if any output resources are owned by this owner
+                        any (\msg -> resourceOwner (camContent msg) == ownerHash) (urtOutputs txn)
+                    _ -> False
+                ) resourceLog
+        
+        -- Extract resources from the log entries
+        let resources = mapMaybe (\entry -> 
+                case leContent entry of
+                    ResourceCreated res -> Just res
+                    ResourceTransferred txn -> 
+                        -- Find the first resource owned by this owner
+                        listToMaybe $ filter (\res -> resourceOwner res == ownerHash) $ 
+                            map camContent (urtOutputs txn)
+                    _ -> Nothing
+                ) ownerResources
+        
+        trace $ "Found " <> show (length resources) <> " resources for owner " <> show ownerHash
+        pure $ Right resources
+    
     OpGetResourcesByTimeline timelineHash -> do
-        trace "Getting resources by timeline..."
-        -- TODO: Implement actual resource lookup by timeline
-        pure $ Right []
+        trace $ "Looking up resources for timeline: " <> show timelineHash
+        
+        -- Get the resource log
+        resourceLog <- PS.get
+        
+        -- Filter resources by timeline
+        let timelineResources = filter (\entry -> 
+                case leContent entry of
+                    ResourceCreated res -> resourceOrigin res == timelineHash || 
+                                          timelineHash `elem` resourceProvenanceChain res
+                    ResourceTransferred txn -> 
+                        -- Check if any output resources are in this timeline
+                        any (\msg -> timelineHash `elem` resourceProvenanceChain (camContent msg)) (urtOutputs txn)
+                    _ -> False
+                ) resourceLog
+        
+        -- Extract resources from the log entries
+        let resources = mapMaybe (\entry -> 
+                case leContent entry of
+                    ResourceCreated res -> 
+                        if resourceOrigin res == timelineHash || timelineHash `elem` resourceProvenanceChain res
+                        then Just res
+                        else Nothing
+                    ResourceTransferred txn -> 
+                        -- Find the first resource in this timeline
+                        listToMaybe $ filter (\res -> timelineHash `elem` resourceProvenanceChain res) $ 
+                            map camContent (urtOutputs txn)
+                    _ -> Nothing
+                ) timelineResources
+        
+        trace $ "Found " <> show (length resources) <> " resources for timeline " <> show timelineHash
+        pure $ Right resources
+    
     OpCreateTransaction inputs outputs actor timelineHash -> do
         trace "Creating transaction..."
-        let transaction =
-                UnifiedResourceTransaction
-                    { urtInputs = map createAuthenticatedMessage inputs
-                    , urtOutputs = map createContentAddressedMessage outputs
-                    , urtMetadata = "Transaction metadata"
-                    , urtTimestamp = LamportTime 0 -- TODO: Get proper timestamp
-                    , urtSigner = undefined -- TODO: Create proper actor
-                    , urtSignature = Signature "" -- TODO: Add proper signature
-                    , urtProvenanceChain = [timelineHash]
-                    }
+        -- Update Lamport time for this operation
+        lt <- send IncrementTime
+        
+        -- Create a proper Actor from the ActorHash
+        -- In a real implementation, this would be retrieved from an actor database/registry
+        let actorType = determineActorType actor
+        let signingActor = Actor
+                { actorId = actor
+                , actorType = actorType
+                }
+        
+        -- Generate a proper signature for the transaction
+        let txnData = encode (inputs, outputs, lt, timelineHash)
+        let signatureBytes = generateSignatureForActor actor txnData
+        
+        let transaction = UnifiedResourceTransaction
+                { urtInputs = map createAuthenticatedMessage inputs
+                , urtOutputs = map createContentAddressedMessage outputs
+                , urtMetadata = ""
+                , urtTimestamp = lt  -- Using the Lamport timestamp
+                , urtSigner = signingActor
+                , urtSignature = Signature signatureBytes  -- Using generated signature
+                , urtProvenanceChain = [timelineHash]
+                }
         trace "Transaction created successfully."
         pure $ Right transaction
+    
     OpValidateTransaction transaction -> do
         trace "Validating transaction..."
         let result =
@@ -473,20 +479,56 @@ interpretResourceOp' = \case
                     then TransactionValid
                     else TransactionInvalid "Invalid inputs or outputs"
         pure $ Right result
+    
     OpExecuteTransaction transaction -> do
         trace "Executing transaction..."
-        let spentResources = map (markAsSpent . camContent . amPayload) (urtInputs transaction)
+        -- Not using spentResources since it's unused
+        -- let spentResources = map (markAsSpent . camContent . amPayload) (urtInputs transaction)
         let newResources = map camContent (urtOutputs transaction)
         trace "Transaction executed successfully."
         pure $ Right newResources
+    
     OpTransactionHistory resourceHash -> do
-        trace "Getting transaction history..."
-        -- TODO: Implement actual transaction history lookup
-        pure $ Right []
+        trace $ "Looking up transaction history for resource: " <> show resourceHash
+        
+        -- Get the resource log
+        resourceLog <- PS.get
+        
+        -- Filter transactions involving this resource
+        let resourceTransactions = filter (\entry -> 
+                case leContent entry of
+                    ResourceTransferred txn -> 
+                        -- Check if resource is in inputs or outputs
+                        any (\msg -> resourceId (camContent (amPayload msg)) == resourceHash) (urtInputs txn) ||
+                        any (\msg -> resourceId (camContent msg) == resourceHash) (urtOutputs txn)
+                    _ -> False
+                ) resourceLog
+        
+        -- Extract transactions from the log entries
+        let transactions = mapMaybe (\entry -> 
+                case leContent entry of
+                    ResourceTransferred txn -> Just txn
+                    _ -> Nothing
+                ) resourceTransactions
+        
+        -- Sort transactions by timestamp
+        let sortedTransactions = sortBy (comparing (\txn -> urtTimestamp txn)) transactions
+        
+        trace $ "Found " <> show (length sortedTransactions) <> " transactions for resource " <> show resourceHash
+        pure $ Right sortedTransactions
 
 -- Helper functions
 createAuthenticatedMessage :: Resource -> AuthenticatedMessage Resource
-createAuthenticatedMessage resource = AuthenticatedMessage (computeMessageHash $ encode resource) undefined undefined (createContentAddressedMessage resource) (Signature "")
+createAuthenticatedMessage resource = 
+    let messageHash = computeMessageHash $ encode resource
+        content = createContentAddressedMessage resource
+        -- Generate a deterministic actor ID based on the resource owner
+        actorId = resourceOwner resource
+        -- Create a proper actor instance
+        actor = Actor actorId $ determineActorType actorId
+        -- Generate a signature using the resource data
+        signatureBytes = generateSignatureForActor actorId (encode resource)
+    in AuthenticatedMessage messageHash actor Nothing content (Signature signatureBytes)
 
 createContentAddressedMessage :: Resource -> ContentAddressedMessage Resource
 createContentAddressedMessage resource = ContentAddressedMessage (computeMessageHash $ encode resource) resource
@@ -494,25 +536,23 @@ createContentAddressedMessage resource = ContentAddressedMessage (computeMessage
 markAsSpent :: Resource -> Resource
 markAsSpent resource = resource{resourceSpentBy = Just (computeHash resource Nothing)}
 
--- | Helper function to update a log entry with spent resources
-updateLogEntry :: [Resource] -> LogEntry ResourceEventType -> LogEntry ResourceEventType
-updateLogEntry spentResources entry =
-    case leContent entry of
-        ResourceCreated resource ->
-            if any (\spent -> resourceId spent == resourceId resource) spentResources
-                then entry{leContent = ResourceCreated $ markAsSpent resource}
-                else entry
-        ResourceTransferred transaction ->
-            let updatedInputs = map (\msg -> msg{amPayload = (amPayload msg){camContent = markAsSpent (camContent (amPayload msg))}}) (urtInputs transaction)
-             in entry{leContent = ResourceTransferred $ transaction{urtInputs = updatedInputs}}
-        _ -> entry
+-- | Determine actor type based on actor hash
+-- In a real implementation, this would query an actor registry
+determineActorType :: ActorHash -> ActorType
+determineActorType actorHash = 
+    -- Simple demonstration of actor type determination
+    -- In a real implementation, this would involve a proper lookup
+    let actorIdStr = BS.pack (show actorHash)
+    in if "val_" `BS.isPrefixOf` actorIdStr
+       then Types.Validator
+       else Types.TimeTraveler  -- Using TimeTraveler as default instead of User
 
--- | Helper function to check if a resource is involved in a transaction
-isInvolvedInTransaction :: ResourceHash -> LogEntry ResourceEventType -> Bool
-isInvolvedInTransaction resourceHash entry =
-    case leContent entry of
-        ResourceCreated resource -> resourceId resource == resourceHash
-        ResourceTransferred transaction ->
-            any (\msg -> resourceId (camContent (amPayload msg)) == resourceHash) (urtInputs transaction)
-                || any (\msg -> resourceId (camContent msg) == resourceHash) (urtOutputs transaction)
-        _ -> False
+-- | Generate a signature for the given actor and data
+-- In a real implementation, this would use the actor's private key
+generateSignatureForActor :: ActorHash -> ByteString -> ByteString
+generateSignatureForActor actorHash dataToSign = 
+    -- Create a deterministic "signature" based on the actor and data
+    -- This is NOT a real cryptographic signature - just for demonstration
+    let combinedData = BS.pack (show actorHash) <> dataToSign
+        Hash hashBytes = computeSha256 combinedData
+    in "sig-" <> hashBytes

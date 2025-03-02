@@ -5,8 +5,7 @@
 
 module SimpleNetworkConfig (tests) where
 
-import Prelude hiding (newIORef)
-import qualified Debug.Trace as Trace
+import Prelude
 import qualified Test.Tasty as Tasty
 import Test.Tasty.HUnit (testCase, assertBool)
 import qualified Data.ByteString.Char8 as BS
@@ -16,11 +15,10 @@ import Network.Socket (SockAddr(..))
 import TimeBandits.Core (
   Actor(..),
   ActorType(..),
-  PubKey(..),
-  PrivKey(..),
   Hash(..),
   EntityHash(..),
-  ActorHash
+  ActorHash,
+  PrivKey(..)
   )
 
 import TimeBandits.Network (
