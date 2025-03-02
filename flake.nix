@@ -66,6 +66,28 @@
             )
           );
         };
+        
+        # Add test suite
+        packages.time-bandits-test = pkgs.haskell.packages.ghc963.callCabal2nixWithOptions "time-bandits" ./. "--flag=-test-doctests" {
+          polysemy = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.callCabal2nixWithOptions "polysemy" (pkgs.fetchFromGitHub {
+                owner = "polysemy-research";
+                repo = "polysemy";
+                rev = "1.9.2.0";
+                sha256 = "0qp6g44hbyjgbw4awpw6aiysv8cjlr0dik94b77mjwvf74lnamj0";
+              }) "--flag=-test-doctests" {}
+            )
+          );
+          polysemy-plugin = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.polysemy-plugin
+            )
+          );
+        };
+
+        # Add a check to run the test
+        checks.test = self'.packages.time-bandits-test;
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -74,6 +96,8 @@
               haskell-language-server
               polysemy
               polysemy-plugin
+              tasty
+              tasty-hunit
             ]))
             ghcid
             stack

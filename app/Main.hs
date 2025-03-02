@@ -116,30 +116,9 @@ mainProgram ::
   Sem r ()
 mainProgram = do
   Trace.trace "Initializing Time Bandits core systems..."
-  
-  -- Configure resource tracking
-  Trace.trace "Configuring resource tracking..."
-  resourceLog <- PS.get
-  Trace.trace $ "Current resource log entries: " <> show (length (resourceLog :: [LogEntry ResourceEventType]))
-  
-  -- Initialize P2P networking
-  Trace.trace "Initializing P2P network..."
-  Trace.trace "Discovering peers in the P2P network"
-  nodes <- Network.discoverPeers
-  Trace.trace $ "Found " <> show (length nodes) <> " peers in the network"
-  
-  -- Test resource node selection with Rendezvous Hashing
-  Trace.trace "Testing resource node selection with Rendezvous Hashing"
-  let testKey = BS8.pack "test-resource-1"  -- Use ByteString directly
-  selectedNodes <- Network.selectNodesForKey testKey 3
-  Trace.trace $ "Selected " <> show (length selectedNodes) <> " nodes for resource test-resource-1"
-  
-  -- Additional output for demonstration
   output "Time Bandits application initialized successfully!"
-  output "Ready to process time-sensitive resource operations."
-  output "Type 'help' for available commands or 'exit' to quit."
 
--- | Extended interpreter configuration to include P2P state
+-- | Interpreter configuration
 interpretWithConfig ::
     InterpreterConfig ->
     IORef LamportTime ->
