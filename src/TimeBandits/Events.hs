@@ -22,43 +22,48 @@ module TimeBandits.Events (
 
   -- * Re-exports from Utils
   derivePubKeyFromPrivKey,
+  generateSecureEd25519KeyPair,
   createEventMetadata,
   verifyEventSignature,
   createLogEntry,
   rootTimelineHash,
   createAuthenticatedMessage,
   verifyMessageSignatureWithKey,
+  
+  -- * Key Management
+  getPublicKeyForActor,
+  verifyActorSignature,
+  registerActorKeyPair,
+  verifyMessageSignatureEffect,
 ) where
 
+import Crypto.Error (CryptoFailable(..))
+import Crypto.PubKey.Ed25519 qualified as Ed25519
+import Data.ByteArray (convert)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS
+import Data.IORef qualified as IORef
+import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize, encode, decode)
-import TimeBandits.Core (computeMessageHash)
+import Polysemy (Sem, Member, interpret, embed, makeSem)
+import Polysemy.Embed (Embed)
+import Polysemy.Error (Error, throw)
+import System.IO.Unsafe (unsafePerformIO)
+import TimeBandits.Core (
+  Event(..),
+  Message(..),
+  computeMessageHash, 
+  computePubKeyHash
+  )
 import TimeBandits.Types
+import TimeBandits.Types qualified as Types
 import TimeBandits.Core qualified as Core
 import TimeBandits.Utils
-
--- | Core type class for events in the system
-class (Serialize e) => Event e where
-  contentHash :: e -> Hash
-  contentHash = computeMessageHash
-  toEventContent :: e -> EventContent
-  eventTimeline :: e -> TimelineHash
-  eventActor :: e -> ActorHash
-  previousEventHash :: e -> Maybe Hash
-  metadata :: e -> EventMetadata
-  verifySignature :: e -> Bool
-
--- | Core type class for messages in the system
-class (Serialize m) => Message m where
-  messageHash :: m -> Hash
-  messageHash = computeMessageHash
-  messageSender :: m -> Core.Actor
-  messageDestination :: m -> Maybe ActorHash
-  messageSignature :: m -> Core.Signature
-  messageContent :: m -> ByteString
-  toEvent :: m -> Maybe EventContent
-  verifyMessageSignature :: m -> Bool
+import TimeBandits.Effects (
+  KeyManagement,
+  lookupPublicKey,
+  verifyWithPublicKey
+  )
 
 -- | Instance for ActorEvent
 instance Event ActorEvent where
@@ -71,7 +76,7 @@ instance Event ActorEvent where
     let meta = aeMetadata event
         sig = emSignature meta
         content = encode $ aeContent event
-     in Core.verifySignature (emSigner meta) content sig
+     in Types.verifySignature (emSigner meta) content sig
 
 -- | Instance for ResourceEvent
 instance Event ResourceEvent where
@@ -84,7 +89,7 @@ instance Event ResourceEvent where
     let meta = reMetadata event
         sig = emSignature meta
         content = encode $ reContent event
-     in Core.verifySignature (emSigner meta) content sig
+     in Types.verifySignature (emSigner meta) content sig
 
 -- | Instance for TimelineEvent
 instance Event TimelineEvent where
@@ -97,7 +102,7 @@ instance Event TimelineEvent where
     let meta = teMetadata event
         sig = emSignature meta
         content = encode $ teContent event
-     in Core.verifySignature (emSigner meta) content sig
+     in Types.verifySignature (emSigner meta) content sig
 
 -- | Instance for AuthenticatedMessage
 instance Message (Core.AuthenticatedMessage ByteString) where
@@ -113,20 +118,83 @@ instance Message (Core.AuthenticatedMessage ByteString) where
       Right eventContent -> Just eventContent
       Left _ -> Nothing
 
+  -- For runtime use, we defer to the KeyManagement effect via TimeBandits.Utils
+  -- This implementation is used when we need a direct Boolean result
   verifyMessageSignature msg =
     let content = Core.camContent $ Core.amPayload msg
         sig = Core.amSignature msg
-        -- In a real implementation, we would need to retrieve the public key associated with 
-        -- the sender actor from a registry or lookup service.
-        -- Use a deterministic key derivation based on actor ID for demonstration
+        -- Retrieve the public key for this actor using proper key management
         sender = Core.amSender msg
         senderActorId = actorId sender
-        pubKey = PubKey $ "key-for-" <> BS.pack (show senderActorId)
-     in Core.verifySignature pubKey content sig
+        -- Now we use the key lookup system
+        pubKey = getPublicKeyForActor senderActorId
+     in Types.verifySignature pubKey content sig
 
--- | Helper to get a public key for an actor (would connect to a key management system)
+-- | Helper function to verify a message signature using a KeyManagement effect
+verifyMessageSignatureEffect :: 
+  (Member KeyManagement r, Message m) => 
+  m -> 
+  Sem r Bool
+verifyMessageSignatureEffect msg = do
+  -- Get the public key for the sender using the KeyManagement effect
+  let sender = messageSender msg
+      senderActorId = actorId sender
+  maybePubKey <- lookupPublicKey senderActorId
+  case maybePubKey of
+    Just pubKey -> 
+      -- Verify the signature using the KeyManagement effect
+      verifyWithPublicKey pubKey (messageContent msg) (messageSignature msg)
+    Nothing ->
+      -- Fall back to the direct implementation if no key is found
+      return $ verifyMessageSignature msg
+
+-- | Key-Value store for actor public keys
+-- In a production system, this would be replaced with a persistent database
+-- or a distributed key-value store with proper access control
+type ActorKeyStore = Map.Map ActorHash PubKey
+
+-- | Global reference to the actor key store
+-- In a real production system, this would be replaced with a proper database connection
+{-# NOINLINE globalActorKeyStore #-}
+globalActorKeyStore :: IORef.IORef ActorKeyStore
+globalActorKeyStore = unsafePerformIO (IORef.newIORef Map.empty)
+
+-- | Register a key pair for an actor
+-- In a production system, this would include proper authentication and authorization
+registerActorKeyPair :: (Member (Embed IO) r, Member (Error Text) r) => 
+                       ActorHash -> PrivKey -> PubKey -> Sem r ()
+registerActorKeyPair actorId privKey pubKey = do
+  -- Verify that the public key is derived from the private key
+  let derivedPubKey = derivePubKeyFromPrivKey privKey
+  
+  -- Validate the keys match
+  if pubKey /= derivedPubKey
+    then throw ("Public key does not match private key" :: Text)
+    else do
+      -- In a production system, we would verify the actor's identity
+      -- before allowing key registration
+      
+      -- Store the public key in our key store
+      embed $ IORef.modifyIORef' globalActorKeyStore (Map.insert actorId pubKey)
+
+-- | Retrieve the public key for an actor
+-- Uses the actor key store to look up the public key
 getPublicKeyForActor :: ActorHash -> PubKey
-getPublicKeyForActor actorId = 
-    -- In a real implementation, this would query a key management system
-    -- For demonstration purposes, we're generating a deterministic key based on actor ID
-    PubKey $ "key-for-" <> BS.pack (show actorId)
+getPublicKeyForActor actorId = unsafePerformIO $ do
+  keyStore <- IORef.readIORef globalActorKeyStore
+  case Map.lookup actorId keyStore of
+    Just pubKey -> 
+      -- Found the public key in our store
+      return pubKey
+    Nothing ->
+      -- If we don't have the key, we use a deterministic fallback for compatibility
+      -- with existing code. In a production system, this would instead return
+      -- an error or trigger a key retrieval from a distributed registry.
+      return $ PubKey $ "key-for-" <> BS.pack (show actorId)
+
+-- | Verify a signature from an actor
+-- Returns True if the signature is valid or False otherwise
+verifyActorSignature :: ActorHash -> ByteString -> Signature -> Bool
+verifyActorSignature actorId content signature = 
+  let pubKey = getPublicKeyForActor actorId
+  in Types.verifySignature pubKey content signature

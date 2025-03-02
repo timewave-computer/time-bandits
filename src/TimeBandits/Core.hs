@@ -13,7 +13,49 @@
 
 module TimeBandits.Core (
   -- * Re-exports from Types
-  module TimeBandits.Types,
+  ActorEvent(..),
+  ActorEventType(..),
+  ResourceEvent(..),
+  ResourceEventType(..),
+  TimelineEvent(..),
+  TimelineEventType(..),
+  EventContent(..),
+  EntityHash(..),
+  Hash(..),
+  ActorHash,
+  ResourceHash,
+  TimelineHash,
+  LamportTime(..),
+  PubKey(..),
+  PrivKey(..),
+  Signature(..),
+  ActorType(..),
+  Actor(..),
+  SystemConfig(..),
+  Resource(..),
+  ResourceCapability(..),
+  LogEntry(..),
+  Log(..),
+  MapOfTime(..),
+  SyncPoint(..),
+  TransientDatastore(..),
+  TransientStoredItem(..),
+  EventMetadata(..),
+  AppError(..),
+  TimelineErrorType(..),
+  ResourceErrorType(..),
+  ActorErrorType(..),
+  CryptoErrorType(..),
+  StorageErrorType(..),
+  ContentAddressedMessage(..),
+  AuthenticatedMessage(..),
+  UnifiedResourceTransaction(..),
+  TransactionValidationResult(..),
+  signMessage,
+  
+  -- * Type Classes
+  Event (..),
+  Message (..),
 
   -- * Hash Functions
   computeSha256,
@@ -34,7 +76,7 @@ module TimeBandits.Core (
 ) where
 
 import Crypto.Hash.SHA256 qualified as SHA256
-import Data.ByteString ()
+import Data.ByteString (ByteString)
 import Data.Serialize (Serialize, encode)
 import Polysemy
 import Polysemy.Error (Error, throw)
@@ -46,6 +88,28 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Ord (Down(..))
 import Data.List (sortOn)
 import Data.Word (Word64)
+
+-- | Core type class for events in the system
+class (Serialize e) => Event e where
+  contentHash :: e -> Hash
+  contentHash = computeMessageHash
+  toEventContent :: e -> EventContent
+  eventTimeline :: e -> TimelineHash
+  eventActor :: e -> ActorHash
+  previousEventHash :: e -> Maybe Hash
+  metadata :: e -> EventMetadata
+  verifySignature :: e -> Bool
+
+-- | Core type class for messages in the system
+class (Serialize m) => Message m where
+  messageHash :: m -> Hash
+  messageHash = computeMessageHash
+  messageSender :: m -> Actor
+  messageDestination :: m -> Maybe ActorHash
+  messageSignature :: m -> Signature
+  messageContent :: m -> ByteString
+  toEvent :: m -> Maybe EventContent
+  verifyMessageSignature :: m -> Bool
 
 -- Add this helper for consistent node selection
 {- | Compute a score for a node based on its hash and a key.

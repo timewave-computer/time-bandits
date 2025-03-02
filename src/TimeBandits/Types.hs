@@ -96,10 +96,7 @@ module TimeBandits.Types (
   TransactionValidationResult (..),
 ) where
 
-import Data.ByteString ()
-
--- For instances
-import Data.Map.Strict ()
+import Data.ByteString (ByteString)
 
 -- For instances
 import Crypto.Error (CryptoFailable (..))
@@ -107,9 +104,9 @@ import Crypto.PubKey.Ed25519 qualified as Ed25519
 import Data.ByteArray (convert)
 import Data.Map.Strict qualified as Map
 import Data.Serialize qualified as S
-import Data.Text ()
+import Data.Text (Text)
 import Data.Time (Day (..), DiffTime, UTCTime (..))
-import GHC.Generics ()
+import GHC.Generics (Generic)
 
 -- | Instance for serializing UTCTime
 instance S.Serialize UTCTime where

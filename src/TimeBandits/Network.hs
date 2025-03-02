@@ -65,7 +65,6 @@ module TimeBandits.Network
   ) where
 
 import Control.Monad (forM_, when)
-import Control.Monad.IO.Class (liftIO)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Binary (encode)
 import Data.ByteString (ByteString)
@@ -80,7 +79,6 @@ import Data.Maybe (fromMaybe, catMaybes, isNothing)
 import Data.Ord (Down(..))
 import Data.Set qualified as Set
 import Data.Text (Text, pack)
-import Data.Text qualified as T
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
 import Data.Word (Word64)
 import GHC.Generics (Generic)

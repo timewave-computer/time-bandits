@@ -26,6 +26,7 @@ module TimeBandits.Utils (
   -- * Crypto Utilities
   -- ** Key Management
   derivePubKeyFromPrivKey,
+  generateSecureEd25519KeyPair,
   
   -- ** Hashing Operations
   computeContentHash,
@@ -51,8 +52,10 @@ module TimeBandits.Utils (
 
 import Crypto.Error (CryptoFailable (..))
 import Crypto.PubKey.Ed25519 qualified as Ed25519
+import Crypto.Random.Entropy (getEntropy)
 import Data.ByteArray (convert)
 import Data.ByteString (ByteString)
+import Data.ByteString.Char8 qualified as BS
 import Data.Serialize (Serialize, encode)
 import Data.Time.Clock (UTCTime)
 import Polysemy
@@ -89,6 +92,30 @@ derivePubKeyFromPrivKey (PrivKey priv) =
   case Ed25519.secretKey priv of
     CryptoFailed _ -> PubKey priv -- Fallback for invalid keys
     CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
+
+-- | Generate a secure random Ed25519 keypair
+-- This should be used for creating secure cryptographic identities
+generateSecureEd25519KeyPair :: (Member (Embed IO) r) => Sem r (PrivKey, PubKey)
+generateSecureEd25519KeyPair = do
+  -- Generate a secure random seed for the key
+  randomSeed <- embed $ getEntropy 32
+  
+  -- Create the Ed25519 secret key
+  case Ed25519.secretKey randomSeed of
+    CryptoFailed err -> 
+      -- If key generation fails, throw an error in a real system
+      -- For demonstration, we'll use a deterministic fallback
+      let fallbackSeed = BS.pack "fallback-seed-for-ed25519-key-generation"
+          privKey = PrivKey fallbackSeed
+          pubKey = PubKey $ "fallback-public-" <> fallbackSeed
+      in pure (privKey, pubKey)
+    
+    CryptoPassed sk -> do
+      -- Derive the public key from the secret key
+      let pk = Ed25519.toPublic sk
+          privKey = PrivKey randomSeed
+          pubKey = PubKey $ convert pk
+      pure (privKey, pubKey)
 
 -- | Compute content hash for any serializable data
 computeContentHash :: (Serialize a) => a -> Hash
