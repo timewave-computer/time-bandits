@@ -107,6 +107,7 @@ test-suite time-bandits-test
   hs-source-dirs:   test
   main-is:          Main.hs
   other-modules:    SimpleNetworkConfig
+                   , TimelineScenarioTest
   build-depends:    base >= 4.16 && < 5,
                    time-bandits,
                    polysemy,
