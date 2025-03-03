@@ -264,11 +264,18 @@ computeNodeScore :: P2PNode -> ByteString -> Word64
 computeNodeScore node = Core.computeNodeScore (pnId node)
 
 -- | Interpret the P2P Network effect
+-- Provides concrete implementations for all P2P network operations, including
+-- peer discovery, message routing, connection management, and data synchronization.
+-- This interpreter uses the actor's identity to authenticate network operations
+-- and maintains a peer list through the State effect.
+-- 
+-- In production, this would interface with real network protocols like libp2p
+-- for establishing secure peer-to-peer connections across the internet.
 interpretP2PNetwork :: 
   (Members '[Embed IO, Error AppError, PS.State [P2PNode], PT.Trace] r) =>
-  P2PConfig ->
-  Actor ->
-  PubKey ->
+  P2PConfig ->      -- ^ Configuration for P2P network behavior
+  Actor ->          -- ^ The local actor's identity
+  PubKey ->         -- ^ The local actor's public key for message signing
   Sem (P2PNetwork ': r) a ->
   Sem r a
 interpretP2PNetwork config self pubKey = interpret \case
@@ -375,30 +382,39 @@ interpretP2PNetwork config self pubKey = interpret \case
     currentPeers <- PS.get
     timestamp <- embed getCurrentTime
     
-    -- Check health and last seen time
+    -- Check health and last seen time to identify active peers
+    -- We remove peers that haven't been seen for more than an hour
     let maxAge = 3600 -- 1 hour in seconds
         isRecentlyActive p = diffUTCTime timestamp (pnLastSeen p) < maxAge
         activePeers = filter isRecentlyActive currentPeers
     
     -- Sort by health and keep best peers up to capacity
+    -- This implements a quality-based selection mechanism that retains
+    -- the most reliable peers when network capacity is constrained
     healthStatuses <- mapM (\p -> do
       health <- checkPeerHealth p timestamp
       return (p, scoreNodeHealth health p)) activePeers
     
+    -- Sort peers by their health score (highest first) and limit to capacity
+    -- This ensures we maintain connections to the most reliable peers
+    -- while respecting the node capacity constraints
     let sortedPeers = map fst $ sortWith (Down . snd) healthStatuses
         prunedPeers = take (pcNodeCapacity config) sortedPeers
         removedCount = length currentPeers - length prunedPeers
     
+    -- Update the peer list with the pruned set of peers
     PS.put prunedPeers
     return removedCount
   
   ConnectToPeer addr -> do
     PT.trace $ "Connecting to peer at " <> show addr
     -- Simulate connection attempt
+    -- In a real implementation, this would establish a network connection
     result <- embed $ simulateConnectionAttempt addr
     case result of
       Just node -> do
         -- Add to peer list if not already present
+        -- This prevents duplicate connections to the same peer
         currentPeers <- PS.get
         let updatedPeers = if any (\p -> pnId p == pnId node) currentPeers
               then currentPeers
@@ -413,6 +429,7 @@ interpretP2PNetwork config self pubKey = interpret \case
   DisconnectFromPeer node -> do
     PT.trace $ "Disconnecting from peer " <> show (pnId node)
     -- Remove from peer list
+    -- This terminates the network connection and removes the peer from tracking
     currentPeers <- PS.get
     let updatedPeers = filter (\p -> pnId p /= pnId node) currentPeers
     PS.put updatedPeers
@@ -423,6 +440,8 @@ interpretP2PNetwork config self pubKey = interpret \case
     currentPeers <- PS.get
     
     -- Compute score for each node using rendezvous hashing
+    -- This implements a consistent hashing algorithm that assigns keys to nodes
+    -- in a deterministic way that minimizes reassignments when nodes join/leave
     let scoredNodes = map (\node -> (node, Core.computeNodeScore (pnId node) key)) currentPeers
         -- Sort by score (highest first)
         sortedNodes = map fst $ sortOn (Down . snd) scoredNodes

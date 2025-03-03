@@ -96,7 +96,7 @@ module TimeBandits.Types (
   TransactionValidationResult (..),
 ) where
 
-import Data.ByteString (ByteString)
+import Data.ByteString ()
 
 -- For instances
 import Crypto.Error (CryptoFailable (..))
@@ -104,9 +104,9 @@ import Crypto.PubKey.Ed25519 qualified as Ed25519
 import Data.ByteArray (convert)
 import Data.Map.Strict qualified as Map
 import Data.Serialize qualified as S
-import Data.Text (Text)
+import Data.Text ()
 import Data.Time (Day (..), DiffTime, UTCTime (..))
-import GHC.Generics (Generic)
+import GHC.Generics ()
 
 -- | Instance for serializing UTCTime
 instance S.Serialize UTCTime where
@@ -534,28 +534,46 @@ data TransactionValidationResult
   deriving anyclass (S.Serialize)
 
 -- | A simple Trie implementation using Map
+-- This is a lightweight wrapper around Map to provide a trie-like interface
+-- for efficient key-value storage within the timeline logs and other data structures.
+-- The Trie allows for efficient lookups and iterations over timeline data.
 newtype Trie a = Trie {unTrie :: Map ByteString a}
   deriving stock (Eq, Show)
   deriving stock (Generic)
   deriving anyclass (S.Serialize)
 
--- | Helper functions for Trie
+-- | Create an empty Trie structure
+-- Used as an initial state for timeline logs and other trie-based collections.
 emptyTrie :: Trie a
 emptyTrie = Trie Map.empty
 
+-- | Insert a value into a Trie at the specified key
+-- Used to add new entries to timeline logs and other trie-based data structures.
 insertTrie :: ByteString -> a -> Trie a -> Trie a
 insertTrie key val (Trie m) = Trie (Map.insert key val m)
 
+-- | Look up a value in a Trie by its key
+-- Retrieves entries from timeline logs and other trie-based collections.
 lookupTrie :: ByteString -> Trie a -> Maybe a
 lookupTrie key (Trie m) = Map.lookup key m
 
+-- | Create a Trie from a list of key-value pairs
+-- Efficiently converts a list of entries into a trie structure for
+-- quick initialization of timeline logs and other collections.
 fromListTrie :: [(ByteString, a)] -> Trie a
 fromListTrie = Trie . Map.fromList
 
+-- | Get all values stored in a Trie
+-- Retrieves all entries from a trie without their keys, useful for
+-- processing all items in a timeline log or other collection.
 elemsTrie :: Trie a -> [a]
 elemsTrie (Trie m) = Map.elems m
 
 -- | Sign a message with a private key
+-- Creates a cryptographic signature for a message using Ed25519,
+-- allowing others to verify the authenticity of the message using
+-- the corresponding public key. This is a core security mechanism
+-- for all actor operations in the system.
 signMessage :: PrivKey -> ByteString -> Either Text Signature
 signMessage (PrivKey privKey) msg =
   case Ed25519.secretKey privKey of
@@ -563,6 +581,9 @@ signMessage (PrivKey privKey) msg =
     CryptoPassed sk -> Right $ Signature $ convert (Ed25519.sign sk (Ed25519.toPublic sk) msg)
 
 -- | Verify a signature with a public key
+-- Validates that a message was created by the holder of the private key
+-- corresponding to the provided public key. This ensures the authenticity
+-- and integrity of all messages and events in the system.
 verifySignature :: PubKey -> ByteString -> Signature -> Bool
 verifySignature (PubKey pubKey) msg (Signature sig) =
   case Ed25519.publicKey pubKey of

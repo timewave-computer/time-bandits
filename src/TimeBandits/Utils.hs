@@ -87,6 +87,9 @@ import TimeBandits.Types qualified as Core (
 -- -----------------------------------------------------------------------------
 
 -- | Derive public key from private key using Ed25519
+-- Takes a private key and deterministically derives the corresponding public key.
+-- This ensures cryptographic identity consistency and allows verification of
+-- signatures using only the public component.
 derivePubKeyFromPrivKey :: PrivKey -> PubKey
 derivePubKeyFromPrivKey (PrivKey priv) =
   case Ed25519.secretKey priv of
@@ -94,7 +97,9 @@ derivePubKeyFromPrivKey (PrivKey priv) =
     CryptoPassed sk -> PubKey $ convert $ Ed25519.toPublic sk
 
 -- | Generate a secure random Ed25519 keypair
--- This should be used for creating secure cryptographic identities
+-- Creates a cryptographically secure keypair for actor identity and authentication.
+-- The generated keys are used for signing events and messages, ensuring
+-- that all operations in the system have cryptographic accountability.
 generateSecureEd25519KeyPair :: (Member (Embed IO) r) => Sem r (PrivKey, PubKey)
 generateSecureEd25519KeyPair = do
   -- Generate a secure random seed for the key
@@ -118,6 +123,9 @@ generateSecureEd25519KeyPair = do
       pure (privKey, pubKey)
 
 -- | Compute content hash for any serializable data
+-- Creates a unique, deterministic identifier for any piece of serializable data.
+-- This is used throughout the system as the foundation for content addressing,
+-- which enables efficient data retrieval and verification.
 computeContentHash :: (Serialize a) => a -> Hash
 computeContentHash content = computeMessageHash (encode content)
 
@@ -126,10 +134,15 @@ computeContentHash content = computeMessageHash (encode content)
 -- -----------------------------------------------------------------------------
 
 -- | Root timeline hash for actor events
+-- This special timeline is used for actor-related events that aren't
+-- specific to a particular timeline. It serves as a global reference point.
 rootTimelineHash :: TimelineHash
 rootTimelineHash = EntityHash $ Hash "root-timeline"
 
 -- | Create event metadata with current time and signature
+-- Builds the metadata component for any event, including timestamps,
+-- signatures, and reference to the originating actor and timeline.
+-- This metadata ensures events are properly attributed and can be verified.
 createEventMetadata ::
   ( Member (Error Text) r
   ) =>
@@ -155,6 +168,9 @@ createEventMetadata timestamp now privKey actor timeline content =
           }
 
 -- | Verify an event's signature using its metadata and content
+-- Validates that an event was created by the actor whose public key
+-- is included in the metadata. This ensures the authenticity and
+-- integrity of all events in the system.
 verifyEventSignature :: 
   (Serialize e) => 
   EventMetadata -> 
@@ -166,6 +182,9 @@ verifyEventSignature meta content =
    in Core.verifySignature pubKey (encode content) sig
 
 -- | Create a log entry from content, metadata, and previous hash
+-- Builds a complete log entry that includes both the event content and
+-- all necessary metadata for verification and chaining. The previous hash
+-- reference maintains the causal ordering in the distributed log.
 createLogEntry :: 
   (Serialize e) => 
   e -> 
@@ -186,6 +205,9 @@ createLogEntry content meta prevHash contentHash =
 -- -----------------------------------------------------------------------------
 
 -- | Create an authenticated message with signature
+-- Builds a complete authenticated message from content, adding
+-- sender information and cryptographic signature for verification.
+-- Messages are the primary communication mechanism between actors.
 createAuthenticatedMessage ::
   ( Member (Error Text) r
   ) =>
@@ -203,6 +225,9 @@ createAuthenticatedMessage content privKey sender destination =
       pure $ Core.AuthenticatedMessage msgHash sender destination payload signature
 
 -- | Verify a message's signature using its content and signature
+-- Validates that a message was created by the actor whose public key
+-- is provided. This ensures secure communication between actors in
+-- the distributed network.
 verifyMessageSignatureWithKey :: 
   PubKey -> 
   ByteString -> 

@@ -51,9 +51,7 @@ import Polysemy.Error (Error, throw)
 import System.IO.Unsafe (unsafePerformIO)
 import TimeBandits.Core (
   Event(..),
-  Message(..),
-  computeMessageHash, 
-  computePubKeyHash
+  Message(..)
   )
 import TimeBandits.Types
     ( EventMetadata(..),
@@ -75,13 +73,18 @@ import TimeBandits.Utils
 import TimeBandits.Effects (
   KeyManagement,
   lookupPublicKey,
-  verifyWithPublicKey
+  verifyWithPublicKey,
+  registerPublicKey,  
+  registerActorType
   )
+import Relude (newIORef)
 
 -- | Instance for ActorEvent
+-- Implements the Event typeclass for actor-related events, which automatically places 
+-- actor events in the root timeline as they aren't timeline-specific.
 instance Event ActorEvent where
   toEventContent event = ActorEventContent $ aeContent event
-  eventTimeline = const rootTimelineHash
+  eventTimeline = const rootTimelineHash  -- Actor events always use the root timeline
   eventActor event = emActor $ aeMetadata event
   previousEventHash = fmap unEntityHash . aePreviousEvent
   metadata = aeMetadata
@@ -92,6 +95,8 @@ instance Event ActorEvent where
      in Types.verifySignature (emSigner meta) content sig
 
 -- | Instance for ResourceEvent
+-- Implements the Event typeclass for resource events, which tracks ownership
+-- and state changes to resources across different timelines.
 instance Event ResourceEvent where
   toEventContent event = ResourceEventContent $ reContent event
   eventTimeline event = emTimeline $ reMetadata event
@@ -105,6 +110,8 @@ instance Event ResourceEvent where
      in Types.verifySignature (emSigner meta) content sig
 
 -- | Instance for TimelineEvent
+-- Implements the Event typeclass for timeline-specific events, which
+-- captures the creation, merging, splitting, and other operations on timelines.
 instance Event TimelineEvent where
   toEventContent event = TimelineEventContent $ teContent event
   eventTimeline event = emTimeline $ teMetadata event
@@ -118,6 +125,8 @@ instance Event TimelineEvent where
      in Types.verifySignature (emSigner meta) content sig
 
 -- | Instance for AuthenticatedMessage
+-- Implements the Message typeclass for authenticated messages, enabling
+-- verified communication between actors across the network.
 instance Message (Core.AuthenticatedMessage ByteString) where
   messageSender = Core.amSender
   messageDestination = Core.amDestination
@@ -127,23 +136,30 @@ instance Message (Core.AuthenticatedMessage ByteString) where
 
   toEvent msg =
     -- Try to decode the message content as an EventContent
+    -- This allows converting messages into events when appropriate
     case decode (Core.camContent $ Core.amPayload msg) of
       Right eventContent -> Just eventContent
       Left _ -> Nothing
 
-  -- For runtime use, we defer to the KeyManagement effect via TimeBandits.Utils
-  -- This implementation is used when we need a direct Boolean result
+  -- Verify message authenticity using the sender's public key
+  -- This implementation uses the key lookup system to find the right public key
   verifyMessageSignature msg =
     let content = Core.camContent $ Core.amPayload msg
         sig = Core.amSignature msg
         -- Retrieve the public key for this actor using proper key management
         sender = Core.amSender msg
         senderActorId = actorId sender
-        -- Now we use the key lookup system
-        pubKey = getPublicKeyForActor senderActorId
+        -- Now we use the key lookup system - fallback to direct access for non-effectful code
+        pubKey = unsafePerformIO $ do
+          keyStore <- IORef.readIORef globalActorKeyStore
+          case Map.lookup senderActorId keyStore of
+            Just pk -> return pk
+            Nothing -> return $ PubKey $ "key-for-" <> BS.pack (show senderActorId)
      in Types.verifySignature pubKey content sig
 
 -- | Helper function to verify a message signature using a KeyManagement effect
+-- This effect-based verification is used when message verification needs to
+-- be composed with other effects in the application.
 verifyMessageSignatureEffect :: 
   (Member KeyManagement r, Message m) => 
   m -> 
@@ -168,13 +184,16 @@ type ActorKeyStore = Map.Map ActorHash PubKey
 
 -- | Global reference to the actor key store
 -- In a real production system, this would be replaced with a proper database connection
+-- This is a temporary in-memory storage mechanism for actor public keys
 {-# NOINLINE globalActorKeyStore #-}
 globalActorKeyStore :: IORef.IORef ActorKeyStore
-globalActorKeyStore = unsafePerformIO (IORef.newIORef Map.empty)
+globalActorKeyStore = unsafePerformIO (newIORef Map.empty)
 
 -- | Register a key pair for an actor
--- In a production system, this would include proper authentication and authorization
-registerActorKeyPair :: (Member (Embed IO) r, Member (Error Text) r) => 
+-- Associates a public key with an actor identity in the key store after
+-- verifying that the public key is correctly derived from the private key.
+-- In a production system, this would include proper authentication and authorization.
+registerActorKeyPair :: (Member (Embed IO) r, Member (Error Text) r, Member KeyManagement r) => 
                        ActorHash -> PrivKey -> PubKey -> Sem r ()
 registerActorKeyPair actorId privKey pubKey = do
   -- Verify that the public key is derived from the private key
@@ -184,18 +203,22 @@ registerActorKeyPair actorId privKey pubKey = do
   if pubKey /= derivedPubKey
     then throw ("Public key does not match private key" :: Text)
     else do
-      -- In a production system, we would verify the actor's identity
-      -- before allowing key registration
+      -- Register the public key using the KeyManagement effect
+      registerPublicKey actorId pubKey
       
-      -- Store the public key in our key store
-      embed $ IORef.modifyIORef' globalActorKeyStore (Map.insert actorId pubKey)
+      -- Also register the actor type (default to TimeTraveler for now)
+      -- In a real system, this would be determined by role or permissions
+      registerActorType actorId Types.TimeTraveler
 
 -- | Retrieve the public key for an actor
--- Uses the actor key store to look up the public key
-getPublicKeyForActor :: ActorHash -> PubKey
-getPublicKeyForActor actorId = unsafePerformIO $ do
-  keyStore <- IORef.readIORef globalActorKeyStore
-  case Map.lookup actorId keyStore of
+-- Uses the KeyManagement effect to look up the public key, falling back to a
+-- deterministic generation method if the key isn't found in the store.
+-- This ensures backward compatibility with existing code.
+getPublicKeyForActor :: (Member KeyManagement r) => ActorHash -> Sem r PubKey
+getPublicKeyForActor actorId = do
+  -- Look up the actor's public key using the KeyManagement effect
+  maybePubKey <- lookupPublicKey actorId
+  case maybePubKey of
     Just pubKey -> 
       -- Found the public key in our store
       return pubKey
@@ -206,8 +229,19 @@ getPublicKeyForActor actorId = unsafePerformIO $ do
       return $ PubKey $ "key-for-" <> BS.pack (show actorId)
 
 -- | Verify a signature from an actor
--- Returns True if the signature is valid or False otherwise
-verifyActorSignature :: ActorHash -> ByteString -> Signature -> Bool
-verifyActorSignature actorId content signature = 
-  let pubKey = getPublicKeyForActor actorId
-  in Types.verifySignature pubKey content signature
+-- Retrieves the actor's public key and uses it to verify the signature.
+-- Uses the KeyManagement effect for signature verification when available.
+verifyActorSignature :: (Member KeyManagement r) => ActorHash -> ByteString -> Signature -> Sem r Bool
+verifyActorSignature actorId content signature = do
+  -- Get the public key for the actor using the KeyManagement effect
+  maybePubKey <- lookupPublicKey actorId
+  case maybePubKey of
+    Just pubKey -> 
+      -- Verify the signature using the KeyManagement effect
+      verifyWithPublicKey pubKey content signature
+    Nothing ->
+      -- Fall back to the direct implementation if no key is found
+      -- This ensures backward compatibility with existing code
+      do
+        pubKey <- getPublicKeyForActor actorId
+        return $ Types.verifySignature pubKey content signature

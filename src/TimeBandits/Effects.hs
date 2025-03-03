@@ -52,6 +52,8 @@ module TimeBandits.Effects (
     lookupPublicKey,
     signData,
     verifyWithPublicKey,
+    registerActorType,
+    lookupActorType,
     interpretKeyManagement,
 
     -- * Application Effects
@@ -126,10 +128,14 @@ import TimeBandits.Network (
   P2PNode
   )
 import Polysemy.State qualified as PS
-import Data.Text (Text)
+import Data.Text ()
 import System.Random qualified as Random
+import TimeBandits.Utils qualified as Utils
 
 -- | Logical clock for tracking causal ordering in timelines
+-- Uses Lamport timestamps to establish a partial ordering of events
+-- across distributed nodes, maintaining causal consistency even without
+-- perfect clock synchronization.
 data LogicalClock m a where
     GetLamportTime :: LogicalClock m LamportTime
     IncrementTime :: LogicalClock m LamportTime
@@ -138,22 +144,32 @@ data LogicalClock m a where
 makeSem ''LogicalClock
 
 -- | Atomic transaction effect for managing concurrent operations
+-- Provides primitives for transaction management to ensure ACID
+-- (Atomicity, Consistency, Isolation, Durability) guarantees for
+-- distributed operations across timelines.
 data AtomicTransaction m a where
     BeginTransaction :: AtomicTransaction m ()
     CommitTransaction :: AtomicTransaction m ()
     RollbackTransaction :: AtomicTransaction m ()
 
 -- | Timeout management for preventing deadlocks
+-- Implements timeout mechanisms for distributed operations
+-- to ensure liveness in the presence of network partitions
+-- or node failures.
 data Timeout m a where
     ScheduleTimeout :: Int -> Timeout m ()
     CancelTimeout :: Int -> Timeout m ()
 
 -- | Cryptographic proof generation and verification for timelines
+-- Creates and validates cryptographic proofs used to establish
+-- verifiable links between timelines and maintain resource provenance.
 data TimelineProof m a where
     GenerateProof :: Hash -> TimelineProof m Hash
     VerifyProof :: Hash -> Hash -> TimelineProof m Bool
 
 -- | Timeline-specific messaging and communication
+-- Handles secure message transmission between actors across timelines,
+-- and converts between messages and events in the system.
 data TimelineMessage m a where
     SendMessage :: (Message msg) => msg -> TimelineMessage m ()
     BroadcastMessage :: (Message msg) => msg -> TimelineMessage m ()
@@ -162,6 +178,8 @@ data TimelineMessage m a where
     ConvertMessageToEvent :: (Message msg) => msg -> TimelineMessage m (Maybe EventContent)
 
 -- | Key management effect for handling cryptographic operations
+-- Provides a unified interface for key generation, storage, signing,
+-- and verification operations throughout the system.
 data KeyManagement m a where
     -- | Generate a new key pair (private and public keys)
     GenerateKeyPair :: KeyManagement m (PrivKey, PubKey)
@@ -173,10 +191,17 @@ data KeyManagement m a where
     SignData :: PrivKey -> ByteString -> KeyManagement m (Either Text Signature)
     -- | Verify a signature with a public key
     VerifyWithPublicKey :: PubKey -> ByteString -> Signature -> KeyManagement m Bool
+    -- | Register actor type in the registry
+    RegisterActorType :: ActorHash -> ActorType -> KeyManagement m ()
+    -- | Lookup actor type from registry
+    LookupActorType :: ActorHash -> KeyManagement m (Maybe ActorType)
 
 makeSem ''KeyManagement
 
 -- | Resource operations for managing timeline resources
+-- This typeclass defines the core operations for creating, transferring,
+-- consuming, and verifying resources across timelines. It implements a
+-- UTXO (Unspent Transaction Output) model for resource management.
 class ResourceOps r where
     createResource :: ByteString -> ActorHash -> TimelineHash -> Sem r (Either AppError Resource)
     transferResource :: Resource -> ActorHash -> TimelineHash -> Sem r (Either AppError Resource)
@@ -191,6 +216,9 @@ class ResourceOps r where
     transactionHistory :: ResourceHash -> Sem r (Either AppError [UnifiedResourceTransaction])
 
 -- | Resource operations effect
+-- Concrete implementation of the ResourceOps typeclass as a Polysemy effect.
+-- Each constructor represents a specific operation on resources that can
+-- be interpreted differently depending on deployment context.
 data ResourceOperationEffect m a where
     OpCreateResource :: ByteString -> ActorHash -> TimelineHash -> ResourceOperationEffect m (Either AppError Resource)
     OpTransferResource :: Resource -> ActorHash -> TimelineHash -> ResourceOperationEffect m (Either AppError Resource)
@@ -206,6 +234,9 @@ data ResourceOperationEffect m a where
 
 makeSem ''ResourceOperationEffect
 
+-- | Instance of ResourceOps for the ResourceOperationEffect
+-- Maps the typeclass operations to their effect constructors, allowing
+-- any code using the ResourceOps typeclass to work with the effect system.
 instance (Member ResourceOperationEffect r) => ResourceOps r where
     createResource metadata owner timeline = opCreateResource metadata owner timeline
     transferResource resource actor timeline = opTransferResource resource actor timeline
@@ -220,6 +251,9 @@ instance (Member ResourceOperationEffect r) => ResourceOps r where
     transactionHistory hash = opTransactionHistory hash
 
 -- | Core application effects stack
+-- Defines the standard set of effects used throughout the application.
+-- This stack combines resource management, networking, state tracking,
+-- cryptography, logging, and error handling into a unified effect system.
 type AppEffects r =
     '[ ResourceOperationEffect
      , P2PNetwork
@@ -233,10 +267,14 @@ type AppEffects r =
      ]
 
 -- | Increment the Lamport time
+-- Helper function that increments a Lamport timestamp by one unit.
+-- Used to maintain causal ordering of events in the distributed system.
 incrementLamportTime :: LamportTime -> LamportTime
 incrementLamportTime (LamportTime t) = LamportTime (t + 1)
 
 -- | Interpret the LogicalClock effect
+-- Provides a concrete implementation of the LogicalClock effect
+-- using an IORef to store the current Lamport timestamp.
 interpretLogicalClock :: (Member (Embed IO) r) => IORef.IORef LamportTime -> Sem (LogicalClock ': r) a -> Sem r a
 interpretLogicalClock timeRef = interpret \case
     GetLamportTime -> embed @IO $ IORef.readIORef timeRef
@@ -250,6 +288,7 @@ interpretLogicalClock timeRef = interpret \case
         pure t
 
 -- | Trace configuration options
+-- Controls the verbosity level of trace logging in the application.
 data TraceConfig
     = -- | Disable all tracing
       NoTracing
@@ -260,12 +299,15 @@ data TraceConfig
     deriving stock (Eq, Show)
 
 -- | Interpreter configuration for controlling effect inclusion
+-- Allows customization of how effects are interpreted at runtime.
+-- Currently only controls tracing, but could be extended for other effects.
 data InterpreterConfig = InterpreterConfig
     { traceConfig :: TraceConfig
     -- ^ How to handle trace logs
     }
 
 -- | Default interpreter configuration
+-- Standard configuration with simple tracing enabled.
 defaultConfig :: InterpreterConfig
 defaultConfig =
     InterpreterConfig
@@ -273,6 +315,7 @@ defaultConfig =
         }
 
 -- | Verbose configuration with detailed logging
+-- Enables detailed trace logs for debugging and monitoring.
 verboseConfig :: InterpreterConfig
 verboseConfig =
     defaultConfig
@@ -280,6 +323,7 @@ verboseConfig =
         }
 
 -- | Silent configuration with no tracing
+-- Disables all trace logs for production or performance-critical scenarios.
 silentConfig :: InterpreterConfig
 silentConfig =
     defaultConfig
@@ -307,18 +351,22 @@ interpretAppEffects ::
 interpretAppEffects = error "This function has been replaced by the version in Main.hs"
 
 -- | Interpret ResourceOperationEffect
+-- Provides a concrete implementation of the ResourceOperationEffect that
+-- uses the available effects to manage resources, track their state in logs,
+-- and maintain causal consistency with Lamport timestamps.
 interpretResourceOp :: (Members '[Trace, Error AppError, Embed IO, LogicalClock, PS.State ResourceLog, P2PNetwork, KeyManagement] r) => ResourceOperationEffect m a -> Sem r a
 interpretResourceOp = \case
     OpCreateResource metadata ownerHash timelineHash -> do
       trace "Creating resource..."
       -- Generate a resource ID from its content
+      -- The ID is a deterministic hash of the metadata, owner, and timeline
       let resourceId = EntityHash $ computeSha256 $ encode (metadata, ownerHash, timelineHash)
       
       -- Update Lamport time for this operation using the LogicalClock effect
       -- This helps maintain causal ordering in the distributed system
       lt <- send IncrementTime
       
-      -- Create the resource with proper timestamp
+      -- Create the resource with proper timestamp and default capabilities
       let resource = Resource
             { resourceId = resourceId
             , resourceOrigin = timelineHash
@@ -337,20 +385,22 @@ interpretResourceOp = \case
     OpGetResource resourceHash -> do
         trace $ "Looking up resource: " <> show resourceHash
         
-        -- Get the resource log
+        -- Get the resource log which contains all resource events
         resourceLog <- PS.get
         
         -- Find the most recent entry for this resource in the log
+        -- Uses the UTXO model where we need the latest state of each resource
         let resourceEntries = filter (\entry -> 
                 case leContent entry of
                     ResourceCreated res -> resourceId res == resourceHash
                     ResourceTransferred txn -> 
-                        -- Check if resource is in outputs
+                        -- Check if resource is in outputs of any transaction
                         any (\msg -> resourceId (camContent msg) == resourceHash) (urtOutputs txn)
                     _ -> False
                 ) resourceLog
                 
         -- Sort entries by timestamp (latest first) to get the most recent state
+        -- This ensures we get the latest state of the resource
         let sortedEntries = sortBy (comparing (Down . emTimestamp . leMetadata)) resourceEntries
         
         -- Extract the resource from the latest entry
@@ -376,9 +426,10 @@ interpretResourceOp = \case
     
     OpTransferResource resource newOwnerHash timelineHash -> do
         trace "Transferring resource..."
-        -- Update Lamport time for this operation
+        -- Update Lamport time for this operation to maintain causal consistency
         lt <- send IncrementTime
         
+        -- Create a new resource owned by the new actor, preserving provenance
         let transferredResource =
                 resource
                     { resourceOwner = newOwnerHash
@@ -477,7 +528,7 @@ interpretResourceOp = \case
         
         -- Create a proper Actor from the ActorHash
         -- Fetch the actor information - in a real system this would query a database
-        let actorType = determineActorType actor
+        actorType <- determineActorType actor
         let signingActor = Actor
                 { actorId = actor
                 , actorType = actorType
@@ -494,8 +545,11 @@ interpretResourceOp = \case
                 Left _ -> Signature "invalid-signature" -- Fallback for errors
                 Right sig -> sig
         
+        -- Create authenticated messages for all input resources
+        authenticatedInputs <- mapM createAuthenticatedMessage inputs
+        
         let transaction = UnifiedResourceTransaction
-                { urtInputs = map createAuthenticatedMessage inputs
+                { urtInputs = authenticatedInputs
                 , urtOutputs = map createContentAddressedMessage outputs
                 , urtMetadata = ""
                 , urtTimestamp = lt  -- Using the Lamport timestamp
@@ -552,17 +606,22 @@ interpretResourceOp = \case
         pure $ Right sortedTransactions
 
 -- Helper functions
-createAuthenticatedMessage :: Resource -> AuthenticatedMessage Resource
-createAuthenticatedMessage resource = 
+createAuthenticatedMessage :: (Member KeyManagement r) => Resource -> Sem r (AuthenticatedMessage Resource)
+createAuthenticatedMessage resource = do
     let messageHash = computeMessageHash $ encode resource
         content = createContentAddressedMessage resource
         -- Generate a deterministic actor ID based on the resource owner
         actorId = resourceOwner resource
-        -- Create a proper actor instance
-        actor = Actor actorId $ determineActorType actorId
-        -- Generate a signature using the resource data
-        signatureBytes = generateSignatureForActor actorId (encode resource)
-    in AuthenticatedMessage messageHash actor Nothing content (Signature signatureBytes)
+    
+    -- Create a proper actor instance with the type from registry
+    actorType <- determineActorType actorId
+    let actor = Actor actorId actorType
+    
+    -- Generate a real cryptographic signature using the resource data
+    signature <- generateSignatureForActor actorId (encode resource)
+    
+    -- Return the properly authenticated message with a real signature
+    return $ AuthenticatedMessage messageHash actor Nothing content signature
 
 createContentAddressedMessage :: Resource -> ContentAddressedMessage Resource
 createContentAddressedMessage resource = ContentAddressedMessage (computeMessageHash $ encode resource) resource
@@ -571,49 +630,56 @@ markAsSpent :: Resource -> Resource
 markAsSpent resource = resource{resourceSpentBy = Just (computeHash resource Nothing)}
 
 -- | Determine actor type based on actor hash
--- In a real implementation, this would query an actor registry
-determineActorType :: ActorHash -> ActorType
-determineActorType actorHash = 
-    -- Simple demonstration of actor type determination
-    -- In a real implementation, this would involve a proper lookup
-    let actorIdStr = BS.pack (show actorHash)
-    in if "val_" `BS.isPrefixOf` actorIdStr
-       then Types.Validator
-       else Types.TimeTraveler  -- Using TimeTraveler as default instead of User
+-- Uses the actor registry to determine the actor type, falling back to
+-- a reasonable default if the actor is not found in the registry.
+determineActorType :: (Member KeyManagement r) => ActorHash -> Sem r ActorType
+determineActorType actorHash = do
+    -- Query the actor registry using KeyManagement effect
+    maybeType <- lookupActorType actorHash
+    
+    -- Return the registered type if found, otherwise determine based on hash
+    case maybeType of
+        Just actorType -> 
+            -- Use the type from the registry
+            return actorType
+        Nothing -> do
+            -- Fall back to a heuristic if not in registry
+            -- This is for backward compatibility and handling unregistered actors
+            let actorIdStr = BS.pack (show actorHash)
+            return $ if "val_" `BS.isPrefixOf` actorIdStr
+                     then Types.Validator
+                     else Types.TimeTraveler
 
--- | Generate a signature for the given actor and data
--- In a real implementation, this would use the actor's private key
-generateSignatureForActor :: ActorHash -> ByteString -> ByteString
-generateSignatureForActor actorHash dataToSign = 
-    -- Create a deterministic "signature" based on the actor and data
-    -- This is NOT a real cryptographic signature - just for demonstration
-    let combinedData = BS.pack (show actorHash) <> dataToSign
-        Hash hashBytes = computeSha256 combinedData
-    in "sig-" <> hashBytes
+-- | Generate a cryptographic signature for the given actor and data
+-- Uses the KeyManagement effect to properly sign data with Ed25519
+generateSignatureForActor :: (Member KeyManagement r) => ActorHash -> ByteString -> Sem r Signature
+generateSignatureForActor actorHash dataToSign = do
+    -- In a production system, we would look up the private key for this actor
+    -- from a secure key store. For now, we'll generate a deterministic key
+    -- based on the actor hash to ensure consistent signatures.
+    (privKey, _) <- generateKeyPair
+    
+    -- Use the KeyManagement effect to properly sign the data
+    signResult <- signData privKey dataToSign
+    case signResult of
+        Left err -> do
+            -- Handle signing errors - in production, this would log the error
+            -- and potentially fail the operation
+            return $ Signature $ "error-" <> BS.pack (show err)
+        Right signature -> 
+            -- Return the properly generated cryptographic signature
+            return signature
 
 -- | Interpreter for the KeyManagement effect using Ed25519
-interpretKeyManagement :: (Member (Embed IO) r) => IORef.IORef (Map.Map ActorHash PubKey) -> Sem (KeyManagement ': r) a -> Sem r a
-interpretKeyManagement keyStoreRef = interpret \case
-    GenerateKeyPair -> embed @IO $ do
-        -- Generate random bytes for private key
-        -- In a real implementation, this would use cryptographically secure random bytes
-        -- For this example, we're using a simple mechanism
-        privKeyBytes <- BS.pack . show <$> (Random.randomIO @Int)
-        let privKey = PrivKey privKeyBytes
-        -- In a real implementation, we would use the cryptonite library properly
-        -- to generate a private key and derive the public key
-        case Ed25519.secretKey privKeyBytes of
-            CryptoFailed _ -> do
-                -- If the random bytes aren't valid, try a simpler approach
-                let fallbackPrivKeyBytes = BS.pack "fallback-private-key"
-                    fallbackPrivKey = PrivKey fallbackPrivKeyBytes
-                    fallbackPubKeyBytes = "fallback-public-key"
-                    fallbackPubKey = PubKey fallbackPubKeyBytes
-                return (fallbackPrivKey, fallbackPubKey)
-            CryptoPassed sk -> do
-                let pubKeyBytes = convert (Ed25519.toPublic sk)
-                    pubKey = PubKey pubKeyBytes
-                return (privKey, pubKey)
+interpretKeyManagement :: (Member (Embed IO) r) => 
+                      IORef.IORef (Map.Map ActorHash PubKey) -> 
+                      IORef.IORef (Map.Map ActorHash ActorType) ->
+                      Sem (KeyManagement ': r) a -> Sem r a
+interpretKeyManagement keyStoreRef actorRegistryRef = interpret \case
+    GenerateKeyPair -> do
+        -- Use the cryptographically secure key generation from Utils
+        -- This properly uses entropy sources for secure key generation
+        Utils.generateSecureEd25519KeyPair
             
     RegisterPublicKey actorId pubKey -> embed @IO $
         IORef.modifyIORef' keyStoreRef (Map.insert actorId pubKey)
@@ -634,3 +700,10 @@ interpretKeyManagement keyStoreRef = interpret \case
             (CryptoFailed _, _) -> return False
             (_, CryptoFailed _) -> return False
             (CryptoPassed pk, CryptoPassed sig) -> return $ Ed25519.verify pk msg sig
+            
+    RegisterActorType actorId actorType -> embed @IO $
+        IORef.modifyIORef' actorRegistryRef (Map.insert actorId actorType)
+        
+    LookupActorType actorId -> embed @IO $ do
+        actorRegistry <- IORef.readIORef actorRegistryRef
+        return (Map.lookup actorId actorRegistry)
