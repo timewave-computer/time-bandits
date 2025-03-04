@@ -160,25 +160,6 @@ data Timeout m a where
     ScheduleTimeout :: Int -> Timeout m ()
     CancelTimeout :: Int -> Timeout m ()
 
--- | DEPRECATED: Use TimeBandits.Timeline and TimeBandits.TimeMap instead
--- Cryptographic proof generation and verification for timelines
--- that implements the anchoring protocols needed to establish
--- verifiable links between timelines and maintain resource provenance.
-data TimelineProof m a where
-    GenerateProof :: Hash -> TimelineProof m Hash
-    VerifyProof :: Hash -> Hash -> TimelineProof m Bool
-
--- | DEPRECATED: Use TimeBandits.Timeline and TimeBandits.TimeMap instead
--- Timeline-specific messaging and communication
--- Handles secure message transmission between actors across timelines,
--- ensuring causality and non-repudiation.
-data TimelineMessage m a where
-    SendMessage :: (Message msg) => msg -> TimelineMessage m ()
-    BroadcastMessage :: (Message msg) => msg -> TimelineMessage m ()
-    ReceiveMessage :: TimelineMessage m (AuthenticatedMessage ByteString)
-    ConvertEventToMessage :: (Event e) => e -> PrivKey -> Maybe ActorHash -> TimelineMessage m (AuthenticatedMessage ByteString)
-    ConvertMessageToEvent :: (Message msg) => msg -> TimelineMessage m (Maybe EventContent)
-
 -- | Key management effect for handling cryptographic operations
 -- Provides a unified interface for key generation, storage, signing,
 -- and verification operations throughout the system.

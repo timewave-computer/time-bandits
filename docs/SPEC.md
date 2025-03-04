@@ -61,9 +61,69 @@ This document defines the technical specification for programs, timelines, resou
 - May invoke other programs.
 - Is causally ordered via a log.
 
-## 3. Program Lifecycle
+## 3. Core Modules and Abstractions
 
-### 3.1 Deployment
+### 3.1 Type Abstractions
+
+Each core entity is implemented as a first-class type with a dedicated module:
+
+- **Timeline** (`TimeBandits.Timeline`): Represents an external, ordered event stream with its own consistency rules, clock, and state.
+- **TimeMap** (`TimeBandits.Timeline`): A sharded view of multiple timeline states with logical clock ordering.
+- **Resource** (`TimeBandits.Resource`): Represents transferable assets with single-owner guarantees and explicit transfer semantics.
+- **Program** (`TimeBandits.Program`): Contains program state, memory, and execution logic with resource management capabilities.
+- **Effect** (`TimeBandits.Effect`): Explicit operations that modify state, with guards that must be validated before execution.
+- **TransitionMessage** (`TimeBandits.TransitionMessage`): Proof-carrying messages that trigger program transitions with resource validation.
+- **ExecutionLog** (`TimeBandits.ExecutionLog`): Append-only, causally-linked log of all effect applications with full traceability.
+
+### 3.2 Execution Model
+
+The Time Bandits execution model follows these steps:
+
+1. **Time Travelers** create transition messages with necessary proofs and resources
+2. **Time Keepers** validate messages against timeline rules and causal ordering
+3. **Time Bandits** execute program transitions and generate proofs
+4. **Controllers** enforce the system contract and coordinate between actors
+
+This process ensures:
+- Strict causal ordering (via Lamport clocks)
+- Single-owner resource guarantees (no double-spending)
+- Complete audit trail (via the execution log)
+- Security property verification (via the SecurityVerifier)
+
+### 3.3 Security Verification
+
+The `TimeBandits.SecurityVerifier` module enforces critical security properties:
+
+- **NoDoubleSpend**: Ensures each resource has exactly one owner at any time
+- **NoReentrancy**: Prevents cycles in program invocation using Lamport clocks
+- **FullTraceability**: Verifies that every operation has a complete audit trail
+- **NoBackdating**: Prevents transactions that attempt to modify past states
+
+### 3.4 Actor Abstractions
+
+The system defines three main actor roles:
+
+- **Time Travelers** (`TimeBandits.TimeTraveler`): Create and use programs by submitting transition messages
+- **Time Keepers** (`TimeBandits.TimeKeeper`): Maintain timeline integrity and validate messages
+- **Time Bandits** (`TimeBandits.TimeBandit`): Run the P2P network, execute programs, and generate proofs
+
+### 3.5 Deployment Modes
+
+The Time Bandits system supports three deployment modes:
+
+- **In-Memory**: All actors run in the same process with direct function calls
+- **Local Multi-Process**: Actors run in separate processes with Unix socket communication
+- **Geo-Distributed**: Actors run on different machines with TCP/IP communication
+
+These modes are implemented through a unified interface, allowing the same code to run in any deployment context.
+
+### 3.6 Timeline Descriptors and Adapters
+
+The system uses timeline descriptors (`TimeBandits.TimelineDescriptor`) to formally describe different timeline types (blockchains, rollups, event logs) and adapters (`TimeBandits.TimelineAdapter`) to provide a uniform interface for interacting with them.
+
+## 4. Program Lifecycle
+
+### 4.1 Deployment
 
 - Time Traveler submits:
   - Program definition (effects and guards)
@@ -76,7 +136,7 @@ This document defines the technical specification for programs, timelines, resou
   - Initial program state
 - Program is registered on the network and with relevant timelines
 
-### 3.2 Execution
+### 4.2 Execution
 
 - Time Traveler submits:
   - TransitionMessage with:
@@ -96,63 +156,13 @@ This document defines the technical specification for programs, timelines, resou
   - Advances time map
   - Appends to causal log
 
-### 3.3 Finalization
+### 4.3 Finalization
 
 - Programs complete after the last effect
 - Final memory state is sealed
 - Time Bandits generate final proof
 - Time Keepers validate and confirm the final state
 - Final proof and log are published to all relevant timelines
-
-## 4. Actors and Roles
-
-The Time Bandits system includes three specialized actor roles:
-
-### 4.1 Time Travelers
-
-- Create and use programs by submitting messages to timelines
-- Have the ability to:
-  - Deploy new programs with initial time maps
-  - Submit TransitionMessages to advance program state
-  - Query the current state of programs and resources
-- Each Time Traveler has:
-  - ActorID (derived from public key)
-  - Capability set (permissions for specific effects)
-  - Access to one or more timelines
-
-### 4.2 Time Keepers
-
-- Maintain the integrity of Timelines
-- Responsible for:
-  - Accepting messages based on validity requirements
-  - Rejecting invalid or malicious requests
-  - Providing timeline state queries
-  - Ensuring timeline consistency and immutability
-- Control access to timelines and enforce their specific rules
-- Act as the trusted authority for timeline state
-
-### 4.3 Time Bandits
-
-- Operate the P2P network infrastructure
-- Responsible for:
-  - Program execution in the specified simulation mode
-  - Generating cryptographic proofs required for transitions
-  - Maintaining the distributed execution logs
-  - Facilitating communication between system components
-- Can represent:
-  - Nodes in the P2P network
-  - Service providers for specific simulation modes
-  - Infrastructure operators
-
-### 4.4 General Actor Properties
-
-- All actors have:
-  - ActorID (public key derived)
-  - Capability set (what effects they can trigger)
-- Actors might be:
-  - Off-chain users (wallets)
-  - On-chain contracts (proxy actors)
-  - Oracles (time map feeds)
 
 ## 5. Effects
 
