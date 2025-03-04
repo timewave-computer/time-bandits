@@ -21,7 +21,7 @@ The ResourceLedger:
 3. Prevents double-spending of resources
 4. Maintains a history of ownership changes
 -}
-module TimeBandits.ResourceLedger 
+module TimeBandits.Core.ResourceLedger 
   ( -- * Core Types
     ResourceLedger(..)
   , OwnershipRecord(..)
@@ -39,34 +39,34 @@ module TimeBandits.ResourceLedger
   , verifyOwnershipChain
   ) where
 
-import Data.ByteString (ByteString)
-import Data.Map.Strict qualified as Map
+-- Standard library imports
+import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
+import Data.Time.Clock (getCurrentTime)
 import Data.Serialize (Serialize)
-import Data.Time.Clock (UTCTime)
-import GHC.Generics (Generic)
-import Polysemy (Member, Sem, embed)
+import Polysemy (Sem, Member, embed)
 import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..), computeContentHash)
-import TimeBandits.Types
+import TimeBandits.Core.Core (Hash(..), EntityHash(..), computeSha256)
+import TimeBandits.Core.Types
   ( AppError(..)
-  , LamportTime(..)
+  , ResourceErrorType(..)
+  , ResourceErrorType(ResourceNotFound)
   )
-import TimeBandits.Program
-  ( ProgramId
-  )
-import TimeBandits.Resource
+import TimeBandits.Core.Resource
   ( Resource
   , ResourceHash
-  , resourceId
   )
-import TimeBandits.Timeline (TimelineHash)
+import TimeBandits.Core.Timeline (TimelineHash)
+
+-- | Type alias for program identifiers
+type ProgramId = ByteString
 
 -- | Error types specific to resource ownership
 data OwnershipError
-  = ResourceNotFound ResourceHash
+  = OwnershipResourceNotFound ResourceHash
   | ResourceAlreadyOwned ResourceHash ProgramId
   | UnauthorizedTransfer ResourceHash ProgramId ProgramId
   | InvalidOwnershipProof ResourceHash
@@ -106,6 +106,10 @@ createLedger = do
     , ownershipHistory = Map.empty
     }
 
+-- | Get the hash of a resource
+getResourceHash :: Resource -> ResourceHash
+getResourceHash resource = EntityHash $ computeSha256 $ show resource
+
 -- | Register a new resource with an initial owner
 registerResource :: 
   (Member (Error AppError) r, Member (Embed IO) r) => 
@@ -116,19 +120,19 @@ registerResource ::
   Sem r ResourceLedger
 registerResource ledger resource owner timeline = do
   -- Get the resource hash
-  let resourceHash = resourceId resource
+  let resourceHash = getResourceHash resource
   
   -- Check if the resource is already registered
   case Map.lookup resourceHash (currentOwners ledger) of
-    Just existingOwner ->
-      throw $ "Resource already registered with owner: " <> show existingOwner :: AppError
+    Just _ ->
+      throw $ ResourceError $ ResourceAlreadyExists resourceHash
     Nothing -> do
       -- Get current time for the record
       now <- embed $ getCurrentTime
       
       -- Create a transfer hash
       let transferData = show resourceHash <> show owner <> show timeline
-          transferHash = computeContentHash transferData
+          transferHash = computeSha256 transferData
       
       -- Create the ownership record
       let record = OwnershipRecord
@@ -162,18 +166,21 @@ transferResource ledger resourceHash currentOwner newOwner timeline = do
   -- Verify current ownership
   actualOwner <- case Map.lookup resourceHash (currentOwners ledger) of
     Just owner -> pure owner
-    Nothing -> throw $ ResourceNotFound resourceHash
+    Nothing -> throw $ ResourceError $ ResourceNotFound resourceHash
   
   -- Verify the current owner matches the expected owner
   when (actualOwner /= currentOwner) $
-    throw $ UnauthorizedTransfer resourceHash currentOwner actualOwner
+    throw $ ResourceError $ InvalidResourceState $ 
+      "Unauthorized transfer attempt: resource " <> show resourceHash <> 
+      " owned by " <> show actualOwner <> 
+      ", but transfer attempted by " <> show currentOwner
   
   -- Get current time for the record
   now <- embed $ getCurrentTime
   
   -- Create a transfer hash
   let transferData = show resourceHash <> show currentOwner <> show newOwner <> show timeline
-      transferHash = computeContentHash transferData
+      transferHash = computeSha256 transferData
   
   -- Create the ownership record
   let record = OwnershipRecord
@@ -209,7 +216,7 @@ verifyOwnership ledger resourceHash expectedOwner = do
   -- Look up the current owner
   case Map.lookup resourceHash (currentOwners ledger) of
     Just actualOwner -> pure $ actualOwner == expectedOwner
-    Nothing -> throw $ ResourceNotFound resourceHash
+    Nothing -> throw $ ResourceError $ ResourceNotFound resourceHash
 
 -- | Get the current owner of a resource
 getResourceOwner :: 
@@ -221,7 +228,7 @@ getResourceOwner ledger resourceHash = do
   -- Look up the current owner
   case Map.lookup resourceHash (currentOwners ledger) of
     Just owner -> pure owner
-    Nothing -> throw $ ResourceNotFound resourceHash
+    Nothing -> throw $ ResourceError $ ResourceNotFound resourceHash
 
 -- | Get the ownership history for a resource
 getOwnershipHistory :: 
@@ -233,7 +240,7 @@ getOwnershipHistory ledger resourceHash = do
   -- Look up the history
   case Map.lookup resourceHash (ownershipHistory ledger) of
     Just history -> pure history
-    Nothing -> throw $ ResourceNotFound resourceHash
+    Nothing -> throw $ ResourceError $ ResourceNotFound resourceHash
 
 -- | Verify the ownership chain for a resource
 verifyOwnershipChain :: 

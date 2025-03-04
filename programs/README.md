@@ -1,6 +1,6 @@
 # Programs Module
 
-This module contains program-specific logic for the time-bandits system. Programs define the operations that can be executed across timelines.
+This module contains program-specific logic for the Time Bandits system. Programs define the operations that can be executed across timelines.
 
 ## Components:
 
@@ -8,4 +8,4 @@ This module contains program-specific logic for the time-bandits system. Program
 - **ProgramMemory.hs**: Manages program state and memory across executions 
 - **Preconditions.hs**: Defines and evaluates preconditions for program execution
 
-Programs are the primary way that users interact with the time-bandits system. They define the specific operations that can be performed across timelines. 
+Programs are the primary way that users interact with the Time Bandits system. They define the specific operations that can be performed across timelines. 

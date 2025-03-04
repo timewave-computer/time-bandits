@@ -35,7 +35,7 @@ The module is organized into sections:
    * Make code more readable and reusable
    * Handle low-level implementation details
 -}
-module TimeBandits.Effects (
+module TimeBandits.Core.Effects (
     -- * Resource Operations
     ResourceOps (..),
     ResourceOperationEffect (..),
@@ -94,7 +94,7 @@ import TimeBandits.Core (
     Event (..),
     Message (..)
     )
-import TimeBandits.Types (
+import TimeBandits.Core.Types (
     Actor (..),
     ActorHash,
     ActorType (..),
@@ -121,16 +121,24 @@ import TimeBandits.Types (
     emTimestamp,
     resourceId
    )
-import TimeBandits.Types qualified as Types
+import TimeBandits.Core.Types qualified as Types
 import Prelude hiding (trace)
-import TimeBandits.Network (
-  P2PNetwork,
-  P2PNode
-  )
 import Polysemy.State qualified as PS
 import Data.Text ()
 import System.Random qualified as Random
-import TimeBandits.Utils qualified as Utils
+import TimeBandits.Core.Utils qualified as Utils
+import Polysemy.Log qualified as Log
+
+import TimeBandits.Core.Core (
+  ActorHash, ResourceHash, TimelineHash, LamportTime, Hash, ActorType,
+  EntityHash, Signature
+  )
+import TimeBandits.Core.Types (
+  ActorEvent (..), ResourceEvent (..), TimelineEvent (..),
+  TimelineEventType (..), ResourceEventType (..), ActorEventType (..), 
+  EventContent (..)
+  )
+import TimeBandits.Core.Types qualified as Types
 
 -- | Logical clock for tracking causal ordering in timelines
 -- Uses Lamport timestamps to establish a partial ordering of events
@@ -693,3 +701,15 @@ interpretKeyManagement keyStoreRef actorRegistryRef = interpret \case
     LookupActorType actorId -> embed @IO $ do
         actorRegistry <- IORef.readIORef actorRegistryRef
         return (Map.lookup actorId actorRegistry)
+
+-- | P2P Network effect (placeholder)
+-- The actual implementation is in TimeBandits.Network
+data P2PNetwork m a where
+  -- Placeholder for network operations
+
+-- | P2P Node representation (placeholder)
+-- The actual implementation is in TimeBandits.Network
+data P2PNode = P2PNode
+  { nodeId :: Text
+  -- other fields omitted
+  }

@@ -7,6 +7,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: TimeBandits.EffectExecutor
+Description: Effect execution and logging system for Time-Bandits.
+
 This module provides the Effect Executor responsible for executing effects.
 It implements the initial effect execution pipeline that replaces implicit
 state updates with explicit effect execution.
@@ -16,6 +19,24 @@ The Effect Executor ensures that:
 - No more direct state modification—everything goes through an effect handler
 - All effects are logged in a causally-linked execution log
 - All transitions are validated against their proofs
+
+In the Time-Bandits architecture, the EffectExecutor plays several crucial roles:
+
+1. Security Boundary: It acts as the primary security boundary between programs
+   and timeline state, ensuring that effects are properly authorized and validated.
+
+2. Execution Log: It maintains a causally-linked execution log that provides
+   auditability and enables verification of the entire execution history.
+
+3. Resource Management: It handles resource ownership operations, including
+   escrow, claims, and transfers between programs and timelines.
+
+4. Proof Verification: It verifies cryptographic proofs attached to transition
+   messages, ensuring the integrity of cross-timeline operations.
+
+The EffectExecutor connects the Programs module (which defines what should happen)
+with the Timeline and Adapter modules (which implement how effects are applied
+to specific timelines). It serves as the execution engine of the Time-Bandits system.
 -}
 module TimeBandits.EffectExecutor 
   ( -- * Effect Execution

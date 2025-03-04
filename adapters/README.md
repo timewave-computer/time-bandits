@@ -1,6 +1,6 @@
 # Adapters Module
 
-This module contains external timeline adapters that allow the time-bandits system to interact with different blockchain and distributed systems.
+This module contains external timeline adapters that allow the Time Bandits system to interact with different timelines (blockchains).
 
 ## Components:
 

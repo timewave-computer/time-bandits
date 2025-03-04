@@ -10,13 +10,35 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: TimeBandits.Program
+Description: Program abstraction and execution model for Time-Bandits.
+
 This module provides the Program abstraction and related functionality.
 It encapsulates program state and memory.
 
-Programs are declarative state machines that operates within a time map, consisting of:
+Programs are declarative state machines that operate within a time map, consisting of:
 - Program Definition: Immutable sequence of GuardedEffects
 - Memory Contract: Immutable declaration of per-step resource expectations
 - Program State: Current execution counter and memory
+
+In the Time-Bandits architecture, Programs serve as the primary abstraction for:
+
+1. Cross-Timeline Logic: Programs define the business logic that operates across
+   multiple timelines, orchestrating resource transfers and state transitions.
+
+2. Resource Management: Programs declare their resource requirements through memory
+   contracts and manage resources in memory slots during execution.
+
+3. Security Model: Programs establish a security boundary through ownership and
+   authorization mechanisms, controlling who can invoke specific functionality.
+
+4. Deterministic Execution: Programs provide a deterministic execution model where
+   effects are applied in a well-defined order, with explicit preconditions.
+
+The Program module bridges the high-level application logic (defined by users)
+with the low-level execution mechanisms (provided by the EffectExecutor). It serves
+as the primary interface for defining complex cross-timeline operations in a
+declarative, verifiable manner.
 -}
 module TimeBandits.Program 
   ( -- * Core Types

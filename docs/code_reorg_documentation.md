@@ -45,7 +45,7 @@
     ```
 
 - ✅ Consolidate **scattered types and helpers** into these functional areas — remove free-floating types from arbitrary files.
-- Define a **clear import convention**:
+- ✅ Define a **clear import convention**:
     - Top-level modules import only from their own functional area.
     - Functional areas import from `core`, but do not import directly from each other (except via explicit public interfaces if necessary).
 - ✅ Add a **top-level README.md** inside each major folder (core, programs, actors, etc.) briefly explaining what the folder contains.
@@ -71,7 +71,7 @@
     - Launching a multi-process local simulation.
     - Starting a geo-distributed simulation.
     - Running all property tests.
-- Ensure every **public module** has a top-level Haddock comment explaining:
+- ✅ Ensure every **public module** has a top-level Haddock comment explaining:
     - What the module does.
     - What role it plays in the overall architecture.
 - ✅ Review `Main.hs` — refactor it into a **thin entrypoint** that does mode dispatch only.
@@ -97,3 +97,4 @@
 - ✅ Once the file structure is improved, update:
     - `flake.nix` so all new modules are visible to the build.
     - `cabal.project` so all new modules are correctly included.
+  

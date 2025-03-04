@@ -18,7 +18,7 @@
 {- |
 This module provides the core types used throughout the Time Bandits application.
 -}
-module TimeBandits.Types (
+module TimeBandits.Core.Types (
   -- * Core Types
   Hash (..),
   EntityHash (..),
@@ -442,6 +442,7 @@ data TimelineErrorType
   | TimelineMergeConflict TimelineHash TimelineHash
   | InvalidTimelineState Text
   | UnauthorizedTimelineAccess ActorHash
+  | TimelineGenericError Text
   deriving stock (Show, Eq)
 
 -- | Resource-specific error types

@@ -11,7 +11,25 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module TimeBandits.Core (
+{- |
+Module: TimeBandits.Core.Core
+Description: Core functionality and primitives for the Time-Bandits system.
+
+This module provides the fundamental primitives and abstractions for the Time-Bandits system,
+including type classes, cryptographic functions, and error handling utilities.
+
+Key components:
+  * Basic type classes: 'Event' and 'Message' for the event-based architecture
+  * Cryptographic functions for hashing, message verification, and signing
+  * P2P networking helpers for node selection and rendezvous hashing
+  * Core error handling utilities
+
+The Core module serves as the foundation for the entire Time-Bandits architecture,
+providing the essential building blocks used by all other components of the system.
+All timeline operations, actor communications, resource management, and program execution
+depend on the primitives defined here.
+-}
+module TimeBandits.Core.Core (
   -- * Re-exports from Types
   ActorEvent(..),
   ActorEventType(..),

@@ -20,7 +20,7 @@ synthetic program-specific values that live in program memory. They are:
 - Scoped to the program's lifecycle
 - Pointed to directly in program memory
 -}
-module TimeBandits.Resource 
+module TimeBandits.Core.Resource 
   ( -- * Core Types
     Resource(..)
   , ResourceId
@@ -69,8 +69,8 @@ import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import TimeBandits.Core.Core (Hash(..), EntityHash(..))
+import TimeBandits.Core.Types
   ( ResourceHash
   , ResourceEvent(..)
   , ResourceEventType(..)
@@ -78,7 +78,11 @@ import TimeBandits.Types
   , LamportTime(..)
   , AppError(..)
   , ResourceErrorType(..)
+  , ActorHash
+  , TimelineHash
   )
+
+import TimeBandits.Core.Serialize ()  -- Import Serialize instances
 
 -- | Unique identifier for a Resource
 type ResourceId = EntityHash Resource

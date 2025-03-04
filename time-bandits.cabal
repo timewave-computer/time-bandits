@@ -88,10 +88,13 @@ library time-bandits-core
   hs-source-dirs:  core/src
   exposed-modules:
     TimeBandits.Core
+    TimeBandits.Core.Core
+    TimeBandits.Types
     TimeBandits.Core.Types
     TimeBandits.Core.Effects
     TimeBandits.Core.Resource
     TimeBandits.Core.ResourceLedger
+    TimeBandits.Core.Serialize
     TimeBandits.Core.Timeline
     TimeBandits.Core.TimelineDescriptor
     TimeBandits.Core.TimeMap

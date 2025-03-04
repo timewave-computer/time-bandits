@@ -10,6 +10,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: TimeBandits.Core.Timeline
+Description: Timeline abstraction and operations for the Time-Bandits system.
+
 This module provides the Timeline abstraction and related functionality.
 It encapsulates all timeline interactions and provides a consistent interface
 for working with different types of timelines (blockchains, rollups, off-chain logs).
@@ -19,8 +22,18 @@ Timelines are causally ordered event logs that:
 - Define their own consistency guarantees
 - Own their own clock (block height, slot number, timestamp)
 - Define how resources are created, transferred, destroyed
+
+In the Time-Bandits architecture, Timelines serve as the foundational layer for:
+1. Recording and verifying causal history of events
+2. Establishing a consistent ordering of operations
+3. Enabling cross-timeline resource transfers through proofs
+4. Providing the basis for time-related security properties
+
+The Timeline module connects with Adapters for interacting with specific timeline
+implementations, and provides core primitives used by Programs and Actors to 
+interact with timeline state and events.
 -}
-module TimeBandits.Timeline 
+module TimeBandits.Core.Timeline 
   ( -- * Core Types
     Timeline(..)
   , TimelineClock(..)
@@ -58,8 +71,8 @@ import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..), Message(..))
-import TimeBandits.Types
+import TimeBandits.Core.Core (Hash(..), EntityHash(..), Message(..))
+import TimeBandits.Core.Types
   ( TimelineHash
   , TimelineEvent(..)
   , TimelineEventType(..)

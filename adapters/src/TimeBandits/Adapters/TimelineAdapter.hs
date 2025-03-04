@@ -10,11 +10,33 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: TimeBandits.TimelineAdapter
+Description: Adapter system for connecting to different timeline implementations.
+
 This module provides the TimelineAdapter system, which creates appropriate adapters
 for different timeline types based on TimelineDescriptor configurations.
 
 TimelineAdapters provide a uniform interface for interacting with different timelines 
 (blockchains, rollups, etc.) while abstracting away the underlying implementation details.
+
+In the Time-Bandits architecture, TimelineAdapters serve critical functions:
+
+1. Protocol Abstraction: They provide a unified API for interacting with diverse
+   blockchain and distributed ledger protocols, including EVM-based chains, Solana,
+   CosmWasm, MoveVM, and custom implementations.
+
+2. Effect Execution: They translate high-level effects from programs into
+   protocol-specific operations (transactions, contract calls, etc.).
+
+3. State Observation: They enable monitoring of timeline state and events,
+   providing the raw data needed for timeline synchronization.
+
+4. Proof Generation/Verification: They handle protocol-specific cryptographic
+   operations for generating and verifying proofs used in cross-timeline operations.
+
+The adapter layer connects the abstract Timeline model from the Core module
+with concrete blockchain implementations, allowing the rest of the system to
+operate independently of the specific protocols being used.
 -}
 module TimeBandits.TimelineAdapter
   ( -- * Core Types

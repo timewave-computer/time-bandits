@@ -11,6 +11,9 @@
 {-# LANGUAGE TypeFamilies #-}
 
 {- |
+Module: TimeBandits.Actor
+Description: Actor system framework for the Time-Bandits architecture.
+
 This module provides the Actor abstraction, which defines the interface for
 actors in the Time Bandits system. Actors are responsible for:
 
@@ -23,6 +26,24 @@ The Actor abstraction is implemented differently depending on the simulation mod
 - In-memory: Actors are Haskell functions in the same process
 - Local multi-process: Actors run in separate processes with Unix socket messaging
 - Geo-distributed: Actors run on remote machines with TCP/RPC messaging
+
+In the Time-Bandits architecture, Actors play several critical roles:
+
+1. Autonomous agents: Actors encapsulate autonomous behavior, with each type
+   (TimeTraveler, TimeKeeper, TimeBandit) having specific capabilities and responsibilities.
+
+2. Security boundaries: Each actor maintains its own cryptographic identity and state,
+   enabling secure, authenticated communications.
+
+3. Distributed execution: Actors can be distributed across multiple machines,
+   enabling robust, fault-tolerant execution of programs.
+
+4. Resource management: Actors claim, transfer, and verify ownership of resources
+   across timelines, enabling complex cross-timeline operations.
+
+The Actor module connects with the Programs module for program execution,
+the Execution module for effect handling, and the Core module for basic
+primitives like cryptographic functions and event handling.
 -}
 module TimeBandits.Actor 
   ( -- * Core Types

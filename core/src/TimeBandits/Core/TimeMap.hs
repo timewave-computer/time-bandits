@@ -20,7 +20,7 @@ Time Maps are:
 - The basis for cross-timeline consistency guarantees
 - Used to prevent time-based attacks and race conditions
 -}
-module TimeBandits.TimeMap 
+module TimeBandits.Core.TimeMap 
   ( -- * Core Types
     TimeMap(..)
   , TimeMapId
@@ -57,21 +57,28 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Serialize (Serialize)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock (UTCTime, getCurrentTime)
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem, embed)
 import Polysemy.Embed (Embed)
 import Polysemy.Error (Error, throw, fromEither)
+import Prelude hiding (lookup, filter, map, fold, find, maximum)
+import qualified Prelude as P
+import Data.Maybe (fromMaybe)
+import Control.Monad (when, forM_, foldM)
+import Data.Foldable (mapM_, maximum)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import TimeBandits.Core.Core (Hash(..), EntityHash(..))
+import TimeBandits.Core.Types
   ( TimelineHash
   , LamportTime(..)
   , AppError(..)
   , TimelineErrorType(..)
   )
-import TimeBandits.Timeline (BlockHeader(..))
+import TimeBandits.Core.Timeline (BlockHeader(..))
 
 -- | Unique identifier for a TimeMap
 type TimeMapId = EntityHash TimeMap
@@ -111,7 +118,7 @@ data TimeMap = TimeMap
   { timeMapId :: TimeMapId
   , entries :: Map TimelineHash TimeMapEntry
   , createdAt :: LamportTime
-  , dependencies :: [TimelineDependency] -- ^ Known dependencies between timelines
+  , timelineDependencies :: [TimelineDependency] -- ^ Known dependencies between timelines
   , globalClock :: LamportTime -- ^ Global logical clock, always advances
   }
   deriving stock (Eq, Show, Generic)
@@ -152,7 +159,7 @@ createTimeMap initialEntries creationTime = do
     { timeMapId = timeMapId
     , entries = updatedEntries
     , createdAt = creationTime
-    , dependencies = []
+    , timelineDependencies = []
     , globalClock = creationTime
     }
 
@@ -173,7 +180,7 @@ updateTimeMap timeMap entry = do
       if lamportTime entry > lamportTime existing
         then pure ()
         else throw $ TimelineError $ TimelineGenericError $ 
-              "Causal order violation: new time " ++ show (lamportTime entry) ++ 
+              T.pack $ "Causal order violation: new time " ++ show (lamportTime entry) ++ 
               " is not greater than existing time " ++ show (lamportTime existing)
     Nothing -> pure ()
   
@@ -188,12 +195,16 @@ updateTimeMap timeMap entry = do
   let updatedEntries = Map.insert tlHash entryWithTime (entries timeMap)
   
   -- Advance the global clock
-  let newGlobalClock = max (globalClock timeMap) (LamportTime $ unLamportTime (lamportTime entry) + 1)
+  let newGlobalClock = max (globalClock timeMap) (LamportTime $ getLamportTime (lamportTime entry) + 1)
   
   pure $ timeMap 
     { entries = updatedEntries
     , globalClock = newGlobalClock
     }
+
+-- | Get the integer value from a LamportTime
+getLamportTime :: LamportTime -> Int
+getLamportTime (LamportTime t) = t
 
 -- | Validate that all dependencies for a timeline are satisfied
 validateDependencies ::
@@ -204,7 +215,7 @@ validateDependencies ::
   Sem r ()
 validateDependencies timeMap tlHash newTime = do
   -- Get all dependencies where this timeline is the target
-  let timelineDeps = filter (\dep -> targetTimeline dep == tlHash) (dependencies timeMap)
+  let timelineDeps = P.filter (\dep -> targetTimeline dep == tlHash) (timelineDependencies timeMap)
   
   -- Check each dependency
   forM_ timelineDeps $ \dep -> do
@@ -218,26 +229,26 @@ validateDependencies timeMap tlHash newTime = do
         -- For causal dependencies, target must be strictly after source
         when (newTime <= sourceTime) $
           throw $ TimelineError $ TimelineGenericError $
-            "Causal dependency violation: " ++ show tlHash ++ " must be after " ++ show (sourceTimeline dep)
+            T.pack $ "Causal dependency violation: " ++ show tlHash ++ " must be after " ++ show (sourceTimeline dep)
       
       ReadDependency ->
         -- For read dependencies, target must be at least at source time
         when (newTime < sourceTime) $
           throw $ TimelineError $ TimelineGenericError $
-            "Read dependency violation: " ++ show tlHash ++ " must be at least at " ++ show (sourceTimeline dep)
+            T.pack $ "Read dependency violation: " ++ show tlHash ++ " must be at least at " ++ show (sourceTimeline dep)
       
       WriteDependency ->
         -- For write dependencies, target must be at least minDelta after source 
         when (newTime < advanceLamportBy sourceTime (minLamportDelta dep)) $
           throw $ TimelineError $ TimelineGenericError $
-            "Write dependency violation: " ++ show tlHash ++ " must be at least " 
+            T.pack $ "Write dependency violation: " ++ show tlHash ++ " must be at least " 
             ++ show (minLamportDelta dep) ++ " after " ++ show (sourceTimeline dep)
       
       BidirectionalDependency ->
         -- For bidirectional, just make sure they don't go backwards
         when (newTime < sourceTime) $
           throw $ TimelineError $ TimelineGenericError $
-            "Bidirectional dependency violation: " ++ show tlHash ++ " cannot go backwards from " 
+            T.pack $ "Bidirectional dependency violation: " ++ show tlHash ++ " cannot go backwards from " 
             ++ show (sourceTimeline dep)
 
 -- | Get the state of a specific timeline from the TimeMap
@@ -251,27 +262,28 @@ getTimelineState timeMap tlHash = do
   case Map.lookup tlHash (entries timeMap) of
     Just entry -> pure entry
     Nothing -> throw $ TimelineError $ TimelineGenericError $ 
-                "Timeline " ++ show tlHash ++ " not found in TimeMap"
+                T.pack $ "Timeline " ++ show tlHash ++ " not found in TimeMap"
 
 -- | Verify the consistency of a TimeMap
 verifyTimeMapConsistency ::
   (Member (Error AppError) r) =>
   TimeMap ->
-  Sem r Bool
+  Sem r ()
 verifyTimeMapConsistency timeMap = do
-  -- Check that all dependencies are satisfied
+  -- Check that all timelines have valid Lamport clocks
   forM_ (Map.toList $ entries timeMap) $ \(tlHash, entry) ->
-    validateDependencies timeMap tlHash (lamportTime entry)
+    when (lamportTime entry <= LamportTime 0) $
+      throw $ TimelineError $ TimelineGenericError $
+        T.pack $ "Invalid Lamport clock for timeline " ++ show tlHash ++ ": " ++ show (lamportTime entry)
   
-  -- Check global clock is at least as high as all timeline clocks
-  let allClocks = map lamportTime $ Map.elems $ entries timeMap
+  -- Check that the global clock is at least as large as all timeline clocks
+  let allClocks = P.map lamportTime $ Map.elems $ entries timeMap
   let maxClock = if null allClocks then LamportTime 0 else maximum allClocks
+  
   when (globalClock timeMap < maxClock) $
     throw $ TimelineError $ TimelineGenericError $
-      "Global clock " ++ show (globalClock timeMap) ++ " is less than max timeline clock " ++ show maxClock
-      
-  -- If we get here, the TimeMap is consistent
-  pure True
+      T.pack $ "Global clock (" ++ show (globalClock timeMap) ++ 
+      ") is less than max timeline clock (" ++ show maxClock ++ ")"
 
 -- | Ensure causal ordering between two timeline states
 ensureCausalOrder ::
@@ -290,7 +302,7 @@ ensureCausalOrder timeMap sourceTl targetTl = do
   let targetTime = lamportTime targetEntry
   
   -- Look for a dependency
-  let maybeDep = find (\dep -> sourceTimeline dep == sourceTl && targetTimeline dep == targetTl) (dependencies timeMap)
+  let maybeDep = find (\dep -> sourceTimeline dep == sourceTl && targetTimeline dep == targetTl) (timelineDependencies timeMap)
   
   case maybeDep of
     -- If there's a dependency, check its specific constraints
@@ -312,19 +324,37 @@ advanceLamportClock ::
   (Member (Error AppError) r, Member (Embed IO) r) =>
   TimeMap ->
   TimelineHash ->
+  LamportTime ->
   Sem r TimeMap
-advanceLamportClock timeMap tlHash = do
-  -- Get the current entry
-  entry <- getTimelineState timeMap tlHash
+advanceLamportClock timeMap tlHash newTime = do
+  -- Get the current timeline entry
+  let timelineEntry = Map.lookup tlHash (entries timeMap)
   
-  -- Advance the Lamport clock by 1
-  let newTime = advanceLamportBy (lamportTime entry) (LamportTime 1)
-  
-  -- Create a new entry with the advanced clock
-  let newEntry = entry { lamportTime = newTime }
-  
-  -- Update the time map
-  updateTimeMap timeMap newEntry
+  -- Verify the timeline exists and the new time is valid
+  case timelineEntry of
+    Just entry -> do
+      -- Ensure the new time is greater than the current time
+      let currentTime = lamportTime entry
+      if newTime > currentTime
+        then do
+          -- Update the entry with the new time
+          let updatedEntry = entry { lamportTime = newTime }
+          let updatedEntries = Map.insert tlHash updatedEntry (entries timeMap)
+          
+          -- Update the global clock if needed
+          let newGlobalClock = max (globalClock timeMap) (LamportTime $ getLamportTime newTime + 1)
+          
+          -- Return the updated TimeMap
+          pure $ timeMap 
+            { entries = updatedEntries
+            , globalClock = newGlobalClock
+            }
+        else throw $ TimelineError $ TimelineGenericError $ 
+              T.pack $ "Cannot advance clock backwards: current=" ++ show currentTime ++ 
+              ", new=" ++ show newTime
+    
+    Nothing -> throw $ TimelineError $ TimelineGenericError $ 
+              T.pack $ "Timeline not found: " ++ show tlHash
 
 -- | Merge two time maps, taking the latest state for each timeline
 mergeTimeMaps ::
@@ -343,7 +373,7 @@ mergeTimeMaps map1 map2 = do
         { timeMapId = EntityHash $ Hash "merged-time-map"
         , entries = Map.empty
         , createdAt = max (createdAt map1) (createdAt map2)
-        , dependencies = unionDependencies (dependencies map1) (dependencies map2)
+        , timelineDependencies = unionDependencies (timelineDependencies map1) (timelineDependencies map2)
         , globalClock = max (globalClock map1) (globalClock map2)
         }
   
@@ -354,7 +384,7 @@ mergeTimeMaps map1 map2 = do
     unionDependencies deps1 deps2 =
       let allDeps = deps1 ++ deps2
           depKey dep = (sourceTimeline dep, targetTimeline dep)
-      in nubBy (\a b -> depKey a == depKey b) allDeps
+      in nubBy depKey allDeps
     
     -- Add the latest entry for a timeline to the merged map
     addLatestEntry accMap tlHash = do
@@ -383,69 +413,67 @@ isValidAdvancement oldMap newMap = do
   
   when (not $ oldHashes `Set.isSubsetOf` newHashes) $
     throw $ TimelineError $ TimelineGenericError $
-      "New time map is missing timelines from old time map"
+      T.pack $ "New time map is missing timelines from old time map"
   
   -- Check that all timelines have advanced (or at least not gone backwards)
   forM_ (Map.toList $ entries oldMap) $ \(tlHash, oldEntry) -> do
     case Map.lookup tlHash (entries newMap) of
       Nothing -> throw $ TimelineError $ TimelineGenericError $
-                   "Timeline " ++ show tlHash ++ " missing from new time map"
+                   T.pack $ "Timeline " ++ show tlHash ++ " missing from new time map"
       Just newEntry ->
         when (lamportTime newEntry < lamportTime oldEntry) $
           throw $ TimelineError $ TimelineGenericError $
-            "Timeline " ++ show tlHash ++ " went backwards: " ++
+            T.pack $ "Timeline " ++ show tlHash ++ " went backwards: " ++
             show (lamportTime oldEntry) ++ " -> " ++ show (lamportTime newEntry)
   
   -- Check that the global clock has advanced
   when (globalClock newMap < globalClock oldMap) $
     throw $ TimelineError $ TimelineGenericError $
-      "Global clock went backwards: " ++
+      T.pack $ "Global clock went backwards: " ++
       show (globalClock oldMap) ++ " -> " ++ show (globalClock newMap)
   
   -- Verify all dependencies are satisfied in the new time map
   verifyTimeMapConsistency newMap
+  
+  -- If we got here, the advancement is valid
+  pure True
 
--- | Extract a view of the time map containing only specified timelines
-extractTimelineView ::
-  (Member (Error AppError) r) =>
-  TimeMap ->
-  [TimelineHash] ->
+-- | Extract a view of a specific timeline from a TimeMap
+extractTimelineView :: 
+  (Member (Error AppError) r) => 
+  TimeMap -> 
+  [TimelineHash] -> 
   Sem r TimeMap
 extractTimelineView timeMap tlHashes = do
-  -- Create a new map with just the specified timelines
+  -- Filter the entries to only include the requested timelines
   let filteredEntries = Map.filterWithKey (\k _ -> k `elem` tlHashes) (entries timeMap)
   
-  -- Check that all requested timelines exist
-  let missingTimelines = filter (\h -> Map.notMember h filteredEntries) tlHashes
-  unless (null missingTimelines) $
+  -- Check if any requested timelines are missing
+  let missingTimelines = P.filter (\h -> Map.notMember h filteredEntries) tlHashes
+  
+  when (not $ null missingTimelines) $
     throw $ TimelineError $ TimelineGenericError $
-      "Missing timelines in extraction: " ++ show missingTimelines
+      T.pack $ "Missing timelines: " ++ show missingTimelines
   
-  -- Filter dependencies to only include those between the specified timelines
-  let filteredDeps = filter (\dep -> 
-                      sourceTimeline dep `elem` tlHashes && 
-                      targetTimeline dep `elem` tlHashes) 
-                    (dependencies timeMap)
+  -- Filter dependencies to only include those relevant to the requested timelines
+  let filteredDeps = P.filter 
+        (\dep -> sourceTimeline dep `elem` tlHashes && targetTimeline dep `elem` tlHashes) 
+        (timelineDependencies timeMap)
   
-  -- Return the filtered time map
-  pure $ timeMap 
+  -- Create a new TimeMap with just the requested timelines
+  pure $ timeMap
     { entries = filteredEntries
-    , dependencies = filteredDeps
+    , timelineDependencies = filteredDeps
     }
 
 -- | Get all dependencies for a specific timeline
-getTimelineDependencies ::
-  (Member (Error AppError) r) =>
-  TimeMap ->
-  TimelineHash ->
-  Sem r [TimelineDependency]
-getTimelineDependencies timeMap tlHash = do
-  -- Find dependencies where this timeline is either source or target
-  let relatedDeps = filter (\dep -> 
-                      sourceTimeline dep == tlHash || 
-                      targetTimeline dep == tlHash)
-                    (dependencies timeMap)
-  pure relatedDeps
+getTimelineDependencies :: 
+  TimeMap -> 
+  TimelineHash -> 
+  [TimelineDependency]
+getTimelineDependencies timeMap tlHash = 
+  P.filter (\dep -> sourceTimeline dep == tlHash || targetTimeline dep == tlHash) 
+    (timelineDependencies timeMap)
 
 -- | Register a new dependency between timelines
 registerTimelineDependency ::
@@ -462,20 +490,20 @@ registerTimelineDependency timeMap newDep = do
   let existingDep = find (\dep -> 
                       sourceTimeline dep == sourceTimeline newDep && 
                       targetTimeline dep == targetTimeline newDep)
-                    (dependencies timeMap)
+                    (timelineDependencies timeMap)
   
   -- Update or add the dependency
   let updatedDeps = case existingDep of
-        Just _ -> map (\dep -> 
+        Just _ -> P.map (\dep -> 
                     if sourceTimeline dep == sourceTimeline newDep && 
                        targetTimeline dep == targetTimeline newDep
                     then newDep
                     else dep) 
-                  (dependencies timeMap)
-        Nothing -> newDep : dependencies timeMap
+                  (timelineDependencies timeMap)
+        Nothing -> newDep : timelineDependencies timeMap
   
   -- Return the updated time map
-  pure $ timeMap { dependencies = updatedDeps }
+  pure $ timeMap { timelineDependencies = updatedDeps }
 
 -- | Validate a transition from one time map to another
 validateTimeMapTransition ::
@@ -510,21 +538,14 @@ nubBy f = go []
       | f x `elem` seen = go seen xs
       | otherwise = x : go (f x : seen) xs
 
--- | Apply an action to each element of a list
-forM_ :: Monad m => [a] -> (a -> m b) -> m ()
-forM_ xs f = mapM_ f xs
+-- | Find a timeline in the map by its hash
+findTimeline :: TimelineHash -> TimeMap -> Maybe TimeMapEntry
+findTimeline hash (TimeMap _ entries _ _ _) = Map.lookup hash entries
 
--- | Apply a function to each element in a list and return the results in a list
-mapM_ :: Monad m => (a -> m b) -> [a] -> m ()
-mapM_ f = foldr ((>>) . f) (return ())
+-- | Validate that a timeline dependency is valid
+validateDependency :: TimelineHash -> TimelineDependency -> Bool
+validateDependency selfHash (TimelineDependency depHash _ _ _) = depHash /= selfHash
 
--- | Fold over a list with a monadic function
-foldM :: Monad m => (b -> a -> m b) -> b -> [a] -> m b
-foldM _ z [] = return z
-foldM f z (x:xs) = do
-  z' <- f z x
-  foldM f z' xs
-
--- | Return a value if a condition is true, otherwise fail
-when :: Monad m => Bool -> m () -> m ()
-when p s = if p then s else return () 
+-- | Filter out invalid dependencies
+filterDependencies :: TimelineHash -> [TimelineDependency] -> [TimelineDependency]
+filterDependencies selfHash = P.filter (validateDependency selfHash) 

@@ -1,6 +1,6 @@
 # Execution Module
 
-This module handles the unified interpreter, logging, and state transitions in the time-bandits system.
+This module handles the unified interpreter, logging, and state transitions in the Time Bandits system.
 
 ## Components:
 

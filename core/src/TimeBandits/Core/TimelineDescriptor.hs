@@ -17,13 +17,14 @@ to appropriate handlers for each timeline.
 TimelineDescriptors are loaded from TOML configuration files and provide a standardized
 way to interact with different timelines across the system.
 -}
-module TimeBandits.TimelineDescriptor
+module TimeBandits.Core.TimelineDescriptor
   ( -- * Core Types
     TimelineDescriptor(..)
   , VMType(..)
   , EffectHandlerSpec(..)
   , EndpointConfig(..)
   , ClockType(..)
+  , EffectType(..)
   
   -- * Descriptor Operations
   , loadDescriptor
@@ -43,16 +44,20 @@ import qualified Data.ByteString.Char8 as BS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Serialize (Serialize)
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
+import qualified Data.Serialize as S
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash, EntityHash(..))
-import TimeBandits.Types (AppError(..), ProgramErrorType(..))
-import TimeBandits.Timeline (TimelineHash)
-import TimeBandits.ProgramEffect (EffectType(..))
+import TimeBandits.Core.Core (Hash, EntityHash(..), computeSha256)
+import TimeBandits.Core.Types (AppError(..), TimelineHash, TimelineErrorType(..))
+import TimeBandits.Core.Serialize ()  -- Import Serialize instances
 
 -- | Virtual Machine types supported by timelines
 data VMType
@@ -64,6 +69,36 @@ data VMType
   | MockVM     -- ^ Mock VM for testing
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
+
+-- | Effect types that can be mapped to handlers
+data EffectType
+  = TransferAsset   -- ^ Transfer an asset between accounts
+  | QueryState      -- ^ Query the state of a contract or account
+  | UpdateState     -- ^ Update the state of a contract
+  | CreateAsset     -- ^ Create a new asset
+  | DestroyAsset    -- ^ Destroy an existing asset
+  | ExecuteContract -- ^ Execute a smart contract function
+  deriving stock (Eq, Show, Generic, Ord)
+
+-- | Manual Serialize instance for EffectType
+instance Serialize EffectType where
+  put TransferAsset = S.putWord8 0
+  put QueryState = S.putWord8 1
+  put UpdateState = S.putWord8 2
+  put CreateAsset = S.putWord8 3
+  put DestroyAsset = S.putWord8 4
+  put ExecuteContract = S.putWord8 5
+  
+  get = do
+    tag <- S.getWord8
+    case tag of
+      0 -> return TransferAsset
+      1 -> return QueryState
+      2 -> return UpdateState
+      3 -> return CreateAsset
+      4 -> return DestroyAsset
+      5 -> return ExecuteContract
+      _ -> fail $ "Invalid EffectType tag: " ++ show tag
 
 -- | Clock types for different timelines
 data ClockType
@@ -135,7 +170,7 @@ loadDescriptor filePath = do
     then pure $ createEthereumDescriptor
     else if "solana" `BS.isInfixOf` BS.pack filePath
       then pure $ createSolanaDescriptor
-      else throw $ ProgramError $ InvalidConfiguration $ "Unknown timeline type: " <> filePath
+      else throw $ TimelineError $ TimelineGenericError $ "Unknown timeline type: " <> T.pack filePath
 
 -- | Parse a timeline descriptor from ByteString (TOML content)
 parseDescriptor :: 
@@ -150,7 +185,7 @@ parseDescriptor content = do
     then pure $ createEthereumDescriptor
     else if "solana" `BS.isInfixOf` content
       then pure $ createSolanaDescriptor
-      else throw $ ProgramError $ InvalidConfiguration $ "Unknown timeline configuration"
+      else throw $ TimelineError $ TimelineGenericError "Unknown timeline configuration"
 
 -- | Validate a timeline descriptor
 validateDescriptor :: 
@@ -161,12 +196,11 @@ validateDescriptor descriptor = do
   -- Verify that required effect handlers are mapped
   let requiredEffects = [TransferAsset, QueryState, UpdateState]
       mappedEffects = Map.keysSet (tdEffectMappings descriptor)
-      missingEffects = filter (\e -> e `notElem` mappedEffects) requiredEffects
+      missingEffects = filter (\e -> not $ Set.member e mappedEffects) requiredEffects
   
   if null missingEffects
     then pure True
-    else throw $ ProgramError $ InvalidConfiguration $ 
-         "Missing required effect handlers: " <> show missingEffects
+    else throw $ TimelineError $ TimelineGenericError $ "Missing required effect handlers: " <> T.pack (show missingEffects)
 
 -- | Resolve an effect handler for a specific effect type
 resolveEffectHandler :: 
@@ -177,8 +211,7 @@ resolveEffectHandler ::
 resolveEffectHandler descriptor effectType = do
   case Map.lookup effectType (tdEffectMappings descriptor) of
     Just handlerSpec -> pure handlerSpec
-    Nothing -> throw $ ProgramError $ InvalidConfiguration $ 
-              "No handler found for effect: " <> show effectType
+    Nothing -> throw $ TimelineError $ TimelineGenericError $ "No handler found for effect: " <> show effectType
 
 -- | Create a timeline adapter from a descriptor
 -- This is a factory function that will create the appropriate adapter
@@ -195,7 +228,7 @@ createTimelineAdapter descriptor = do
 -- | Create a mock Ethereum descriptor
 createEthereumDescriptor :: TimelineDescriptor
 createEthereumDescriptor = TimelineDescriptor
-  { tdId = EntityHash $ Hash "ethereum-mainnet"
+  { tdId = EntityHash $ computeSha256 "ethereum-mainnet"
   , tdName = "Ethereum Mainnet"
   , tdVmType = EVM
   , tdClockType = BlockHeight
@@ -243,7 +276,7 @@ createEthereumDescriptor = TimelineDescriptor
 -- | Create a mock Solana descriptor
 createSolanaDescriptor :: TimelineDescriptor
 createSolanaDescriptor = TimelineDescriptor
-  { tdId = EntityHash $ Hash "solana-mainnet"
+  { tdId = EntityHash $ computeSha256 "solana-mainnet"
   , tdName = "Solana Mainnet"
   , tdVmType = Solana
   , tdClockType = SlotNumber
