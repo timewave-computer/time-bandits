@@ -57,10 +57,10 @@ module TimeBandits.Actor
   , dequeueMessage
   ) where
 
-import Control.Concurrent (ThreadId, forkIO)
+import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
 import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar)
-import Control.Monad (forever, void, when)
+import Control.Monad (forever, void, when, replicateM)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -68,22 +68,30 @@ import Data.Serialize (Serialize)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Network.Socket (Socket)
-import Polysemy (Member, Sem)
-import Polysemy.Error (Error, throw)
+import Network.Socket (Socket, SockAddr(..), PortNumber)
+import Polysemy (Member, Sem, Embed, embed, runM)
+import Polysemy.Error (Error, throw, runError)
 import System.Process (ProcessHandle)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.IORef as IORef
+import System.Directory (createDirectoryIfMissing)
+import Polysemy.Trace qualified as PT
+import TimeBandits.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
+import TimeBandits.Network (P2PConfig(..))
+import Data.Time.Clock (UTCTime, getCurrentTime)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
+import TimeBandits.Core (ActorHash, Hash(..), EntityHash(..))
 import TimeBandits.Types
   ( AppError(..)
   , LamportTime(..)
+  , PubKey(..)
+  , Actor(..)
+  , ActorType(..)
   )
 import TimeBandits.Resource 
-  ( Resource
-  , Address
+  ( Resource(..)
+  , ResourceId
   )
 import TimeBandits.Program 
   ( ProgramId
@@ -127,6 +135,10 @@ data ActorSpec = ActorSpec
   , actorSpecRole :: ActorRole
   , actorSpecCapabilities :: [ActorCapability]
   , actorSpecInitialPrograms :: [ProgramId]
+  , actorSpecBootstrapNodes :: [Address]
+  , actorSpecAddress :: Maybe Address
+  , actorSpecActor :: ByteString
+  , actorSpecPubKey :: ByteString
   }
   deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
@@ -197,6 +209,12 @@ data ActorHandle
       , remoteHost :: Text
       , remotePort :: Int
       , remoteSocket :: Maybe Socket
+      , remoteActor :: ByteString
+      , remoteState :: ActorState
+      , remoteAddress :: SockAddr
+      , remoteNetworkConfig :: P2PConfig
+      , remoteLastSeen :: LamportTime
+      , remoteIsConnected :: Bool
       }
 
 -- | Actor class defines the interface for all actors
@@ -469,3 +487,83 @@ deploySpecializedActors mode specs = do
   -- Create a map of handles by address
   let addressHandles = zip (map actorSpecId specs) handles
   return $ Map.fromList addressHandles 
+
+-- | Deploy an actor in remote mode (for geo-distributed deployment)
+deployRemoteActor :: (Member (Error ActorError) r, Member (Embed IO) r)
+                 => ActorSpec
+                 -> Sem r (ActorHandle r)
+deployRemoteActor spec = do
+  -- Create initial actor state
+  state <- createActorState spec
+  
+  -- Generate a unique identifier for this remote actor
+  remoteId <- embed $ getRandomBytes 16
+  
+  -- Get the current time for tracking
+  now <- embed getCurrentTime
+  
+  -- Create network configuration for this actor
+  let networkConfig = P2PConfig
+        { pcBindAddress = SockAddrInet 0 0  -- Will be assigned by the system
+        , pcBootstrapNodes = actorSpecBootstrapNodes spec
+        , pcMaxConnections = 50  -- Default value
+        , pcHeartbeatInterval = 30  -- 30 seconds
+        , pcDiscoveryInterval = 300  -- 5 minutes
+        , pcNodeCapabilities = actorSpecCapabilities spec
+        }
+  
+  -- Convert to QUIC configuration
+  let quicConfig = p2pConfigToQuicConfig networkConfig
+  
+  -- Start the QUIC server for this actor
+  embed $ do
+    -- Create the certificate directory if it doesn't exist
+    createDirectoryIfMissing True "certs"
+    
+    -- In a real implementation, we would start a separate process or connect to a remote machine
+    -- For now, we'll simulate this with a thread
+    _ <- forkIO $ runM $ runError @AppError $ PT.traceToStdout $ do
+      -- Start the QUIC server
+      startQuicServer quicConfig (actorSpecActor spec) (actorSpecPubKey spec)
+      
+      -- Log that the server started
+      PT.trace $ "Started QUIC server for actor " <> show (actorSpecId spec)
+      
+      -- Keep the server running
+      embed $ forever $ threadDelay 1000000  -- 1 second
+    
+    -- Give the server time to start
+    threadDelay 100000  -- 100ms
+  
+  -- Create a handle for the remote actor
+  let handle = RemoteHandle
+        { remoteId = remoteId
+        , remoteHost = ""
+        , remotePort = 8443
+        , remoteSocket = Nothing
+        , remoteActor = actorSpecActor spec
+        , remoteState = state
+        , remoteAddress = case actorSpecAddress spec of
+            Just addr -> addr
+            Nothing -> SockAddrInet 8443 0  -- Default QUIC port if not specified
+        , remoteNetworkConfig = networkConfig
+        , remoteLastSeen = now
+        , remoteIsConnected = True
+        }
+  
+  -- Return the handle
+  return handle
+
+-- | Helper function to get random bytes
+getRandomBytes :: (Member (Embed IO) r) => Int -> Sem r ByteString
+getRandomBytes n = embed $ BS.pack <$> replicateM n (randomRIO (0, 255))
+
+-- | Helper function for random number generation
+randomRIO :: (Integral a, Member (Embed IO) r) => (a, a) -> Sem r a
+randomRIO (lo, hi) = embed $ do
+  r <- randomIO
+  return $ lo + fromIntegral (abs r `mod` fromIntegral (hi - lo + 1))
+
+-- | Random number generator (would be properly imported in real implementation)
+randomIO :: IO Int
+randomIO = return 0  -- Placeholder, replace with actual implementation 

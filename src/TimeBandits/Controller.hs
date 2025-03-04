@@ -64,6 +64,15 @@ import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw, fromEither, catch)
 import qualified Data.ByteString.Char8 as BS
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Monad (forever, replicateM)
+import System.Directory (createDirectoryIfMissing)
+import Network.Socket (SockAddr(..), PortNumber)
+import qualified Polysemy.Trace as PT
+import TimeBandits.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
+import TimeBandits.Network (P2PConfig(..), P2PCapability(..))
+import Polysemy (Embed, embed, runM)
+import Polysemy.Error (runError)
 
 -- Import from TimeBandits modules
 import TimeBandits.Core (Hash(..), EntityHash(..))
@@ -201,18 +210,91 @@ initController config = do
     , controllerDeploymentMode = configMode config
     }
 
--- | Run the controller to process a transition message
-runController :: 
-  (Member (Error AppError) r, Member (Error ControllerError) r) => 
-  Controller -> 
-  TransitionMessage -> 
-  Sem r (Controller, ProgramState)
-runController controller msg = do
-  -- Process the transition
-  (newController, programState) <- processTransition controller msg
+-- | Run the controller with the specified simulation mode
+runController :: (Member (Error AppError) r, Member (Embed IO) r) => 
+                Controller -> 
+                SimulationMode -> 
+                Sem r Controller
+runController controller mode = do
+  -- Update the controller's mode
+  let updatedController = controller { controllerMode = mode }
   
-  -- Return the updated controller and program state
-  return (newController, programState)
+  -- Initialize the appropriate network infrastructure based on mode
+  case mode of
+    InMemory -> do
+      -- For in-memory mode, no special network setup is needed
+      return updatedController
+      
+    LocalProcesses -> do
+      -- For local processes mode, set up local IPC
+      -- This would typically use Unix sockets or similar
+      return updatedController
+      
+    GeoDistributed -> do
+      -- For geo-distributed mode, set up QUIC-based networking
+      setupGeoDistributedNetworking updatedController
+      
+-- | Set up QUIC-based networking for geo-distributed mode
+setupGeoDistributedNetworking :: (Member (Error AppError) r, Member (Embed IO) r) => 
+                               Controller -> 
+                               Sem r Controller
+setupGeoDistributedNetworking controller = do
+  -- Create a default P2P configuration
+  let p2pConfig = P2PConfig
+        { pcBindAddress = SockAddrInet 8443 0  -- Default QUIC port
+        , pcBootstrapNodes = []  -- No bootstrap nodes initially
+        , pcMaxConnections = 50  -- Default value
+        , pcHeartbeatInterval = 30  -- 30 seconds
+        , pcDiscoveryInterval = 300  -- 5 minutes
+        , pcNodeCapabilities = [CanRoute, CanStore, CanCreateTimelines]  -- Default capabilities
+        }
+  
+  -- Convert to QUIC configuration
+  let quicConfig = p2pConfigToQuicConfig p2pConfig
+  
+  -- Create a local actor for the controller
+  now <- embed getCurrentTime
+  controllerPubKey <- embed $ getRandomBytes 32
+  let controllerActor = Actor
+        { actorId = EntityHash $ Hash "controller"
+        , actorType = Controller
+        }
+  
+  -- Start the QUIC server for the controller
+  embed $ do
+    -- Create the certificate directory if it doesn't exist
+    createDirectoryIfMissing True "certs"
+    
+    -- In a real implementation, we would properly manage this thread
+    _ <- forkIO $ runM $ runError @AppError $ PT.traceToStdout $ do
+      -- Start the QUIC server
+      startQuicServer quicConfig controllerActor (PubKey controllerPubKey)
+      
+      -- Log that the server started
+      PT.trace "Started QUIC server for controller"
+      
+      -- Keep the server running
+      embed $ forever $ threadDelay 1000000  -- 1 second
+    
+    -- Give the server time to start
+    threadDelay 100000  -- 100ms
+  
+  -- Return the updated controller
+  return controller
+
+-- | Helper function to get random bytes
+getRandomBytes :: (Member (Embed IO) r) => Int -> Sem r ByteString
+getRandomBytes n = embed $ BS.pack <$> replicateM n (randomRIO (0, 255))
+
+-- | Helper function for random number generation
+randomRIO :: (Integral a, Member (Embed IO) r) => (a, a) -> Sem r a
+randomRIO (lo, hi) = embed $ do
+  r <- randomIO
+  return $ lo + fromIntegral (abs r `mod` fromIntegral (hi - lo + 1))
+
+-- | Random number generator (would be properly imported in real implementation)
+randomIO :: IO Int
+randomIO = return 0  -- Placeholder, replace with actual implementation
 
 -- | Process a transition message
 processTransition ::

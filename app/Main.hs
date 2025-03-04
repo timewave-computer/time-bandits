@@ -85,6 +85,23 @@ import Relude (atomicModifyIORef')
 import Data.ByteString.Char8 qualified as BS
 import Data.Text (Text)
 import qualified Data.Text as T
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Monad (forever, when)
+import System.Directory (createDirectoryIfMissing)
+import TimeBandits.NetworkQUIC qualified as NetworkQUIC
+import TimeBandits.Crypto (PrivKey(..), PubKey(..))
+import qualified Polysemy.State as PS
+import qualified TimeBandits.Network as Network
+import TimeBandits.Core (Actor(..), ActorRole(..), computePubKeyHash)
+import TimeBandits.Controller (ControllerConfig(..), SimulationMode(..))
+import TimeBandits.Effects.KeyManagement
+import TimeBandits.Effects.Trace as Trace
+import TimeBandits.Effects.Output (Output, output)
+import TimeBandits.Error (AppError)
+import Polysemy.Embed (Embed)
+
+-- | Resource log type for tracking resource operations
+type ResourceLog = [(Text, Text)]
 
 -- | Command line options
 data CommandLineOptions = CommandLineOptions
@@ -236,8 +253,63 @@ mainProgram = do
       Trace.trace "Controller initialized successfully."
       output "Time Bandits application initialized successfully!"
       
+      -- Check if we should use QUIC for geo-distributed mode
+      when (configMode controllerConfig == GeoDistributed) $ do
+        Trace.trace "Setting up QUIC-based networking for Geo-Distributed mode..."
+        setupQuicNetworking
+      
       -- In a real implementation, we would use the controller here
       pure ()
+
+-- | Set up QUIC-based networking
+setupQuicNetworking :: 
+  ( Member (PS.State [Network.P2PNode]) r
+  , Member Trace r
+  , Member (Error AppError) r
+  , Member (Embed IO) r
+  ) => 
+  Sem r ()
+setupQuicNetworking = do
+  Trace.trace "Initializing QUIC-based networking..."
+  
+  -- Create a local actor with a proper identity
+  now <- embed getCurrentTime
+  
+  -- Create deterministic keys for the local node
+  let privKeyData = BS.pack "local-node-private-key-secure"
+      pubKeyData = BS.pack "local-node-public-key-secure" 
+      privKey = PrivKey privKeyData
+      pubKey = PubKey pubKeyData
+      actorId = computePubKeyHash pubKey
+      localActor = Actor actorId TimeTraveler
+      
+      -- Create a QUIC configuration
+      quicConfig = NetworkQUIC.defaultQuicConfig {
+        NetworkQUIC.qcBindAddress = SockAddrInet 8443 (tupleToHostAddress (127, 0, 0, 1)),
+        NetworkQUIC.qcBindPort = 8443,
+        NetworkQUIC.qcNetworkMode = NetworkQUIC.HybridMode
+      }
+  
+  -- Start the QUIC server
+  embed $ do
+    -- Create the certificate directory if it doesn't exist
+    createDirectoryIfMissing True "certs"
+    
+    -- In a real implementation, we would properly manage this thread
+    _ <- forkIO $ runM $ runError @AppError $ traceToStdout $ do
+      -- Start the QUIC server
+      NetworkQUIC.startQuicServer quicConfig localActor pubKey
+      
+      -- Log that the server started
+      Trace.trace "Started QUIC server for local node"
+      
+      -- Keep the server running
+      embed $ forever $ threadDelay 1000000  -- 1 second
+    
+    -- Give the server time to start
+    threadDelay 100000  -- 100ms
+  
+  Trace.trace "QUIC-based networking initialized successfully."
 
 -- | Interpreter configuration
 -- Configures and runs the effect interpreters for the main program.

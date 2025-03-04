@@ -57,7 +57,7 @@ import TimeBandits.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Effect
+import TimeBandits.ProgramEffect
   ( Effect(..)
   )
 import TimeBandits.Timeline

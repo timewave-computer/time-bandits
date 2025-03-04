@@ -61,6 +61,7 @@ common shared
     , polysemy           ==1.9.2.0
     , polysemy-log       ==0.9.0.0
     , polysemy-plugin    ==0.4.5.0
+    , process            >=1.6.0.0
     , profunctors
     , relude             >=1.0
     , serialise          >=0.2
@@ -90,7 +91,7 @@ library
     TimeBandits.Types
     TimeBandits.Program
     TimeBandits.Resource
-    TimeBandits.Effect
+    TimeBandits.Effects
     TimeBandits.EffectInterpreter
     TimeBandits.EffectExecutor
     TimeBandits.Events
@@ -107,6 +108,14 @@ library
     TimeBandits.ActorCommunication
     TimeBandits.LocalMultiProcess
     TimeBandits.SecurityVerifier
+    TimeBandits.Network
+    TimeBandits.NetworkQUIC
+    TimeBandits.NetworkAdapter
+    TimeBandits.Actor
+    TimeBandits.DistributedLog
+    TimeBandits.PreconditionEvaluator
+    TimeBandits.ProgramEffect
+    TimeBandits.TimeMap
 
 executable time-bandits
   import:         shared
@@ -127,6 +136,7 @@ test-suite time-bandits-test
                    , TimelineScenarioTest
                    , ControllerTest
                    , TimelineDescriptorTest
+                   , DistributedLogTest
   build-depends:    base >= 4.16 && < 5,
                    time-bandits,
                    polysemy,

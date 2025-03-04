@@ -214,7 +214,7 @@ executeGuardedEffect state (GuardedEffect guard effect) = do
   guardHolds <- checkGuard (programTimeMap state) guard
   if guardHolds
     then executeEffect state effect
-    else throw $ "Guard condition failed for effect" :: AppError 
+    else throw $ "Guard condition failed for effect" :: AppError
 
 -- | Create an escrow effect with appropriate guards
 createEscrowEffect ::

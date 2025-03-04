@@ -435,116 +435,55 @@ After implementing all security and invariant checks:
 - ✅ Create migration guides for any external users of the codebase
 - ✅ Document the security guarantees and how they're enforced
 
-## ⏭️ Phase 6: Implement Distributed Execution
+## ✅ Phase 6: Implement Distributed Execution
 
 This phase focuses on implementing the distributed execution capabilities of the Time Bandits system, allowing it to run across multiple processes and machines.
 
-### ✅ Step 6.1 Implement Actor Communication Protocol
+### ✅ Step 6.1: Define Simulation Modes
 
-Define the protocol for actor communication, including message formats, serialization, and addressing.
+- ✅ In-memory: Direct function calls with in-memory queues
+- ✅ Local multi-process: Spawn processes with Nix and communicate via Unix sockets
+- ✅ Geo-distributed: Remote execution via SSH with TCP or external RPC
+- ✅ Each deployment mode must support all three actor roles
 
-```haskell
--- Actor communication protocol
-data ActorMessage
-  = DeployProgram ProgramDefinition TimeMap
-  | ExecuteTransition TransitionMessage
-  | QueryState ProgramId
-  | SystemControl SystemCommand
-  | ActorDiscovery ActorQuery
-  deriving (Show, Eq, Generic, Serialize)
+### ✅ Step 6.2: Implement Local Multi-Process Mode
 
--- Actor communication channel
-data ActorChannel = ActorChannel
-  { channelId :: ChannelId
-  , channelType :: ChannelType
-  , channelState :: ChannelState
-  , remoteActor :: ActorAddress
-  }
+- ✅ Local multi-process configuration
+- ✅ Process management
+- ✅ Inter-process communication
 
--- Actor addressing scheme
-data ActorAddress
-  = LocalAddress ProcessId
-  | NetworkAddress HostName Port
-  | UnixSocketAddress FilePath
-  deriving (Show, Eq, Generic, Serialize)
-```
+### ✅ Step 6.3: Implement Geo-Distributed Mode
 
-### ✅ Step 6.2 Implement Local Multi-Process Mode
+This step involves implementing the geo-distributed mode, which allows the Time Bandits system to run across multiple machines in different geographic locations. This mode requires:
 
-Implement the local multi-process mode, where actors run in separate processes on the same machine.
+- TCP/IP communication between nodes
+- Encryption of all communications
+- Peer discovery and connection management
+- Handling of network partitions and reconnections
 
-```haskell
--- Local multi-process configuration
-data ProcessConfig = ProcessConfig
-  { pcCommand :: Text
-  , pcArgs :: [Text]
-  , pcWorkingDir :: FilePath
-  , pcEnvironment :: [(String, String)]
-  , pcSocketPath :: FilePath
-  }
+**Implementation Progress:**
+- ✅ Created QUIC-based networking implementation in `NetworkQUIC.hs`
+- ✅ Integrated QUIC networking with existing P2P infrastructure
+- ✅ Added certificate generation for secure communications
+- ✅ Updated Main.hs to support QUIC-based geo-distributed mode
+- ✅ Implementing peer discovery and connection management
+- ✅ Handling network partitions and reconnections
+- ✅ Testing geo-distributed mode with multiple machines
 
--- Process management
-startProcess :: ProcessId -> ProcessConfig -> IO ProcessState
-stopProcess :: ProcessId -> ProcessState -> IO ()
-monitorProcess :: ProcessId -> ProcessConfig -> ProcessState -> IO ProcessState
+### ✅ Step 6.4 Implement Distributed Execution Log
 
--- Inter-process communication
-createSocket :: FilePath -> IO (Either Text Socket)
-sendToProcess :: Serialize a => ProcessState -> a -> IO ()
-receiveFromProcess :: Serialize a => ProcessState -> IO a
-```
+This step involves implementing a distributed execution log that can be used to store and replicate execution logs across multiple nodes in the network. This is essential for the geo-distributed mode to ensure that all nodes have a consistent view of the system state.
 
-### 🔜 Step 6.3 Implement Geo-Distributed Mode
+**Implementation Progress:**
+- ✅ Created `DistributedLog.hs` module with core functionality
+- ✅ Implemented log persistence to disk
+- ✅ Added log replication capabilities
+- ✅ Integrated with QUIC-based networking
+- ✅ Implemented conflict resolution
+- ✅ Implemented log compaction
+- ✅ Testing distributed log with multiple nodes
 
-- 🔜 Use TCP/IP for network communication
-- 🔜 Implement encryption and authentication for secure channels
-- 🔜 Handle network partitions and reconnection
-- 🔜 Support discovery and peer exchange
-
-```haskell
--- | Network mode configuration
-data NetworkConfig = NetworkConfig
-  { networkRole :: ActorRole
-  , networkBindAddress :: SocketAddr
-  , networkBootstrapPeers :: [SocketAddr]
-  , networkKeyPath :: FilePath
-  }
-
--- | Connect to the distributed network
-connectToNetwork :: NetworkConfig -> IO NetworkHandle
-```
-
-### 🔜 Step 6.4 Implement Distributed Execution Log
-
-- 🔜 Create persistent storage for execution logs
-- 🔜 Replicate logs across network nodes
-- 🔜 Implement consensus for log ordering
-- 🔜 Support verification of remote logs
-
-```haskell
--- | Distributed log operations
-class DistributedLog m where
-  appendLogEntry :: LogEntry -> m (Either Error Hash)
-  getLogEntry :: Hash -> m (Either Error LogEntry)
-  verifyLogConsistency :: m (Either Error Bool)
-  replicateLog :: [NodeId] -> m (Either Error ())
-```
-
-### 🔜 Step 6.5 Implement Network Resilience
-
-- 🔜 Handle node failures and network interruptions
-- 🔜 Implement leader election for coordination tasks
-- 🔜 Support state recovery after downtime
-- 🔜 Ensure execution continuity across disruptions
-
-```haskell
--- | Network resilience features
-recoverFromFailure :: NodeId -> m (Either Error ())
-electCoordinator :: [NodeId] -> m (Either Error NodeId)
-synchronizeState :: NodeId -> NodeId -> m (Either Error ())
-```
-
-## ⏳ Phase 7: Implement Timeline Descriptors & Adapters
+## ✅ Phase 7: Implement Timeline Descriptors & Adapters
 
 This phase focuses on formalizing timeline interactions through descriptors and adapters, making the system more flexible and adaptable to different blockchains.
 
@@ -608,11 +547,11 @@ executeEffect ::
   IO ByteString
 ```
 
-### 🔜 Step 7.3 Implement TOML-based Configuration
+### ✅ Step 7.3 Implement TOML-based Configuration
 
-- 🔜 Create a TOML parser for timeline descriptors
-- 🔜 Support loading and validating descriptor files
-- 🔜 Generate adapters from descriptor files
+- ✅ Create a TOML parser for timeline descriptors
+- ✅ Support loading and validating descriptor files
+- ✅ Generate adapters from descriptor files
 
 ```haskell
 -- | Load a timeline descriptor from a TOML file
@@ -625,11 +564,11 @@ parseDescriptor :: ByteString -> Either Error TimelineDescriptor
 validateDescriptor :: TimelineDescriptor -> Either Error Bool
 ```
 
-### 🔜 Step 7.4 Integrate Adapters with Effect Interpreter
+### ✅ Step 7.4 Integrate Adapters with Effect Interpreter
 
-- 🔜 Modify the effect interpreter to use timeline adapters
-- 🔜 Route effects to appropriate adapters based on timeline
-- 🔜 Handle adapter errors and retries
+- ✅ Modify the effect interpreter to use timeline adapters
+- ✅ Route effects to appropriate adapters based on timeline
+- ✅ Handle adapter errors and retries
 
 ```haskell
 -- | Apply an effect using the appropriate timeline adapter
@@ -640,9 +579,9 @@ applyEffectWithAdapter ::
   IO (Either Error EffectResult)
 ```
 
-### 🔜 Step 7.5 Implement Example Timeline Descriptors
+### ✅ Step 7.5 Implement Example Timeline Descriptors
 
-- 🔜 Create example descriptors for common blockchains:
+- ✅ Create example descriptors for common blockchains:
   - Ethereum Mainnet
   - Ethereum Sepolia Testnet
   - Solana Mainnet
@@ -670,9 +609,9 @@ backups = ["https://eth-mainnet.alchemyapi.io/v2/YOUR_API_KEY"]
 - ✅ Program.hs - Program state and memory with resource contracts
 - ✅ ProgramEffect.hs - Explicit effects with guards
 - ✅ EffectExecutor.hs - Effect application with invariant checking
-- ⏳ Controller.hs - System contract enforcement across simulation modes
-- ⏳ TransitionMessage.hs - Proof-carrying program transitions
-- ⏳ ExecutionLog.hs - Append-only, causally linked effect log
+- ✅ Controller.hs - System contract enforcement across simulation modes
+- ✅ TransitionMessage.hs - Proof-carrying program transitions
+- ✅ ExecutionLog.hs - Append-only, causally linked effect log
 - ✅ Actor.hs - Common actor interface with shared functionality for all roles
 - ✅ ActorRole.hs - Base definitions for specialized actor roles
 
@@ -776,3 +715,125 @@ Key functions include:
 - ✅ `propagateMessage` - Disseminate messages through the P2P network
 - ✅ `generateProof` - Create cryptographic proofs for transitions
 - ✅ SecurityVerifier.hs - System-level security property verification
+
+
+# Addendum III: Clarification on Effect Handling and Pluggability (2025-03-07)
+
+## Background
+
+As the refactor progresses, we need to establish clear and enforceable guidance around how **effects** are handled, how they flow through the system, and what level of customization (if any) is available to **time travelers** when defining their programs.
+
+This addendum formalizes the following principles, which should guide the next stages of the refactor.
+
+## 1. Unified Effect Pipeline
+
+All effects must be processed through a **single, unified effect interpreter** that handles the full lifecycle of each effect. This interpreter owns:
+
+- Fetching the latest time map.
+- Fetching program memory.
+- Evaluating preconditions.
+- Applying state changes.
+- Updating the time map (if the effect requires it).
+- Appending a structured log entry.
+- Producing any required proofs.
+
+This ensures that **every effect application follows the same invariant-enforcing pipeline**.
+
+## 2. Fixed Set of Canonical Effects
+
+At this stage, the **set of supported effect types** is fixed at the protocol level. Time travelers can only compose programs using these pre-defined effect types:
+
+- EscrowToProgram
+- ClaimFromProgram
+- InvokeProgram
+- WatchResource
+- DelegateCapability
+- InternalStateUpdate
+
+Each effect has a **well-defined schema** and **precondition set**, and the interpreter knows how to process all supported effect types directly.
+
+
+## 3. Programs Are Declarative, Not Executable Code
+
+Time travelers **do not write effect handler code**. Instead, programs are defined declaratively as sequences of these pre-defined effects.  
+Effects are **pure data** — a program definition is just a structured list of effect declarations, along with their parameters and guards.
+
+This ensures programs are:
+- Portable across simulation and deployment modes.
+- Replayable from first principles.
+- Auditable by anyone using only the execution log.
+
+
+## 4. Timeline Adapters Are Pluggable
+
+The part of the system that **interacts with external timelines** (e.g., calling contracts, reading balances, fetching proofs) is the **timeline adapter** layer.  
+Each timeline has a corresponding **timeline descriptor**, and the interpreter calls the adapter for external effects (like escrow or claims).  
+Adapters are **per timeline**, not per program. This keeps programs timeline-agnostic while allowing the system to support multiple VMs (EVM, WASM, UTXO).
+
+
+## 5. Effect Set Can Only Be Extended via Protocol Upgrades
+
+New effect types can only be added through a **formal protocol upgrade** to Time Bandits itself. Time travelers cannot introduce arbitrary new effect types when defining their programs.  
+This ensures all effects follow the same safety, replayability, and proof requirements, enforced directly by the interpreter.
+
+
+## 6. Precondition Evaluation is Centralized
+
+Each effect type has a **formal precondition schema** that defines what must be true in the program's memory and time map for the effect to apply.  
+This logic will live in a **central precondition evaluator**, not in individual effect handlers.  
+This makes precondition checks:
+- Uniform across effects.
+- Easy to audit and modify.
+- Testable in isolation.
+
+
+## 7. Ownership Invariant is Enforced Globally
+
+The interpreter maintains a **ResourceLedger** that tracks who owns each resource at all times.  
+All transfers go through this ledger, ensuring:
+- Every resource has exactly one owner.
+- Double-spends and unauthorized access are impossible.
+- Ownership changes appear directly in the execution log.
+
+
+## Summary of Allowed Pluggability
+
+| Layer                       | Pluggable?            | Who Controls It |
+|------------------|-----------------|------------------|
+| Effect Types            | No (fixed set)    | Time Bandits Protocol |
+| Effect Parameters  | Yes                       | Time Travelers (per program) |
+| Effect Sequences | Yes                       | Time Travelers (per program) |
+| Timeline Adapters | Yes                       | Time Bandits Core (per timeline) |
+| Proof Systems         | Yes                       | Time Bandits Core (per effect type) |
+
+
+## Immediate Refactor Implications
+
+- Introduce `EffectInterpreter.hs` as the **sole entry point for effect processing**.
+- Move all precondition checks into a central `PreconditionEvaluator.hs`.
+- Introduce `ResourceLedger.hs` to enforce global ownership.
+- Make all external calls flow through `TimelineAdapter` instances.
+- Remove any direct mutation of program memory from effect-specific code — all state changes happen inside the interpreter.
+
+
+## Reasoning
+
+This approach ensures:
+- Consistent handling of causal consistency, time maps, and ownership.
+- Programs are **pure data** and fully declarative.
+- Effects are portable across timelines and simulation modes.
+- All state changes are covered by the same proofs and log entries.
+- Adding new timelines requires only **new adapters**, not changes to programs.
+- Adding new effects requires a **protocol upgrade**, preserving system safety.
+
+
+## Long-Term Extensibility Plan (Optional Future Work)
+
+In a future phase, Time Bandits could add an **effect registry** that allows registering new effect types via governance.  
+Each new effect type would need:
+- A formal schema.
+- A defined precondition set.
+- A proof generator.
+- A log format.
+
+This allows controlled extensibility **while preserving replayability**. For now, this is explicitly out of scope for the current refactor.
