@@ -24,6 +24,15 @@ module TimeBandits.EffectExecutor
   
   -- * Execution Errors
   , ExecutionError(..)
+  
+  -- * Escrow Operations
+  , executeEscrowEffect
+  , executeClaimEffect
+  , executeReleaseEffect
+  
+  -- * Ownership Operations
+  , executeOwnershipTransfer
+  , verifyResourceOwnership
   ) where
 
 import Data.ByteString (ByteString)
@@ -38,7 +47,19 @@ import TimeBandits.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource (Resource)
+import TimeBandits.Resource 
+  ( Resource
+  , Address
+  , EscrowId
+  , Escrow(..)
+  , EscrowStatus(..)
+  , ClaimCondition(..)
+  , escrowResource
+  , claimResource
+  , releaseResource
+  , verifyEscrowStatus
+  , verifyResourceOwnership
+  )
 import TimeBandits.Program 
   ( ProgramId
   , MemorySlot
@@ -47,6 +68,10 @@ import TimeBandits.Program
   , lookupMemorySlot
   , updateMemorySlot
   , clearMemorySlot
+  , escrowToProgram
+  , claimFromProgram
+  , transferProgramOwnership
+  , isAuthorizedCaller
   )
 import TimeBandits.ProgramEffect 
   ( Effect(..)
@@ -64,6 +89,10 @@ data ExecutionError
   | GuardFailed Text
   | ResourceAlreadyInUse Resource
   | InsufficientResources Text
+  | EscrowNotFound EscrowId
+  | EscrowNotClaimable EscrowId
+  | UnauthorizedAccess Text
+  | OwnershipVerificationFailed Text
   deriving (Eq, Show)
 
 -- | Apply an effect to a program state
@@ -122,6 +151,33 @@ applyEffect state (WatchResource _ _ _) = do
   -- In a real implementation, this would set up a resource watch
   -- For now, just return the state unchanged
   pure state
+-- New effects for Phase 2
+applyEffect state (CreateEscrow resource owner beneficiary claimCondition) = do
+  -- Execute escrow creation effect
+  executeEscrowEffect state resource owner beneficiary claimCondition
+applyEffect state (ClaimEscrow escrowId claimant proofData) = do
+  -- Execute claim effect
+  executeClaimEffect state escrowId claimant proofData
+applyEffect state (ReleaseEscrow escrowId releaser) = do
+  -- Execute release effect
+  executeReleaseEffect state escrowId releaser
+applyEffect state (TransferOwnership programId newOwner) = do
+  -- Execute ownership transfer effect
+  executeOwnershipTransfer state programId newOwner
+applyEffect state (VerifyOwnership resource expectedOwner) = do
+  -- Execute ownership verification effect
+  success <- verifyResourceOwnership (EntityHash $ Hash "dummy-resource-id") expectedOwner
+  if success
+    then pure state  -- Verification succeeded
+    else throw $ OwnershipVerificationFailed $ "Ownership verification failed for " <> show resource
+applyEffect state (AuthorizeInvoker programId newInvoker) = do
+  -- In a real implementation, this would authorize the address to invoke the program
+  -- For now, just return the state unchanged
+  pure state
+applyEffect state (RevokeInvoker programId revokedInvoker) = do
+  -- In a real implementation, this would revoke authorization
+  -- For now, just return the state unchanged
+  pure state
 
 -- | Execute a program function with arguments
 executeProgram :: 
@@ -167,6 +223,83 @@ modifyMemory pid slot maybeResource state = do
   
   pure $ state { programMemory = updatedMemory }
 
+-- | Execute an escrow creation effect
+executeEscrowEffect ::
+  (Member (Error ExecutionError) r) =>
+  ProgramState ->
+  Resource ->
+  Address ->
+  Address ->
+  ClaimCondition ->
+  Sem r ProgramState
+executeEscrowEffect state resource owner beneficiary claimCondition = do
+  -- First verify ownership of the resource
+  ownershipVerified <- verifyResourceOwnership (EntityHash $ Hash "dummy-resource-id") owner
+  unless ownershipVerified $
+    throw $ OwnershipVerificationFailed $ "Owner " <> show owner <> " does not own resource"
+  
+  -- Create the escrow
+  escrow <- escrowResource resource owner beneficiary claimCondition
+  
+  -- In a real implementation, you would store the escrow in a persistent store
+  -- For this implementation, we'll just return the state unchanged
+  pure state
+
+-- | Execute a claim effect
+executeClaimEffect ::
+  (Member (Error ExecutionError) r) =>
+  ProgramState ->
+  EscrowId ->
+  Address ->
+  ByteString ->
+  Sem r ProgramState
+executeClaimEffect state escrowId claimant proofData = do
+  -- Check if the escrow exists and is claimable
+  escrowStatus <- verifyEscrowStatus escrowId
+  case escrowStatus of
+    Active -> do
+      -- Attempt to claim the resource
+      claimedResource <- claimResource escrowId claimant proofData
+      
+      -- In a real implementation, you would update the program state with the claimed resource
+      -- For this implementation, we'll just return the state unchanged
+      pure state
+    Claimed -> throw $ EscrowNotClaimable escrowId
+    Released -> throw $ EscrowNotClaimable escrowId
+    Expired -> throw $ EscrowNotClaimable escrowId
+
+-- | Execute a release effect
+executeReleaseEffect ::
+  (Member (Error ExecutionError) r) =>
+  ProgramState ->
+  EscrowId ->
+  Address ->
+  Sem r ProgramState
+executeReleaseEffect state escrowId releaser = do
+  -- Check if the escrow exists and is active
+  escrowStatus <- verifyEscrowStatus escrowId
+  case escrowStatus of
+    Active -> do
+      -- Attempt to release the escrow
+      releasedResource <- releaseResource escrowId releaser
+      
+      -- In a real implementation, you would update the program state
+      -- For this implementation, we'll just return the state unchanged
+      pure state
+    _ -> throw $ EscrowNotFound escrowId
+
+-- | Execute an ownership transfer effect
+executeOwnershipTransfer ::
+  (Member (Error ExecutionError) r) =>
+  ProgramState ->
+  ProgramId ->
+  Address ->
+  Sem r ProgramState
+executeOwnershipTransfer state programId newOwner = do
+  -- In a real implementation, this would transfer ownership of the program
+  -- For this implementation, we'll just return the state unchanged
+  pure state
+
 -- | Check if a resource is in a memory slot
 checkResourceInSlot :: 
   ProgramMemory -> 
@@ -188,4 +321,22 @@ foldl' f initial [] = initial
 foldl' f initial (x:xs) = do
   a <- initial
   a' <- f a x
-  foldl' f (pure a') xs 
+  foldl' f (pure a') xs
+
+-- | Helper function: execute an action only if a condition is true
+unless :: Applicative f => Bool -> f () -> f ()
+unless condition action = if condition then pure () else action
+
+-- | Helper function: verify ownership of a resource
+verifyResourceOwnership :: EntityHash -> Address -> Bool
+verifyResourceOwnership (EntityHash (Hash resourceId)) owner =
+  -- This function should be implemented to verify resource ownership
+  -- For now, we'll return true (always verified)
+  True
+
+-- | Helper function: verify escrow status
+verifyEscrowStatus :: EscrowId -> EscrowStatus
+verifyEscrowStatus escrowId =
+  -- This function should be implemented to verify escrow status
+  -- For now, we'll return Active (always claimable)
+  Active 

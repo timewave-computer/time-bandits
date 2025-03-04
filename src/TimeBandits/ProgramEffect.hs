@@ -39,6 +39,15 @@ module TimeBandits.ProgramEffect
   -- * Effect Execution
   , executeEffect
   , executeGuardedEffect
+  
+  -- * Escrow Effects
+  , createEscrowEffect
+  , createClaimEffect
+  , createReleaseEffect
+  
+  -- * Ownership Effects
+  , createOwnershipTransferEffect
+  , createOwnershipVerificationEffect
   ) where
 
 import Data.ByteString (ByteString)
@@ -55,8 +64,21 @@ import TimeBandits.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource (Resource, Address, Amount, TokenId, ContractId, EscrowId)
-import TimeBandits.Program (ProgramId, MemorySlot, ProgramState, TimeMap)
+import TimeBandits.Resource 
+  ( Resource
+  , Address
+  , Amount
+  , TokenId
+  , ContractId
+  , EscrowId
+  , ClaimCondition(..)
+  )
+import TimeBandits.Program 
+  ( ProgramId
+  , MemorySlot
+  , ProgramState
+  , TimeMap
+  )
 import TimeBandits.Timeline (TimelineHash, TimelineClock(..))
 
 -- | Function name for program invocation
@@ -91,6 +113,14 @@ data Effect
   | CrossTimelineCall TimelineHash Effect
   | LogDiagnostic Text
   | AtomicBatch [Effect]
+  -- New effects for Phase 2
+  | CreateEscrow Resource Address Address ClaimCondition
+  | ClaimEscrow EscrowId Address ByteString
+  | ReleaseEscrow EscrowId Address
+  | TransferOwnership ProgramId Address  -- Transfer program ownership
+  | VerifyOwnership Resource Address    -- Verify resource ownership
+  | AuthorizeInvoker ProgramId Address  -- Authorize address to invoke program
+  | RevokeInvoker ProgramId Address     -- Revoke authorization
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
@@ -101,6 +131,11 @@ data Guard
   | ContractInState ContractId ByteString
   | ActorAuthorized Address Capability
   | TimeAfter LamportTime
+  | OwnershipVerified Resource Address
+  | ProgramOwnershipVerified ProgramId Address
+  | ResourceInSlot MemorySlot Resource
+  | SlotEmpty MemorySlot
+  | EscrowClaimable EscrowId Address
   | Always
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
@@ -141,6 +176,11 @@ checkGuard timeMap (TimeAfter requiredTime) = do
   -- Check if all timeline clocks are after the required time
   -- For now, just return True
   pure True
+checkGuard _ (OwnershipVerified _ _) = pure True  -- Would verify ownership
+checkGuard _ (ProgramOwnershipVerified _ _) = pure True  -- Would verify program ownership
+checkGuard _ (ResourceInSlot _ _) = pure True  -- Would check if resource is in slot
+checkGuard _ (SlotEmpty _) = pure True  -- Would check if slot is empty
+checkGuard _ (EscrowClaimable _ _) = pure True  -- Would check if escrow is claimable
 checkGuard _ _ = pure True  -- Other guards would be implemented in a real system
 
 -- | Create a guarded effect
@@ -175,3 +215,82 @@ executeGuardedEffect state (GuardedEffect guard effect) = do
   if guardHolds
     then executeEffect state effect
     else throw $ "Guard condition failed for effect" :: AppError 
+
+-- | Create an escrow effect with appropriate guards
+createEscrowEffect ::
+  (Member (Error AppError) r) =>
+  Resource ->            -- Resource to escrow
+  Address ->             -- Original owner
+  Address ->             -- Beneficiary who can claim
+  ClaimCondition ->      -- Condition for claiming
+  Sem r GuardedEffect
+createEscrowEffect resource owner beneficiary claimCondition = do
+  -- Create the escrow effect
+  let effect = CreateEscrow resource owner beneficiary claimCondition
+      -- Ownership of the resource must be verified
+      guard = OwnershipVerified resource owner
+  
+  -- Create and return the guarded effect
+  createGuardedEffect guard effect
+
+-- | Create a claim effect with appropriate guards
+createClaimEffect ::
+  (Member (Error AppError) r) =>
+  EscrowId ->           -- Escrow to claim
+  Address ->            -- Claimant address
+  ByteString ->         -- Proof data
+  Sem r GuardedEffect
+createClaimEffect escrowId claimant proofData = do
+  -- Create the claim effect
+  let effect = ClaimEscrow escrowId claimant proofData
+      -- The escrow must be claimable by the claimant
+      guard = EscrowClaimable escrowId claimant
+  
+  -- Create and return the guarded effect
+  createGuardedEffect guard effect
+
+-- | Create a release effect with appropriate guards
+createReleaseEffect ::
+  (Member (Error AppError) r) =>
+  EscrowId ->           -- Escrow to release
+  Address ->            -- Releaser address (must be owner)
+  Sem r GuardedEffect
+createReleaseEffect escrowId releaser = do
+  -- Create the release effect
+  let effect = ReleaseEscrow escrowId releaser
+      -- The escrow must exist
+      guard = EscrowExists escrowId
+  
+  -- Create and return the guarded effect
+  createGuardedEffect guard effect
+
+-- | Create an ownership transfer effect with appropriate guards
+createOwnershipTransferEffect ::
+  (Member (Error AppError) r) =>
+  ProgramId ->          -- Program to transfer
+  Address ->            -- New owner
+  Address ->            -- Current owner
+  Sem r GuardedEffect
+createOwnershipTransferEffect programId newOwner currentOwner = do
+  -- Create the ownership transfer effect
+  let effect = TransferOwnership programId newOwner
+      -- The current owner must be verified
+      guard = ProgramOwnershipVerified programId currentOwner
+  
+  -- Create and return the guarded effect
+  createGuardedEffect guard effect
+
+-- | Create an ownership verification effect
+createOwnershipVerificationEffect ::
+  (Member (Error AppError) r) =>
+  Resource ->           -- Resource to verify
+  Address ->            -- Expected owner
+  Sem r GuardedEffect
+createOwnershipVerificationEffect resource expectedOwner = do
+  -- Create the ownership verification effect
+  let effect = VerifyOwnership resource expectedOwner
+      -- Always allow this effect (it's just a verification)
+      guard = Always
+  
+  -- Create and return the guarded effect
+  createGuardedEffect guard effect 

@@ -29,12 +29,21 @@ module TimeBandits.Resource
   , Amount
   , EscrowId
   , ContractId
+  , Escrow(..)
+  , EscrowStatus(..)
+  , ClaimCondition(..)
   
   -- * Resource Operations
   , createResource
   , transferResource
   , consumeResource
   , verifyResourceOwnership
+  
+  -- * Escrow Operations
+  , escrowResource
+  , claimResource
+  , releaseResource
+  , verifyEscrowStatus
   
   -- * Re-exports from Types
   , ResourceHash
@@ -99,6 +108,37 @@ data Resource
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
+-- | Status of an escrowed resource
+data EscrowStatus
+  = Active        -- Actively held in escrow
+  | Claimed       -- Claimed by the beneficiary
+  | Released      -- Released back to the original owner
+  | Expired       -- Claim period expired
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Condition that must be met for a claim to succeed
+data ClaimCondition
+  = TimeBasedClaim LamportTime            -- Must be claimed before this time
+  | SignatureRequiredClaim ByteString     -- Must be signed by this key
+  | PredicateBasedClaim Text ByteString   -- Must satisfy a custom predicate
+  | AlwaysAllowed                         -- Can be claimed without condition
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Escrow represents a resource held in escrow
+data Escrow = Escrow
+  { escrowId :: EscrowId
+  , escrowedResource :: Resource
+  , originalOwner :: Address
+  , beneficiary :: Address
+  , claimCondition :: ClaimCondition
+  , escrowStatus :: EscrowStatus
+  , escrowTimestamp :: LamportTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
 -- | Create a new resource
 createResource :: 
   (Member (Error AppError) r) => 
@@ -139,7 +179,82 @@ verifyResourceOwnership ::
 verifyResourceOwnership resourceId expectedOwner = do
   -- In a real implementation, this would check if the address owns the resource
   -- For now, just return True
-  pure True 
+  pure True
+
+-- | Escrow a resource for potential claim by another address
+escrowResource ::
+  (Member (Error AppError) r) =>
+  Resource ->            -- Resource to escrow
+  Address ->             -- Original owner
+  Address ->             -- Beneficiary who can claim
+  ClaimCondition ->      -- Condition for claiming
+  Sem r Escrow
+escrowResource resource owner beneficiaryAddr claimCond = do
+  -- Generate a unique escrow ID
+  let escrowId = BS.pack $ "escrow-" ++ show (hash resource)
+      
+      -- Create the escrow with Active status
+      escrow = Escrow
+        { escrowId = escrowId
+        , escrowedResource = resource
+        , originalOwner = owner
+        , beneficiary = beneficiaryAddr
+        , claimCondition = claimCond
+        , escrowStatus = Active
+        , escrowTimestamp = LamportTime 0  -- Would be current time in real impl
+        }
+  
+  -- In a real implementation, this would store the escrow in a persistent store
+  -- For now, just return the created escrow
+  pure escrow
+
+-- | Claim an escrowed resource as the beneficiary
+claimResource ::
+  (Member (Error AppError) r) =>
+  EscrowId ->          -- ID of the escrow to claim
+  Address ->           -- Address claiming the resource
+  ByteString ->        -- Proof data (e.g., signature) if needed
+  Sem r Resource
+claimResource escrowId claimantAddr proofData = do
+  -- In a real implementation, this would:
+  -- 1. Look up the escrow by ID
+  -- 2. Verify the claimant is the beneficiary
+  -- 3. Verify the claim condition is met
+  -- 4. Update the escrow status to Claimed
+  -- 5. Return the claimed resource
+  
+  -- For now, create a synthetic resource to represent a claimed resource
+  pure $ SyntheticInternalMarker "claimed-resource"
+
+-- | Release an escrowed resource back to the original owner
+releaseResource ::
+  (Member (Error AppError) r) =>
+  EscrowId ->          -- ID of the escrow to release
+  Address ->           -- Address releasing the resource (must be owner or authorized)
+  Sem r Resource
+releaseResource escrowId releaserAddr = do
+  -- In a real implementation, this would:
+  -- 1. Look up the escrow by ID
+  -- 2. Verify the releaser is authorized
+  -- 3. Update the escrow status to Released
+  -- 4. Return the released resource to the original owner
+  
+  -- For now, create a synthetic resource to represent a released resource
+  pure $ SyntheticInternalMarker "released-resource"
+
+-- | Verify the status of an escrow
+verifyEscrowStatus ::
+  (Member (Error AppError) r) =>
+  EscrowId ->        -- ID of the escrow to check
+  Sem r EscrowStatus
+verifyEscrowStatus escrowId = do
+  -- In a real implementation, this would look up the escrow and return its status
+  -- For now, just return Active as a placeholder
+  pure Active
+
+-- | Helper function to hash a resource into a ByteString
+hash :: Resource -> ByteString
+hash resource = BS.pack $ show resource
 
 -- | Adapter functions for backward compatibility with old Effects interface
 
