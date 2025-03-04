@@ -144,190 +144,218 @@ After implementing the program invocation and resource ownership model:
 - Ensure all resource transfers go through the escrow mechanism
 - Update tests to use the new escrow/claim pattern
 
-## Phase 3: Implement Time Maps & Lamport Clocks
+## Phase 3: Implement Time Maps & Transition Messages
 
-**Goal**: Ensure programs execute in causal order across timelines.
+**Goal**: Ensure programs execute in causal order across timelines with proper authorization and proof.
 
-### Step 3.1 Introduce LamportClock.hs
+### Step 3.1 Implement Time Maps for Cross-Timeline Consistency
 
-- Track logical time per timeline and per program.
-- Enforce strict happens-before ordering for all invocations.
-
-```haskell
-data LamportClock = LamportClock { counter :: Int }
-
-incrementLamport :: LamportClock -> LamportClock
-incrementLamport (LamportClock c) = LamportClock (c + 1)
-```
-
-### Step 3.2 Implement TimeMap.hs to Track Cross-Timeline State
-
-- Maintain a snapshot of multiple timelines.
-- Programs execute against a consistent time map.
+- Maintain a snapshot of multiple timelines with their latest state
+- Track Lamport clocks for logical time ordering
+- Ensure programs always observe strictly advancing time maps
 
 ```haskell
 data TimeMap = TimeMap 
     { timelines :: Map TimelineId LamportClock
     , observedHeads :: Map TimelineId BlockHeader 
+    , observedTimestamps :: Map TimelineId UTCTime
     }
 ```
 
-### Step 3.3 Integrate Time Map Checks in EffectExecutor.hs
+### Step 3.2 Implement TransitionMessage for Program Execution
 
-- Before executing an effect, verify that time constraints hold.
+- All program transitions must be triggered by a TransitionMessage
+- Messages include proof of resource control and guard validation
+- Each message links to its causal parent (previous effect)
 
 ```haskell
-applyEffect state (InvokeProgram pid fn args) = do
-    ensureCausalOrder state.pid fn args
-    executeProgram pid fn args state
+data TransitionMessage = TransitionMessage 
+    { programId :: ProgramId 
+    , stepIndex :: Int 
+    , parentEffectHash :: Hash 
+    , proof :: ZKProof  -- For validating guard conditions
+    , resources :: [Resource]  -- Resources being used
+    }
+```
+
+### Step 3.3 Implement Execution Log for Applied Effects
+
+- Every applied effect produces a log entry for auditability
+- Log entries are content-addressed and causally linked
+- The execution log is fully replayable
+
+```haskell
+data LogEntry = LogEntry 
+    { effect :: Effect 
+    , appliedAt :: UTCTime 
+    , causalParent :: Hash 
+    , resultingStateHash :: Hash 
+    }
 ```
 
 ### Step 3.4 Cleanup After Phase 3
 
-After implementing time maps and Lamport clocks:
+After implementing time maps and transition messages:
 
 **Timeline Consistency Cleanup**:
-- Migrate existing timeline logic to use the new Lamport clock implementation
+- Migrate existing timeline logic to use the new TimeMap implementation
 - Update any code that relies on timeline-specific time ordering
 - Ensure all cross-timeline operations respect causal ordering
 
-**TimeMap Integration**:
-- Update effect executor to use TimeMap for all executions
-- Migrate any code that directly accesses timeline state
-- Update tests to verify causal ordering guarantees
+**Transition Message Integration**:
+- Replace direct effect execution with TransitionMessage validation
+- Update the EffectExecutor to verify proofs and resource ownership
+- Update tests to use transition messages for program advancement
 
-## Phase 4: Implement Multi-Mode Simulation
+## Phase 4: Implement Controller & Multi-Mode Simulation
 
-**Goal**: Support in-memory, local multi-process, and geo-distributed execution.
+**Goal**: Support different deployment modes with consistent controller behavior.
 
 ### Step 4.1 Implement Controller (Controller.hs)
 
-- Decides execution mode (InMemory | LocalProcesses | GeoDistributed).
-- Starts actors in the correct way (function call, process spawn, SSH).
+- Enforces system contract regardless of deployment mode
+- Handles transition message validation, effect application, and time map updates
+- Maintains the append-only execution log
 
 ```haskell
+data Controller = Controller 
+    { mode :: SimulationMode
+    , timeMap :: TimeMap
+    , executionLog :: [LogEntry]
+    }
+
 data SimulationMode = InMemory | LocalProcesses | GeoDistributed
 
-runSimulation :: SimulationMode -> Scenario -> IO ()
-runSimulation mode scenario = case mode of
-    InMemory -> runInMemory scenario
-    LocalProcesses -> runLocally scenario
-    GeoDistributed -> runGeoDistributed scenario
+runController :: Controller -> TransitionMessage -> IO (Either ExecutionError (Controller, ProgramState))
+runController controller msg = do
+    -- Validate message (signature, proof, resources)
+    -- Apply effect and update program state
+    -- Update time map and append to execution log
+    pure $ Right (updatedController, newProgramState)
 ```
 
-### Step 4.2 Implement Actor Abstraction
+### Step 4.2 Implement Actor Abstraction for Different Modes
 
-- All actors implement the same interface, whether in-memory or spawned as a process.
+- All actors implement the same interface, regardless of deployment mode
+- In-memory: Actors are Haskell functions in the same process
+- Local multi-process: Actors run in separate processes with Unix socket messaging
+- Geo-distributed: Actors run on remote machines with TCP/RPC messaging
 
 ```haskell
 class Actor a where
     runActor :: a -> IO ()
     actorId :: a -> ActorID
+    sendMessage :: a -> TransitionMessage -> IO ()
+    receiveMessage :: a -> IO (Maybe TransitionMessage)
 ```
 
-### Step 4.3 Implement Scenario.hs for Defining Simulations
+### Step 4.3 Implement Deployment for Different Modes
 
-- Scenarios define actors, their roles, and execution mode (TOML-based).
-
-Example scenario:
-
-```TOML
-mode = "LocalProcesses"
-actors = [
-  { id = "trader1", type = "Trader" },
-  { id = "pricefeed1", type = "PriceFeed" }
-]
-```
-
-### Step 4.4 Implement Nix Flakes for Actors & Controller
-
-- Each actor is a standalone flake.
-- The controller aggregates and launches them.
-
-```nix
-{
-  description = "Time Bandits Simulation";
-
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    trader.url = "./simulation/actors/trader";
-    pricefeed.url = "./simulation/actors/pricefeed";
-    controller.url = "./simulation/controller";
-  };
-
-  outputs = { self, nixpkgs, trader, pricefeed, controller }:
-  let
-    pkgs = import nixpkgs { system = "x86_64-linux"; };
-  in {
-    packages = {
-      inherit (trader.packages) default;
-      inherit (pricefeed.packages) default;
-      inherit (controller.packages) default;
-    };
-  };
-}
-```
-
-### Step 4.5 Implement Geo-Distributed Deployment (Deploy.hs)
-
-- Allows spawning remote actors via SSH.
+- In-memory: Direct function calls with in-memory queues
+- Local multi-process: Spawn processes with Nix and communicate via Unix sockets
+- Geo-distributed: Remote execution via SSH with TCP or external RPC
 
 ```haskell
-startActorRemote :: ActorSpec -> IO ()
-startActorRemote spec = do
-    let host = lookupHostForActor (actorId spec)
-    _ <- spawnProcess "ssh" [host, "nix run", flakeForActorType (actorType spec)]
-    pure ()
+deployActor :: SimulationMode -> ActorSpec -> IO ActorHandle
+deployActor InMemory spec = deployInMemoryActor spec
+deployActor LocalProcesses spec = deployLocalActor spec
+deployActor GeoDistributed spec = deployRemoteActor spec
 ```
 
-### Step 4.6 Cleanup After Phase 4
+### Step 4.4 Implement Scenario Definition with TOML
 
-After implementing multi-mode simulation:
-
-**Actor Abstraction Cleanup**:
-- Migrate any actor-specific code to use the new abstraction
-- Update any hard-coded actor implementations to use the common interface
-- Ensure all simulation modes work with the same codebase
-
-**Deployment Cleanup**:
-- Remove any old deployment scripts that are replaced by the Nix flake system
-- Update documentation to reflect the new deployment approach
-
-## Phase 5: Implement Final Security & Invariant Checks
-
-**Goal**: Enforce system-level safety guarantees.
-
-### Step 5.1 Enforce Single-Owner Rule in ProgramMemory.hs
-
-- Only one program can hold a resource at a time.
+- Define actors, their roles, and initial program deployments
+- Specify the simulation mode
+- Configure communication channels and deployment targets
 
 ```haskell
-validateOwnership :: ProgramMemory -> Resource -> Either ExecutionError ()
-validateOwnership mem res = 
-    if res `elem` (elems (slots mem))
-        then Left DoubleSpend
-        else Right ()
+loadScenario :: FilePath -> IO Scenario
+loadScenario path = do
+    toml <- readFile path
+    parseScenario toml
 ```
 
-### Step 5.2 Implement Replayable Execution Checks in Verifier.hs
+### Step 4.5 Cleanup After Phase 4
+
+After implementing the controller and multi-mode simulation:
+
+**Controller Integration**:
+- Update any code that directly applies effects to use the controller
+- Ensure all program execution happens through TransitionMessages
+- Update tests to verify controller behavior in different modes
+
+**Actor Implementation Cleanup**:
+- Migrate any actor-specific code to use the common abstraction
+- Update deployment scripts to work with the new modes
+- Ensure backwards compatibility during the transition
+
+## Phase 5: Implement Security & Invariant Checks
+
+**Goal**: Enforce the system contract's security properties and invariants.
+
+### Step 5.1 Implement Ownership Verification
+
+- Ensure each resource has exactly one owner at any time
+- Enforce that only authorized programs can access resources
+- Verify ownership transfer through proper escrow and claim operations
 
 ```haskell
-verifyCausalOrder :: ExecutionLog -> Bool
-verifyCausalOrder log = all isValidCausalRelation (generatePairs log)
+verifyOwnership :: Resource -> Address -> Either SecurityError ()
+verifyOwnership res addr =
+    if resourceOwner res == addr
+        then Right ()
+        else Left $ OwnershipVerificationFailed res addr
 ```
 
-### Step 5.3 Implement Security Property Tests
+### Step 5.2 Implement Causal Order Verification
 
-**Property: No Double Spend**
-- Verify validateOwnership prevents reuse.
+- Ensure time maps always advance monotonically
+- Verify that cross-timeline events respect logical clock ordering
+- Prevent backdated transitions with stale time maps
 
-**Property: No Implicit Invocation**
-- Ensure all program calls happen via InvokeProgram.
+```haskell
+verifyCausalOrder :: TimeMap -> TimeMap -> Either SecurityError ()
+verifyCausalOrder oldMap newMap =
+    if allTimelinesCausallyAdvanced oldMap newMap
+        then Right ()
+        else Left CausalOrderViolation
+```
 
-**Property: No Causal Violations**
-- Ensure all execution logs respect LamportClock order.
+### Step 5.3 Implement ZK Proof Generation and Verification
 
-### Step 5.4 Final Cleanup
+- Generate zero-knowledge proofs for guard conditions
+- Verify proofs before applying effects
+- Ensure all transitions carry valid proofs
+
+```haskell
+generateProof :: Guard -> Resource -> IO ZKProof
+generateProof guard res = -- Implementation depends on specific ZK system
+
+verifyProof :: ZKProof -> Guard -> Resource -> IO Bool
+verifyProof proof guard res = -- Implementation depends on specific ZK system
+```
+
+### Step 5.4 Implement System-Level Security Properties
+
+- Double-spend prevention through single-owner rule
+- Reentrancy prevention through Lamport clocks
+- Traceability through complete audit trail
+- Prevention of backdated transitions through time map enforcement
+
+```haskell
+data SecurityProperty
+    = NoDoubleSpend
+    | NoReentrancy
+    | FullTraceability
+    | NoBackdating
+
+verifySecurityProperty :: SecurityProperty -> ExecutionLog -> Either SecurityError ()
+verifySecurityProperty NoDoubleSpend log = -- Verify no resource is used twice
+verifySecurityProperty NoReentrancy log = -- Verify no cycles in the execution graph
+-- etc.
+```
+
+### Step 5.5 Final Cleanup
 
 After implementing all security and invariant checks:
 
@@ -343,17 +371,20 @@ After implementing all security and invariant checks:
 
 ## Final Deliverables
 
-- Timeline.hs
-- Resource.hs
-- Program.hs
-- Effect.hs
-- EffectExecutor.hs
-- InvokeProgram.hs
-- LamportClock.hs
-- TimeMap.hs
-- Controller.hs
-- Scenario.hs
-- Deploy.hs
+- Timeline.hs - Causally ordered event streams with own consistency models
+- TimeMap.hs - Cross-timeline state tracking with Lamport clocks
+- Resource.hs - Program-owned state with ownership tracking
+- Program.hs - Program state and memory with resource contracts
+- ProgramEffect.hs - Explicit effects with guards
+- EffectExecutor.hs - Effect application with invariant checking
+- Controller.hs - System contract enforcement across simulation modes
+- TransitionMessage.hs - Proof-carrying program transitions
+- ExecutionLog.hs - Append-only, causally linked effect log
+- Actor.hs - Common actor interface for all modes
+- Deploy.hs - Multi-mode deployment system
+- Scenario.hs - Scenario definition and parsing
+- ZKProof.hs - Zero-knowledge proof generation and verification
+- SecurityVerifier.hs - System-level security property verification
 - Nix flakes for per-actor builds
 - TOML-based scenario files
 
