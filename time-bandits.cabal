@@ -96,6 +96,12 @@ library
     TimeBandits.Timeline
     TimeBandits.Types
     TimeBandits.Utils
+    TimeBandits.TransitionMessage
+    TimeBandits.ExecutionLog
+    TimeBandits.Controller
+    TimeBandits.Actor
+    TimeBandits.Deployment
+    TimeBandits.Scenario
 
 executable time-bandits
   import:         shared
@@ -111,9 +117,10 @@ test-suite time-bandits-test
   default-language: GHC2021
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
-  main-is:          Main.hs
+  main-is:          Spec.hs
   other-modules:    SimpleNetworkConfig
                    , TimelineScenarioTest
+                   , ControllerTest
   build-depends:    base >= 4.16 && < 5,
                    time-bandits,
                    polysemy,

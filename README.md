@@ -1,57 +1,143 @@
 # Time Bandits
 
-![Time Bandits](./map_of_time.png)
-
-Time Bandits is a distributed system for coordinating resources across different timelines i.e. blockchains.
-Naming is in reference to the 1981 Terry Gilliam film, [Time Bandits](https://en.wikipedia.org/wiki/Time_Bandits).
-The system allows "time travellers" to write distributed programs that interact with multiple timelines at once.
-
-This is a protoype for working through various ideas about how to write a secure distribtued programming language as the composition of algebraic effects, along with the supporting P2P architecture.
+A Haskell library for distributed time travel.
 
 ## Overview
 
-### Actors
-- Time Traveler: Users who can deploy programs to travel across time
-- Time Bandit: Nodes that perform P2P transport of light client proofs (+ eventually execution proofs)
-- Time Keeper: Entities that sign-off on updates to a designated timeline (light clients)
+Time Bandits is a framework for creating distributed programs that execute across multiple timelines with explicit ownership tracking. It enables the safe and verifiable transfer of resources between programs, providing clear tracking of causality and resource ownership.
 
-### Data structures
-- Hash-linked append-only logs
-- Content addressed identities, types, messages, and data
-- Commitments to partially ordered state per timeline are represented via trie
+The framework's core abstractions are:
 
-### Lamport Clocks
-- Used for causal ordering
-- Each timeline and program has its own lamport clock
-- The Map of Time is a partial order of all timelines, syncronized by cross-timeline messages
+- **Programs**: Stateful, resource-owning entities that execute according to defined rules
+- **Resources**: Explicit state objects owned by programs that can be transferred between them
+- **Timelines**: Causally ordered event streams with their own consistency models
+- **Actors**: Entities that interact with the system by submitting messages
+- **Controllers**: Entities that enforce the system contract and validate transitions
 
-### P2P + Transient Storage
-- Uses rendezvous hashing with a replication factor
-- Time Bandit nodes subscribe to timelines to provide program I/O
-- All messages are cryptographically signed
+## Architecture
 
-### Sharded On-chain Storage
-- Each timeline maintains its own event trie, updated by Time Bandits
-- All events are hash linked and content addressed
-- "Map of Time" registers actors, resources, and programs
+The Time Bandits architecture has several core abstractions:
 
-### Resource Management
-- UTXO-like resource system
-- Tracks ownership and metadata with append-only log
+- **Programs** have state and memory with explicit resource contracts
+- **Resources** are owned by programs and can be transferred between them
+- **Timelines** are causally ordered event streams with their own consistency models
+- **Effects** are explicit operations that programs can perform
+- **Controllers** enforce the system contract across different simulation modes
 
-### Effect System
+All operations follow a strict contract:
+1. Each program transition is triggered by a TransitionMessage
+2. Messages include proof of resource control and guard validation
+3. Applied effects produce entries in an append-only execution log
+4. All resource ownership is tracked explicitly
 
-The application uses a composable effect system built with Polysemy, which allows for separation of concerns via type-safe handling of side effects.
+## Actor Roles
 
-TA modular interpreter system allows for configurable trace logging, selective effect inclusion/exclusion, and consistent ordering of interpreters.
+Time Bandits defines three specialized actor roles:
 
-Trace configuration:
+### Time Travelers
 
-- `NoTracing` - Disable all trace logs
-- `SimpleTracing` - Enable standard trace logs
-- `VerboseTracing` - Enable detailed trace logs with timestamps
+Time Travelers are the primary users of the system and have the following responsibilities:
+- Creating and deploying new programs with initial time maps
+- Submitting TransitionMessage objects to advance program state
+- Querying program states and timeline information
+- Managing resource ownership and transfers
 
-The verbose tracing mode adds timestamps to each trace message, providing more detailed context about when each operation occurs. This is particularly useful for debugging timing issues or understanding the sequence of operations.
+Time Travelers interact with programs by creating transition messages that represent desired state changes. Each transition must be validated by Time Keepers before it can be applied.
+
+### Time Keepers
+
+Time Keepers are responsible for maintaining the integrity of timelines:
+- Validating incoming transition messages against timeline rules
+- Accepting or rejecting messages based on their validity
+- Providing timeline state queries to authorized actors
+- Enforcing consistency rules within and across timelines
+
+Time Keepers act as the trusted authority for timelines, ensuring that all state transitions follow the system's rules and maintain causal consistency.
+
+### Time Bandits
+
+Time Bandits operate the underlying P2P network:
+- Executing programs and generating cryptographic proofs
+- Maintaining the execution log across the distributed network
+- Facilitating communication between system components
+- Providing the infrastructure for distributed execution
+
+Time Bandits work behind the scenes to ensure the system runs smoothly, generating the cryptographic proofs needed to verify program execution and maintaining the distributed log of all operations.
+
+## Simulation Modes
+
+The system supports three simulation modes:
+
+1. **In-Memory Mode**: All actors run in the same process for rapid testing and development
+2. **Local Multi-Process Mode**: Actors run in separate processes on the same machine, communicating via IPC
+3. **Geo-Distributed Mode**: Actors run on separate machines, communicating over the network
+
+## Getting Started
+
+### Prerequisites
+
+- GHC 9.4 or later
+- Cabal 3.6 or later
+- Nix with flakes enabled (for multi-process mode)
+
+### Building
+
+```bash
+cabal build
+```
+
+### Running
+
+```bash
+cabal run time-bandits -- --scenario examples/resource_transfer.toml
+```
+
+### Testing
+
+```bash
+cabal test
+```
+
+## Example Scenario
+
+Here's an example of a scenario defined using TOML files:
+
+```toml
+# resource_transfer.toml
+[scenario]
+name = "Resource Transfer Example"
+mode = "LocalProcesses"
+
+[[time_travelers]]
+id = "alice"
+capabilities = ["ResourceCreation", "ResourceTransfer"]
+resources = ["resource_1", "resource_2"]
+
+[[time_travelers]]
+id = "bob"
+capabilities = ["ResourceReceive"]
+resources = []
+
+[[time_keepers]]
+id = "ethereum_keeper"
+timelines = ["ethereum_main"]
+validation_rules = ["EthereumValidation"]
+
+[[time_bandits]]
+id = "node_1"
+network_role = "Executor"
+proof_generators = ["ZkResourceTransfer"]
+
+[programs.escrow]
+type = "EscrowProgram"
+initial_state = { locked = false }
+```
+
+This scenario defines a simple resource transfer between two Time Travelers, with a Time Keeper validating the transfer and a Time Bandit executing the program and generating proofs.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
 
 ```haskell
 -- | Interpreter configuration for controlling effect inclusion
