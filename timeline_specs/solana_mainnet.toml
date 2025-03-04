@@ -1,0 +1,34 @@
+# Solana Mainnet Timeline Descriptor
+
+[timeline]
+id = "solana-mainnet"
+name = "Solana Mainnet"
+vm_type = "Solana"
+clock_type = "SlotNumber"
+
+[endpoint]
+primary = "https://api.mainnet-beta.solana.com"
+backups = ["https://solana-api.projectserum.com"]
+rate_limit = 200
+timeout = 15000
+
+[effect_mappings.transfer_asset]
+name = "SPLTransfer"
+contract = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+function = "transfer"
+retries = 3
+
+[effect_mappings.query_state]
+name = "AccountInfo"
+function = "getAccountInfo"
+retries = 3
+
+[effect_mappings.update_state]
+name = "ProgramCall"
+contract = "ProgramAddress"
+function = "instruction"
+retries = 3
+
+[metadata]
+commitment = "confirmed"
+skip_preflight = "true" 

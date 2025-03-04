@@ -1,0 +1,288 @@
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+{- |
+This module provides the TimelineDescriptor system, which defines formal configurations
+for various timeline types (blockchains, rollups, event logs) and how effects are mapped
+to appropriate handlers for each timeline.
+
+TimelineDescriptors are loaded from TOML configuration files and provide a standardized
+way to interact with different timelines across the system.
+-}
+module TimeBandits.TimelineDescriptor
+  ( -- * Core Types
+    TimelineDescriptor(..)
+  , VMType(..)
+  , EffectHandlerSpec(..)
+  , EndpointConfig(..)
+  , ClockType(..)
+  
+  -- * Descriptor Operations
+  , loadDescriptor
+  , parseDescriptor
+  , validateDescriptor
+  
+  -- * Handler Resolution
+  , resolveEffectHandler
+  , createTimelineAdapter
+  
+  -- * Configuration
+  , defaultEndpointConfig
+  ) where
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BS
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Serialize (Serialize)
+import GHC.Generics (Generic)
+import Polysemy (Member, Sem)
+import Polysemy.Error (Error, throw)
+import Polysemy.Embed (Embed)
+
+-- Import from TimeBandits modules
+import TimeBandits.Core (Hash, EntityHash(..))
+import TimeBandits.Types (AppError(..), ProgramErrorType(..))
+import TimeBandits.Timeline (TimelineHash)
+import TimeBandits.ProgramEffect (EffectType(..))
+
+-- | Virtual Machine types supported by timelines
+data VMType
+  = EVM        -- ^ Ethereum Virtual Machine
+  | CosmWasm   -- ^ CosmWasm (Cosmos ecosystem)
+  | MoveVM     -- ^ Move VM (Sui, Aptos)
+  | Solana     -- ^ Solana Programs
+  | Native     -- ^ Native Haskell implementation (off-chain)
+  | MockVM     -- ^ Mock VM for testing
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Clock types for different timelines
+data ClockType
+  = BlockHeight   -- ^ Block number/height based
+  | SlotNumber    -- ^ Slot number based
+  | Timestamp     -- ^ Timestamp based
+  | LamportClock  -- ^ Logical Lamport clock
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Configuration for timeline endpoints
+data EndpointConfig = EndpointConfig
+  { ecPrimary :: ByteString           -- ^ Primary RPC endpoint
+  , ecBackups :: [ByteString]         -- ^ Backup RPC endpoints
+  , ecWebhook :: Maybe ByteString     -- ^ Optional webhook for event notifications
+  , ecApiKey :: Maybe ByteString      -- ^ Optional API key
+  , ecRateLimit :: Int                -- ^ Rate limit (requests per minute)
+  , ecTimeout :: Int                  -- ^ Timeout in milliseconds
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Default endpoint configuration
+defaultEndpointConfig :: EndpointConfig
+defaultEndpointConfig = EndpointConfig
+  { ecPrimary = "http://localhost:8545"
+  , ecBackups = []
+  , ecWebhook = Nothing
+  , ecApiKey = Nothing
+  , ecRateLimit = 100
+  , ecTimeout = 30000
+  }
+
+-- | Specification for an effect handler
+data EffectHandlerSpec = EffectHandlerSpec
+  { ehsName :: ByteString             -- ^ Handler name
+  , ehsContract :: Maybe ByteString   -- ^ Contract address (if applicable)
+  , ehsFunction :: ByteString         -- ^ Function name or identifier
+  , ehsAbi :: Maybe ByteString        -- ^ ABI or interface definition
+  , ehsGasLimit :: Maybe Int          -- ^ Gas limit (if applicable)
+  , ehsRetries :: Int                 -- ^ Number of retries on failure
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Timeline descriptor defining a timeline's properties and effect mappings
+data TimelineDescriptor = TimelineDescriptor
+  { tdId :: TimelineHash              -- ^ Unique timeline identifier
+  , tdName :: ByteString              -- ^ Human-readable name
+  , tdVmType :: VMType                -- ^ Virtual machine type
+  , tdClockType :: ClockType          -- ^ Clock type
+  , tdEndpoint :: EndpointConfig      -- ^ RPC endpoint configuration
+  , tdEffectMappings :: Map EffectType EffectHandlerSpec  -- ^ Effect to handler mappings
+  , tdMetadata :: Map ByteString ByteString  -- ^ Additional metadata
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Load a timeline descriptor from a TOML file
+loadDescriptor :: 
+  (Member (Error AppError) r, Member (Embed IO) r) => 
+  FilePath -> 
+  Sem r TimelineDescriptor
+loadDescriptor filePath = do
+  -- In a real implementation, this would parse a TOML file
+  -- For now, we'll return a mock descriptor based on the file name
+  
+  if "ethereum" `BS.isInfixOf` BS.pack filePath
+    then pure $ createEthereumDescriptor
+    else if "solana" `BS.isInfixOf` BS.pack filePath
+      then pure $ createSolanaDescriptor
+      else throw $ ProgramError $ InvalidConfiguration $ "Unknown timeline type: " <> filePath
+
+-- | Parse a timeline descriptor from ByteString (TOML content)
+parseDescriptor :: 
+  (Member (Error AppError) r) => 
+  ByteString -> 
+  Sem r TimelineDescriptor
+parseDescriptor content = do
+  -- In a real implementation, this would parse TOML content
+  -- For now, return a mock descriptor based on content
+  
+  if "ethereum" `BS.isInfixOf` content
+    then pure $ createEthereumDescriptor
+    else if "solana" `BS.isInfixOf` content
+      then pure $ createSolanaDescriptor
+      else throw $ ProgramError $ InvalidConfiguration $ "Unknown timeline configuration"
+
+-- | Validate a timeline descriptor
+validateDescriptor :: 
+  (Member (Error AppError) r) => 
+  TimelineDescriptor -> 
+  Sem r Bool
+validateDescriptor descriptor = do
+  -- Verify that required effect handlers are mapped
+  let requiredEffects = [TransferAsset, QueryState, UpdateState]
+      mappedEffects = Map.keysSet (tdEffectMappings descriptor)
+      missingEffects = filter (\e -> e `notElem` mappedEffects) requiredEffects
+  
+  if null missingEffects
+    then pure True
+    else throw $ ProgramError $ InvalidConfiguration $ 
+         "Missing required effect handlers: " <> show missingEffects
+
+-- | Resolve an effect handler for a specific effect type
+resolveEffectHandler :: 
+  (Member (Error AppError) r) => 
+  TimelineDescriptor -> 
+  EffectType -> 
+  Sem r EffectHandlerSpec
+resolveEffectHandler descriptor effectType = do
+  case Map.lookup effectType (tdEffectMappings descriptor) of
+    Just handlerSpec -> pure handlerSpec
+    Nothing -> throw $ ProgramError $ InvalidConfiguration $ 
+              "No handler found for effect: " <> show effectType
+
+-- | Create a timeline adapter from a descriptor
+-- This is a factory function that will create the appropriate adapter
+-- implementation based on the timeline type
+createTimelineAdapter :: 
+  (Member (Error AppError) r) => 
+  TimelineDescriptor -> 
+  Sem r ByteString
+createTimelineAdapter descriptor = do
+  -- In a real implementation, this would instantiate an adapter class
+  -- For now, return a mock adapter name
+  pure $ "Adapter for " <> tdName descriptor
+
+-- | Create a mock Ethereum descriptor
+createEthereumDescriptor :: TimelineDescriptor
+createEthereumDescriptor = TimelineDescriptor
+  { tdId = EntityHash $ Hash "ethereum-mainnet"
+  , tdName = "Ethereum Mainnet"
+  , tdVmType = EVM
+  , tdClockType = BlockHeight
+  , tdEndpoint = EndpointConfig
+      { ecPrimary = "https://mainnet.infura.io/v3/YOUR_API_KEY"
+      , ecBackups = ["https://eth-mainnet.alchemyapi.io/v2/YOUR_API_KEY"]
+      , ecWebhook = Just "https://webhook.example.com/eth-events"
+      , ecApiKey = Just "YOUR_API_KEY"
+      , ecRateLimit = 100
+      , ecTimeout = 30000
+      }
+  , tdEffectMappings = Map.fromList
+      [ (TransferAsset, EffectHandlerSpec
+          { ehsName = "ERC20Transfer"
+          , ehsContract = Just "0xTokenAddress"
+          , ehsFunction = "transfer"
+          , ehsAbi = Just "[{\"inputs\":[{\"name\":\"recipient\",\"type\":\"address\"},{\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"transfer\",\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+          , ehsGasLimit = Just 100000
+          , ehsRetries = 3
+          })
+      , (QueryState, EffectHandlerSpec
+          { ehsName = "ERC20Balance"
+          , ehsContract = Just "0xTokenAddress"
+          , ehsFunction = "balanceOf"
+          , ehsAbi = Just "[{\"inputs\":[{\"name\":\"account\",\"type\":\"address\"}],\"name\":\"balanceOf\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]"
+          , ehsGasLimit = Nothing
+          , ehsRetries = 3
+          })
+      , (UpdateState, EffectHandlerSpec
+          { ehsName = "ContractCall"
+          , ehsContract = Just "0xContractAddress"
+          , ehsFunction = "updateState"
+          , ehsAbi = Just "[{\"inputs\":[{\"name\":\"newState\",\"type\":\"bytes\"}],\"name\":\"updateState\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+          , ehsGasLimit = Just 200000
+          , ehsRetries = 3
+          })
+      ]
+  , tdMetadata = Map.fromList
+      [ ("chainId", "1")
+      , ("blockTime", "12")
+      , ("confirmations", "12")
+      ]
+  }
+
+-- | Create a mock Solana descriptor
+createSolanaDescriptor :: TimelineDescriptor
+createSolanaDescriptor = TimelineDescriptor
+  { tdId = EntityHash $ Hash "solana-mainnet"
+  , tdName = "Solana Mainnet"
+  , tdVmType = Solana
+  , tdClockType = SlotNumber
+  , tdEndpoint = EndpointConfig
+      { ecPrimary = "https://api.mainnet-beta.solana.com"
+      , ecBackups = ["https://solana-api.projectserum.com"]
+      , ecWebhook = Nothing
+      , ecApiKey = Nothing
+      , ecRateLimit = 200
+      , ecTimeout = 15000
+      }
+  , tdEffectMappings = Map.fromList
+      [ (TransferAsset, EffectHandlerSpec
+          { ehsName = "SPLTransfer"
+          , ehsContract = Just "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          , ehsFunction = "transfer"
+          , ehsAbi = Nothing
+          , ehsGasLimit = Nothing
+          , ehsRetries = 3
+          })
+      , (QueryState, EffectHandlerSpec
+          { ehsName = "AccountInfo"
+          , ehsContract = Nothing
+          , ehsFunction = "getAccountInfo"
+          , ehsAbi = Nothing
+          , ehsGasLimit = Nothing
+          , ehsRetries = 3
+          })
+      , (UpdateState, EffectHandlerSpec
+          { ehsName = "ProgramCall"
+          , ehsContract = Just "ProgramAddress"
+          , ehsFunction = "instruction"
+          , ehsAbi = Nothing
+          , ehsGasLimit = Nothing
+          , ehsRetries = 3
+          })
+      ]
+  , tdMetadata = Map.fromList
+      [ ("commitment", "confirmed")
+      , ("skipPreflight", "true")
+      ]
+  } 

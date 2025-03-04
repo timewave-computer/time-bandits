@@ -1,0 +1,120 @@
+# Ethereum Timeline Descriptor
+# This file defines the properties and interfaces for the Ethereum timeline
+
+[timeline]
+id = "ethereum-mainnet"
+name = "Ethereum Mainnet"
+type = "blockchain"
+version = "1.0.0"
+description = """
+Ethereum mainnet timeline descriptor for Time Bandits.
+This descriptor defines the interfaces for interacting with Ethereum,
+including effect adapters, proof adapters, and validation rules.
+"""
+
+[properties]
+consensus = "proof-of-stake"
+block_time = 12
+finality = "probabilistic"
+native_token = "ETH"
+chain_id = 1
+
+[clock]
+type = "BlockHeight"
+genesis_timestamp = "2015-07-30T00:00:00Z"
+target_block_time_seconds = 12
+
+[effect_adapters]
+# Define effect adapters for Ethereum
+[effect_adapters.transfer]
+name = "EthereumTransfer"
+description = "Transfer ETH or ERC20 tokens between addresses"
+function = "transferTokens"
+inputs = ["address:from", "address:to", "uint256:amount", "address:token?"]
+outputs = ["bool:success", "bytes32:txHash"]
+
+[effect_adapters.contract_call]
+name = "EthereumContractCall"
+description = "Call a smart contract method"
+function = "callContract"
+inputs = ["address:contract", "bytes:calldata", "uint256:value?"]
+outputs = ["bytes:result", "bytes32:txHash"]
+
+[effect_adapters.deploy_contract]
+name = "EthereumDeployContract"
+description = "Deploy a new smart contract"
+function = "deployContract"
+inputs = ["bytes:bytecode", "bytes:constructorArgs?", "uint256:value?"]
+outputs = ["address:contractAddress", "bytes32:txHash"]
+
+[proof_adapters]
+# Define proof adapters for Ethereum
+[proof_adapters.transaction_proof]
+name = "EthereumTransactionProof"
+description = "Generate and verify proofs of Ethereum transactions"
+proof_type = "transaction"
+generate_function = "generateTransactionProof"
+verify_function = "verifyTransactionProof"
+inputs = ["bytes32:txHash", "uint256:confirmations?"]
+outputs = ["bytes:proof"]
+
+[proof_adapters.state_proof]
+name = "EthereumStateProof"
+description = "Generate and verify proofs of Ethereum state"
+proof_type = "state"
+generate_function = "generateStateProof"
+verify_function = "verifyStateProof"
+inputs = ["address:account", "bytes32:storageSlot?", "uint256:blockNumber?"]
+outputs = ["bytes:proof"]
+
+[proof_adapters.receipt_proof]
+name = "EthereumReceiptProof"
+description = "Generate and verify proofs of Ethereum transaction receipts"
+proof_type = "receipt"
+generate_function = "generateReceiptProof"
+verify_function = "verifyReceiptProof"
+inputs = ["bytes32:txHash"]
+outputs = ["bytes:proof"]
+
+[validation_rules]
+# Define validation rules for Ethereum
+[validation_rules.transaction]
+name = "EthereumTransactionValidation"
+description = "Validate Ethereum transactions"
+rule_type = "transaction"
+function = "validateTransaction"
+inputs = ["bytes:transaction"]
+outputs = ["bool:valid", "string:error?"]
+
+[validation_rules.state]
+name = "EthereumStateValidation"
+description = "Validate Ethereum state transitions"
+rule_type = "state"
+function = "validateStateTransition"
+inputs = ["bytes:oldState", "bytes:newState", "bytes:transition"]
+outputs = ["bool:valid", "string:error?"]
+
+[validation_rules.ownership]
+name = "EthereumOwnershipValidation"
+description = "Validate ownership of Ethereum resources"
+rule_type = "ownership"
+function = "validateOwnership"
+inputs = ["address:account", "address:resource"]
+outputs = ["bool:isOwner", "string:error?"]
+
+[resource_mappings]
+token = "ERC20Token"
+non_fungible = "ERC721Token"
+data = "ERC1155MultiToken"
+program = "SmartContract"
+
+[rpc_endpoints]
+primary = "https://mainnet.infura.io/v3/${INFURA_API_KEY}"
+fallback = "https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+archive = "https://eth-archival.example.com"
+
+[state_queries]
+get_block = "getBlock(uint256)"
+get_transaction = "getTransaction(bytes32)"
+get_token_balance = "getTokenBalance(address,address)"
+get_contract_state = "getContractState(address,bytes4,bytes)" 

@@ -50,6 +50,30 @@ import TimeBandits.Types (
   TransientDatastore (..),
   PrivKey(..)
  )
+import TimeBandits.Controller (
+  Controller,
+  ControllerConfig(..),
+  SimulationMode(..),
+  initController
+ )
+import TimeBandits.Actor (
+  ActorSpec(..),
+  ActorRole(..),
+  ActorCapability(..),
+  deployActor
+ )
+import TimeBandits.Scenario (
+  Scenario,
+  ScenarioConfig(..),
+  loadScenario,
+  runScenario
+ )
+import TimeBandits.Deployment (
+  Deployment,
+  DeploymentConfig(..),
+  createDeployment,
+  startDeployment
+ )
 import Network.Socket (SockAddr(..), tupleToHostAddress)
 import Prelude hiding (newIORef)
 import Data.Time.Clock (getCurrentTime)
@@ -59,6 +83,25 @@ import System.IO (appendFile)
 import TimeBandits.Utils (generateSecureEd25519KeyPair)
 import Relude (atomicModifyIORef')
 import Data.ByteString.Char8 qualified as BS
+import Data.Text (Text)
+import qualified Data.Text as T
+
+-- | Command line options
+data CommandLineOptions = CommandLineOptions
+  { optVerbose :: Bool
+  , optSilent :: Bool
+  , optScenarioFile :: Maybe FilePath
+  , optSimulationMode :: SimulationMode
+  }
+
+-- | Default command line options
+defaultOptions :: CommandLineOptions
+defaultOptions = CommandLineOptions
+  { optVerbose = False
+  , optSilent = False
+  , optScenarioFile = Nothing
+  , optSimulationMode = InMemory
+  }
 
 -- | Main entry point
 -- Initializes the Time Bandits application with UTF-8 encoding support,
@@ -68,7 +111,8 @@ main :: IO ()
 main = Utf8.withUtf8 $ do
   -- Parse command line arguments to determine configuration
   args <- Env.getArgs
-  let config = parseConfig args
+  let options = parseOptions args
+      config = parseConfig options
 
   -- Initialize Lamport clock at 0 for logical time tracking
   timeRef <- newIORef (LamportTime 0)
@@ -98,21 +142,66 @@ main = Utf8.withUtf8 $ do
   -- Initialize empty key store for public keys
   keyStoreRef <- newIORef Map.empty
 
-  -- Run the main program with configured effects
-  -- Handle any errors that might occur during execution
-  result <- Main.interpretWithConfig config timeRef _resourceLogRef storeRef subsRef p2pNodesRef keyStoreRef actorTypeRegistryRef mainProgram
-  case result of
-    Left err -> putStrLn $ "Error: " ++ show err
-    Right (logs, _) -> mapM_ putStrLn logs
+  -- Check if a scenario file was provided
+  case optScenarioFile options of
+    Just scenarioFile -> do
+      putStrLn $ "Running scenario from file: " ++ scenarioFile
+      runScenarioFromFile config scenarioFile
+    Nothing -> do
+      -- Run the main program with configured effects
+      -- Handle any errors that might occur during execution
+      result <- Main.interpretWithConfig config timeRef _resourceLogRef storeRef subsRef p2pNodesRef keyStoreRef actorTypeRegistryRef mainProgram
+      case result of
+        Left err -> putStrLn $ "Error: " ++ show err
+        Right (logs, _) -> mapM_ putStrLn logs
 
--- | Parse command line arguments into an interpreter configuration
--- Converts user command line options into the appropriate configuration
--- for tracing and other system behaviors.
-parseConfig :: [String] -> InterpreterConfig
-parseConfig args
-  | "--verbose" `elem` args = verboseConfig
-  | "--silent" `elem` args = silentConfig
+-- | Parse command line arguments into options
+parseOptions :: [String] -> CommandLineOptions
+parseOptions args = foldr parseArg defaultOptions args
+  where
+    parseArg "--verbose" opts = opts { optVerbose = True }
+    parseArg "--silent" opts = opts { optSilent = True }
+    parseArg "--scenario" opts = opts -- Next arg will be the file
+    parseArg "--in-memory" opts = opts { optSimulationMode = InMemory }
+    parseArg "--local-processes" opts = opts { optSimulationMode = LocalProcesses }
+    parseArg "--geo-distributed" opts = opts { optSimulationMode = GeoDistributed }
+    parseArg arg opts
+      | "--scenario=" `isPrefixOf` arg = opts { optScenarioFile = Just (drop 11 arg) }
+      | otherwise = case optScenarioFile opts of
+          Nothing -> if last parsed == "--scenario" then opts { optScenarioFile = Just arg } else opts
+          Just _ -> opts
+      where parsed = take (length args - length (dropWhile (/= arg) args)) args
+
+-- | Parse command line options into an interpreter configuration
+parseConfig :: CommandLineOptions -> InterpreterConfig
+parseConfig opts
+  | optVerbose opts = verboseConfig
+  | optSilent opts = silentConfig
   | otherwise = defaultConfig
+
+-- | Run a scenario from a file
+runScenarioFromFile :: InterpreterConfig -> FilePath -> IO ()
+runScenarioFromFile config scenarioFile = do
+  putStrLn $ "Loading scenario from: " ++ scenarioFile
+  
+  -- Load and run the scenario
+  result <- runM . runError $ do
+    scenario <- loadScenario scenarioFile
+    runScenario scenario
+  
+  -- Handle the result
+  case result of
+    Left err -> putStrLn $ "Error running scenario: " ++ show err
+    Right scenario -> do
+      putStrLn "Scenario completed successfully!"
+      case scenarioResults scenario of
+        Nothing -> putStrLn "No results available."
+        Just results -> do
+          putStrLn $ "Success: " ++ show (resultSuccess results)
+          putStrLn $ "Steps executed: " ++ show (resultSteps results)
+          unless (null (resultErrors results)) $ do
+            putStrLn "Errors:"
+            mapM_ (putStrLn . ("  - " ++)) (map T.unpack (resultErrors results))
 
 -- | Main program logic
 -- Core application logic that runs with the full effect stack.
@@ -130,7 +219,25 @@ mainProgram ::
   Sem r ()
 mainProgram = do
   Trace.trace "Initializing Time Bandits core systems..."
-  output "Time Bandits application initialized successfully!"
+  
+  -- Initialize the controller
+  let controllerConfig = ControllerConfig
+        { configMode = InMemory
+        , configLogPath = "logs"
+        , configVerbose = True
+        }
+  
+  controllerResult <- runError $ initController controllerConfig
+  case controllerResult of
+    Left err -> do
+      Trace.trace $ "Failed to initialize controller: " ++ show err
+      output $ "Error: " ++ show err
+    Right controller -> do
+      Trace.trace "Controller initialized successfully."
+      output "Time Bandits application initialized successfully!"
+      
+      -- In a real implementation, we would use the controller here
+      pure ()
 
 -- | Interpreter configuration
 -- Configures and runs the effect interpreters for the main program.
@@ -217,3 +324,9 @@ myTraceVerbose = interpret \case
     Trace message -> do
         timestamp <- embed @IO getCurrentTime
         embed @IO $ putStrLn $ "[VERBOSE][" ++ show timestamp ++ "] " ++ message
+
+-- Helper functions
+isPrefixOf :: String -> String -> Bool
+isPrefixOf [] _ = True
+isPrefixOf _ [] = False
+isPrefixOf (x:xs) (y:ys) = x == y && isPrefixOf xs ys

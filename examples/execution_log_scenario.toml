@@ -1,0 +1,87 @@
+# Execution Log Structured Scenario
+# This example demonstrates the content-addressed execution log with causal links
+
+[scenario]
+name = "Execution Log Traceability"
+description = "Demonstrates how execution logs capture effect chains with proper causal links"
+mode = "InMemory"
+log_path = "logs/execution_log_demo"
+max_steps = 150
+timeout = 300
+
+# Time Travelers
+[[time_travelers]]
+id = "audit_agent"
+capabilities = ["ResourceCreation", "ResourceTransfer", "LogInspection"]
+description = "Agent that creates a traceable chain of effects for audit"
+
+# Time Keepers
+[[time_keepers]]
+id = "main_timeline_keeper"
+capabilities = ["TimelineAccess", "TimelineValidation"]
+description = "Maintains the primary timeline"
+
+# Time Bandits
+[[time_bandits]]
+id = "log_maintainer"
+capabilities = ["ProofGeneration", "LogMaintenance", "VerificationService"]
+description = "Maintains the execution log and provides verification services"
+
+# Timelines
+[[timelines]]
+id = "audit_timeline"
+type = "event_log"
+description = "Audit timeline with complete effect history"
+initial_timestamp = "2025-04-01T00:00:00Z"
+
+# Execution Log Configuration
+[execution_log]
+content_addressed = true
+hash_algorithm = "SHA-256"
+include_state_hash = true
+include_proofs = true
+replayable = true
+
+# Initial transaction sequence
+[[transition_messages]]
+id = "initial_resource_creation"
+program_id = "audit_program"
+step_index = 1
+parent_effect_hash = "genesis"
+resources = ["initial_audit_token"]
+description = "Initial resource creation for audit chain"
+
+[[transition_messages]]
+id = "first_transfer"
+program_id = "audit_program"
+step_index = 2
+parent_effect_hash = "{{hash:initial_resource_creation}}"
+resources = ["initial_audit_token"]
+description = "First transfer in the audit chain"
+
+[[transition_messages]]
+id = "metadata_attachment"
+program_id = "audit_program"
+step_index = 3
+parent_effect_hash = "{{hash:first_transfer}}"
+resources = ["initial_audit_token", "metadata_resource"]
+description = "Attaching metadata to audit resource"
+
+[[transition_messages]]
+id = "verification_step"
+program_id = "audit_program"
+step_index = 4
+parent_effect_hash = "{{hash:metadata_attachment}}"
+resources = ["initial_audit_token", "verification_proof"]
+description = "Verification step with inclusion of proof"
+
+# Log Entry Structure Example
+[log_entry_template]
+effect = "Apply"
+timestamp = "{{current_time}}"
+causal_parent = "{{parent_hash}}"
+resulting_state_hash = "{{state_hash}}"
+proof = "{{zk_proof}}"
+actor = "{{actor_id}}"
+timeline = "{{timeline_id}}"
+logical_time = "{{lamport_time}}" 

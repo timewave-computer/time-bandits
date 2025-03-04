@@ -1,0 +1,58 @@
+# Simple Resource Transfer Scenario
+# This scenario demonstrates a basic resource transfer between two actors
+
+[scenario]
+name = "Simple Resource Transfer"
+description = "A basic scenario where one actor creates a resource and transfers it to another actor"
+mode = "InMemory"
+log_path = "logs/simple_transfer"
+max_steps = 100
+timeout = 60  # seconds
+
+# Actor definitions
+[[actors]]
+id = "actor1"
+role = "ResourceOwner"
+capabilities = ["CanCreateResource", "CanTransferResource"]
+initial_programs = ["program1"]
+
+[[actors]]
+id = "actor2"
+role = "ResourceOwner"
+capabilities = ["CanTransferResource"]
+initial_programs = []
+
+# Program definitions
+[[programs]]
+id = "program1"
+name = "Resource Creator"
+description = "A program that creates and transfers resources"
+initial_state = { memory = {}, resources = [] }
+
+# Initial resources
+# None - will be created during scenario execution
+
+# Execution steps
+[[steps]]
+actor = "actor1"
+action = "CreateResource"
+params = { name = "TestResource", data = "Some test data" }
+expected_result = "Success"
+
+[[steps]]
+actor = "actor1"
+action = "TransferResource"
+params = { resource_id = "${result.steps[0].resource_id}", recipient = "actor2" }
+expected_result = "Success"
+
+[[steps]]
+actor = "actor2"
+action = "VerifyResourceOwnership"
+params = { resource_id = "${result.steps[0].resource_id}" }
+expected_result = "Success"
+
+# Verification
+[verification]
+final_owner = "actor2"
+resource_transfers = 1
+execution_log_entries = 3 

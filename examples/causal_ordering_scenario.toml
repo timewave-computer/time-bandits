@@ -1,0 +1,133 @@
+# Causal Ordering Scenario with TimeMap
+# This example demonstrates how TimeMap enforces causal ordering across timelines
+
+[scenario]
+name = "Cross-Timeline Causal Ordering"
+description = "Demonstrates how TimeMap ensures causality preservation across multiple timelines"
+mode = "LocalProcesses"
+log_path = "logs/causal_ordering_demo"
+max_steps = 200
+timeout = 600
+
+# Time Travelers - users of the system
+[[time_travelers]]
+id = "trader_a"
+capabilities = ["ResourceCreation", "ResourceTransfer", "TimeMapObservation"]
+description = "Trader operating on multiple timelines with causal awareness"
+
+[[time_travelers]]
+id = "trader_b"
+capabilities = ["ResourceCreation", "ResourceTransfer", "TimeMapObservation"] 
+description = "Trader receiving resources with guaranteed causal ordering"
+
+# Time Keepers - timeline validators
+[[time_keepers]]
+id = "timeline_1_keeper"
+capabilities = ["TimelineAccess", "TimelineValidation"] 
+description = "Maintains and validates Timeline 1"
+
+[[time_keepers]]
+id = "timeline_2_keeper"
+capabilities = ["TimelineAccess", "TimelineValidation"]
+description = "Maintains and validates Timeline 2"
+
+[[time_keepers]]
+id = "timeline_3_keeper"
+capabilities = ["TimelineAccess", "TimelineValidation"]
+description = "Maintains and validates Timeline 3"
+
+# Time Bandits - P2P network infrastructure
+[[time_bandits]]
+id = "time_map_coordinator"
+capabilities = ["ProofGeneration", "NetworkCoordination", "TimeMapMaintenance"]
+description = "Coordinates TimeMap updates and ensures causal consistency"
+
+[[time_bandits]]
+id = "execution_node"
+capabilities = ["ProofGeneration", "EffectExecution", "LogMaintenance"]
+description = "Executes effects and maintains the execution log"
+
+# Timelines - the actual blockchains or event logs
+[[timelines]]
+id = "timeline_1"
+type = "blockchain"
+description = "Primary blockchain for resource creation"
+initial_height = 1000
+
+[[timelines]]
+id = "timeline_2"
+type = "blockchain"
+description = "Secondary blockchain for resource transfer"
+initial_height = 500
+
+[[timelines]]
+id = "timeline_3"
+type = "event_log"
+description = "External event log for audit trail"
+initial_timestamp = "2025-03-15T12:00:00Z"
+
+# Initial TimeMap
+[time_map]
+description = "Initial TimeMap tracking causal relationships across timelines"
+
+[[time_map.timeline_heads]]
+timeline_id = "timeline_1"
+block_height = 1000
+logical_time = 1
+timestamp = "2025-03-15T12:00:00Z"
+
+[[time_map.timeline_heads]]
+timeline_id = "timeline_2"
+block_height = 500
+logical_time = 1
+timestamp = "2025-03-15T12:00:00Z"
+
+[[time_map.timeline_heads]]
+timeline_id = "timeline_3"
+event_index = 0
+logical_time = 1
+timestamp = "2025-03-15T12:00:00Z"
+
+# Initial Resources
+[[resources]]
+id = "digital_asset_a"
+owner = "trader_a"
+timeline = "timeline_1"
+value = 100
+
+[[resources]]
+id = "digital_asset_b"
+owner = "trader_b"
+timeline = "timeline_2"
+value = 200
+
+# Program Definitions
+[[programs]]
+id = "cross_timeline_transfer"
+owner = "trader_a"
+description = "Program that enforces causal ordering during cross-timeline transfers"
+memory_slots = 4
+
+[[effects]]
+program_id = "cross_timeline_transfer"
+step_index = 1
+description = "Initial resource escrow on timeline_1"
+effect_type = "EscrowToProgram"
+parameters = { resource = "digital_asset_a", slot = 1 }
+guard = "OwnershipVerified"
+
+[[effects]]
+program_id = "cross_timeline_transfer" 
+step_index = 2
+description = "TimeMap verification before cross-timeline transfer"
+effect_type = "WatchResource"
+parameters = { key = "timeline_heads", condition = "BlockHeightGreaterThan", timeline = "timeline_2", height = 505 }
+guard = "TimeAfter"
+
+[[effects]]
+program_id = "cross_timeline_transfer"
+step_index = 3
+description = "Cross-timeline transfer to timeline_2"
+effect_type = "CrossTimelineCall"
+parameters = { target_timeline = "timeline_2", resource = "digital_asset_a", recipient = "trader_b" }
+guard = "ResourceInSlot" 

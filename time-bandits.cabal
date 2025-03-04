@@ -77,6 +77,7 @@ common shared
     , random              >= 1.2
     , stm
     , vector
+    , http-client
 
   default-language:   GHC2021
 
@@ -84,12 +85,28 @@ library
   import:          shared
   hs-source-dirs:  src
   exposed-modules:
+    TimeBandits
     TimeBandits.Core
-    TimeBandits.Effects
-    TimeBandits.Events
     TimeBandits.Types
-    TimeBandits.Utils
-    TimeBandits.Network
+    TimeBandits.Program
+    TimeBandits.Resource
+    TimeBandits.Effect
+    TimeBandits.EffectInterpreter
+    TimeBandits.EffectExecutor
+    TimeBandits.Events
+    TimeBandits.ExecutionLog
+    TimeBandits.Timeline
+    TimeBandits.TimelineAdapter
+    TimeBandits.TimelineDescriptor
+    TimeBandits.Cache
+    TimeBandits.TransitionMessage
+    TimeBandits.Controller
+    TimeBandits.ZKProof
+    TimeBandits.TimelineProof
+    TimeBandits.ResourceLedger
+    TimeBandits.ActorCommunication
+    TimeBandits.LocalMultiProcess
+    TimeBandits.SecurityVerifier
 
 executable time-bandits
   import:         shared
@@ -105,9 +122,11 @@ test-suite time-bandits-test
   default-language: GHC2021
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
-  main-is:          Main.hs
+  main-is:          Spec.hs
   other-modules:    SimpleNetworkConfig
                    , TimelineScenarioTest
+                   , ControllerTest
+                   , TimelineDescriptorTest
   build-depends:    base >= 4.16 && < 5,
                    time-bandits,
                    polysemy,

@@ -1,0 +1,61 @@
+# Simple Time Bandits Scenario Definition
+# This example demonstrates how to define actors and timelines for a simulation
+
+[scenario]
+name = "Cross-Timeline Resource Transfer"
+description = "A demonstration of transferring resources across timelines"
+mode = "LocalProcesses"
+log_path = "logs/cross_timeline_demo"
+max_steps = 100
+timeout = 300
+
+# Time Travelers - users of the system
+[[time_travelers]]
+id = "alice"
+capabilities = ["ResourceCreation", "ResourceTransfer"]
+description = "User Alice who travels across timelines"
+
+[[time_travelers]]
+id = "bob"
+capabilities = ["ResourceCreation", "ResourceTransfer"]
+description = "User Bob who receives resources from Alice"
+
+# Time Keepers - timeline validators
+[[time_keepers]]
+id = "ethereum_keeper"
+capabilities = ["TimelineAccess"]
+description = "Maintains the Ethereum timeline"
+
+[[time_keepers]]
+id = "solana_keeper"
+capabilities = ["TimelineAccess"]
+description = "Maintains the Solana timeline"
+
+# Time Bandits - P2P network infrastructure
+[[time_bandits]]
+id = "network_node_1"
+capabilities = ["ProofGeneration", "NetworkCoordination"]
+description = "Primary P2P network node"
+
+[[time_bandits]]
+id = "network_node_2"
+capabilities = ["ProofGeneration", "NetworkCoordination"]
+description = "Secondary P2P network node"
+
+# Timelines - the actual blockchains or event logs
+[[timelines]]
+id = "ethereum_main"
+type = "blockchain"
+description = "Ethereum Mainnet"
+
+[[timelines]]
+id = "solana_main"
+type = "blockchain"
+description = "Solana Mainnet"
+
+# Initial Resources
+[[resources]]
+id = "initial_gold_token"
+owner = "alice"
+timeline = "ethereum_main"
+value = 100 
