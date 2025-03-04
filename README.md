@@ -1,108 +1,47 @@
 # Time Bandits
 
-## Overview
+![](map_of_time.png)
 
 Time Bandits is a distributed system for deploying and executing programs that coordinate logic and assets across multiple independent timelines (blockchains).
 
-Programs in Time Bandits are not executed directly on any single chain. Instead, they live as a set of zero knowledge program keys committed to the involved chains, and executed within a P2P network. All program actions are captured in a content-addressed, hash-linked execution log. This log, combined with zk proofs of execution, ensures that programs are fully replayable and auditable, even across conflicting or adversarial timelines.
+Programs are not executed directly on any single chain. Instead, they live as a set of zero knowledge verification keys committed to the involved chains, and executed by a P2P network. All program actions are captured by content-addressed, hash-linked logs. These append-only logs, combined with zk proofs of execution, ensure that programs are fully replayable and auditable, even across conflicting or adversarial timelines.
 
----
+## Actors
 
-## Motivation
-
-Today, cross-chain programs are fragile, because they rely on:
-- Trusted bridges, which are centralized and vulnerable.
-- Fragile, ad hoc cross-chain message passing.
-- Implicit, often ambiguous assumptions about the ordering of events across timelines.
-
-Time Bandits addresses these problems by:
-- Moving program logic into a zk verified executor network.
-- Explicitly modeling time across multiple timelines in a time map, a causally ordered, content-addressed structure capturing each program's view of external chains.
-- Defining programs as sequences of declared effects, each explicitly referencing the time map and producing a new log entry.
-
-This combination of verifiable off-chain execution, effect composition, and formal causal time tracking creates a foundation for safer, more auditable cross-chain coordination.
-
----
-
-## Architecture: A Temporal Effect System
-
-Time Bandits is designed as a timeline-local + cross-timeline distributed state machine with a pluggable event/effect system:
-
-- Resources represent both program state (internal conditions, requirements, capacities) and control authority (who can advance state, under what conditions).
-- Effects represent state advances—i.e., token transfers, escrows, swaps—triggered by actors (time travelers or other programs).
-- Timelines act as independent shards or zones of causality, with the option to have programs that span multiple timelines.
-- Effects compose dynamically: They can be sequenced, combined, and even interact (e.g., dependencies between effects or higher-order effects like "retry on failure").
-
-The entire system forms a resource-aware temporal process algebra—programs are compositions of token-based effects guarded by resource predicates, creating a formal "temporal effect system" that ensures causality and security across distributed timelines.
-
----
-
-## Core Actors
-
-### Time Travelers
+**Time Travelers**
 Time Travelers are the entities who deploy programs and submit state transition messages to the timelines. They are responsible for initiating program execution by creating signed transition messages that include necessary proofs and resources.
 
-### Time Keepers
+**Time Keepers**
 Time Keepers are per-timeline actors responsible for:
 - Maintaining the integrity of individual timelines (e.g., blockchains, event logs).
 - Validating and recording new messages (deposits, claims, calls).
 - Serving timeline state queries to authorized actors.
 - Ensuring that all applied transitions follow timeline-specific rules.
 
-### Time Bandits
+**Time Bandits**
 Time Bandits operate the P2P network that forms the backbone of the system. They:
 - Execute program steps and generate cryptographic proofs.
 - Disseminate messages through the network.
 - Maintain the execution log and validate proofs.
 - Enforce security properties across the system.
 
-## 3. Security Verification
+## System overview
 
-The security architecture of Time Bandits is enforced by the `SecurityVerifier`, which guarantees critical system-level properties:
+This project was created to prototype a number of ideas. A few key features:
 
-- Prevention of double-spending: Through single-owner guarantees and explicit resource transfer.
-- Protection against reentrancy attacks: Via Lamport clock ordering and causal verification.
-- Maintenance of a complete audit trail: Through a verifiable, content-addressed execution log.
-- Enforcement against backdated transitions: Using time map mechanisms to prevent time-based attacks.
+- Cross-Timeline Program Execution: Programs operate across multiple independent blockchains, rollups, and distributed logs, coordinating assets and logic across these systems.
+- Effect Composition System: Programs are defined entirely through composable effects — each effect is a declared, verifiable, atomic operation, ensuring explicit control over all state transitions.
+- Causal Time Map: Time Bandits maintains a sharded map of time, tracking the latest state and causal order across all participating timelines.
+- Content-Addressed Execution Logs: Every applied effect appends to a hash-linked, append-only log, providing full replayability and a tamper-proof audit trail.
+- Zero-Knowledge Proofs of Execution (mocked): Each effect application produces a proof that all preconditions were satisfied and the effect was applied correctly.
+- Single-Owner Resource Model: Every resource (token, capability, escrow) has exactly one owner at all times, ensuring clear and provable custody across program interactions.
+- Timeline-Aware Effect Adapters: External interactions (e.g., deposits, claims) are handled through generated effect adapters, ensuring programs remain timeline-agnostic while adapting to different VMs (EVM, WASM, etc.).
+- P2P Transient Storage Network: Programs, logs, and proofs are stored and replicated across a peer-to-peer network, ensuring durability, auditability, and resistance to censorship.
 
-## 4. Modular Architecture
+One of the key features is a cross-timeline distributed state machine with a pluggable event/effect system where:
+- Resources represent both program state (internal conditions, requirements, capacities) and control authority (who can advance state, under what conditions).
+- Effects represent state advances—i.e., token transfers, escrows, swaps—triggered by actors (time travelers or other programs).
+- Timelines act as independent shards or zones of causality, with the option to have programs that span multiple timelines.
+- Effects compose dynamically: They can be sequenced, combined, and even interact (e.g., dependencies between effects or higher-order effects like "retry on failure").
+This system forms a temporal process algebra, where programs are compositions of token-based effects guarded by resource predicates. This ensures causality and security across distributed timelines.
 
-The refactored codebase provides a robust foundation for cross-timeline programming:
-
-- Clear type separation: First-class entities (Timeline, Resource, Program, Effect) with well-defined interfaces.
-- Explicit effect execution: All state changes require formal guards and validation.
-- Program invocation model: Tracks resource ownership and ensures secure transfer.
-- Zero-knowledge proof integration: For guard validation and ownership verification.
-- Multi-mode simulation: Support for in-memory, local multi-process, and geo-distributed deployments.
-
-## 5. Timeline Descriptors and Adapters
-
-Time Bandits supports multiple blockchains and distributed ledgers through:
-
-- Formal timeline descriptors: Define the properties of different timelines (EVM, CosmWasm, etc.).
-- Timeline adapters: Provide a uniform interface to diverse blockchain ecosystems.
-- TOML-based configuration: Simplify adding new timeline types to the system.
-
-## 6. Execution Log
-
-Every program execution produces an append-only, content-addressed log that:
-- Captures all applied effects with causal links.
-- Provides replay capability for audit and verification.
-- Includes proofs of correct execution.
-- Forms the foundation for cross-timeline verification.
-
-## 7. Centralized Effect Interpreter
-
-A key feature is the centralized interpreter for all program effects, which:
-- Provides uniform validation across all timelines.
-- Ensures causal ordering with Lamport clocks.
-- Enforces security invariants on all effects.
-- Produces verifiable logs for every execution.
-
-## 8. Cross-Program Resource Flow
-
-Resource flow between programs follows strict rules:
-- Resources have exactly one owner at all times.
-- Transfer requires explicit escrow operations.
-- Program invocations have clear resource contracts.
-- The "temporal effect system" ensures that all operations respect causal constraints.
