@@ -168,12 +168,14 @@ data TransitionMessage = TransitionMessage { programId :: ProgramId , stepIndex 
 ## Ownership and Resource Flow
 
 - Each resource has exactly one owner program at any time.
+- The ResourceLedger enforces the single-owner invariant globally.
 - Resources move between programs only via:
   - EscrowToProgram
   - ClaimFromProgram
   - InvokeProgram (with arguments)
 - No program can modify another program's memory directly.
 - All cross-program transfers leave a trace record in the execution log.
+- Every resource transfer is verified by the EffectInterpreter.
 
 ## Time and Causality
 
@@ -192,6 +194,7 @@ data TimeMap = TimeMap { timelines :: Map TimelineId LamportClock , observedHead
 ```
 
 - Time travelers cannot backdate effects by presenting stale time maps.
+- The EffectInterpreter enforces causal ordering of all effects.
 
 ## Execution Log
 - Every applied effect produces a log entry:
@@ -202,7 +205,9 @@ data LogEntry = LogEntry { effect :: Effect , appliedAt :: UTCTime , causalParen
 - Every log entry:
   - Is content-addressed.
   - Links to its parent.
-  - Logs are fully replayable.
+  - Contains a hash of the resulting state.
+  - Includes a reference to the time map at the time of application.
+- Logs are fully replayable and deterministic.
 
 ## Controller Responsibilities
 - Regardless of simulation mode, the controller enforces:

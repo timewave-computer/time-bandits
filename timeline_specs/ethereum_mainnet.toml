@@ -1,0 +1,102 @@
+# Ethereum Mainnet Timeline Descriptor
+
+[timeline]
+id = "ethereum-mainnet"
+name = "Ethereum Mainnet"
+vm_type = "EVM"
+clock_type = "BlockHeight"
+
+[endpoint]
+primary = "https://mainnet.infura.io/v3/YOUR_API_KEY"
+backups = ["https://eth-mainnet.alchemyapi.io/v2/YOUR_API_KEY"]
+webhook = "https://webhook.example.com/eth-events"
+api_key = "YOUR_API_KEY"
+rate_limit = 100
+timeout = 30000
+
+[effect_mappings.transfer_asset]
+name = "ERC20Transfer"
+contract = "0xTokenAddress"
+function = "transfer"
+abi = '''
+[
+  {
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "transfer",
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+'''
+gas_limit = 100000
+retries = 3
+
+[effect_mappings.query_state]
+name = "ERC20Balance"
+contract = "0xTokenAddress"
+function = "balanceOf"
+abi = '''
+[
+  {
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "balanceOf",
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]
+'''
+retries = 3
+
+[effect_mappings.update_state]
+name = "ContractCall"
+contract = "0xContractAddress"
+function = "updateState"
+abi = '''
+[
+  {
+    "inputs": [
+      {
+        "name": "newState",
+        "type": "bytes"
+      }
+    ],
+    "name": "updateState",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
+'''
+gas_limit = 200000
+retries = 3
+
+[metadata]
+chain_id = "1"
+block_time = "12"
+confirmations = "12" 

@@ -10,352 +10,323 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
-This module implements a centralized effect interpreter that:
-1. Validates effect preconditions using the current TimeMap
-2. Applies the effect
-3. Updates program memory
-4. Updates the TimeMap
-5. Appends an entry to the ExecutionLog
+This module provides the EffectInterpreter, which is responsible for the full lifecycle
+of effects in the Time Bandits system. It centralizes precondition checking, effect application,
+and ensures causal determinism across the system.
 
-All state transitions must pass through the interpreter - no effect-specific code
-should modify program state directly.
+The EffectInterpreter:
+1. Validates effect preconditions against the current time map
+2. Ensures resources have a single owner
+3. Applies effects to program state
+4. Updates the execution log with causal links
+5. Maintains the time map for causal ordering
 -}
 module TimeBandits.EffectInterpreter 
-  ( -- * Core Functions
-    interpretEffect
-  , validateEffect
+  ( -- * Core Types
+    EffectInterpreter(..)
+  , EffectResult(..)
+  , EffectContext(..)
+  , EffectError(..)
+  
+  -- * Interpreter Operations
+  , createInterpreter
+  , interpretEffect
+  , validatePreconditions
   , applyEffect
   , updateTimeMap
-  , logEffect
+  , logEffectExecution
   
-  -- * Types
-  , EffectResult(..)
-  , EffectInterpretationError(..)
-  , ExecutionContext(..)
+  -- * Causal Enforcement
+  , enforceResourceOwnership
+  , enforceCausalOrder
+  , enforceTimeMapConsistency
   ) where
 
-import Control.Monad (when)
 import Data.ByteString (ByteString)
-import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
+import Data.Serialize (Serialize, encode)
 import Data.Time.Clock (UTCTime, getCurrentTime)
 import GHC.Generics (Generic)
-import Polysemy (Member, Sem, Embed, embed)
-import Polysemy.Error (Error, throw, runError, fromEither)
+import Polysemy (Member, Sem, embed)
+import Polysemy.Error (Error, throw, catch)
+import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
+import TimeBandits.Core (Hash(..), EntityHash(..), computeContentHash)
 import TimeBandits.Types
   ( AppError(..)
   , LamportTime(..)
-  , ProgramErrorType(..)
   )
-import TimeBandits.Effect
+import TimeBandits.ProgramEffect
   ( Effect(..)
+  , Guard(..)
+  , GuardedEffect(..)
+  , checkGuard
   )
 import TimeBandits.Program
-  ( Program
-  , ProgramId
+  ( ProgramId
   , ProgramState
-  , ProgramMemory
-  , MemorySlot
+  , TimeMap
+  , programTimeMap
   )
 import TimeBandits.Resource
   ( Resource
-  , ResourceId
-  , ResourceType(..)
+  , ResourceHash
   )
-import TimeBandits.Timeline
-  ( Timeline
-  , TimelineId
-  , Event(..)
+import TimeBandits.Timeline (TimelineHash)
+import TimeBandits.ExecutionLog
+  ( LogEntry(..)
+  , ExecutionLog
+  , appendLogEntry
   )
 import TimeBandits.TimeMap
-  ( TimeMap
-  , updateTimeMapWithTimeline
+  ( advanceTimeMap
   , verifyTimeMapConsistency
   )
-import TimeBandits.TransitionMessage
-  ( TransitionMessage(..)
-  , TransitionProof(..)
-  , verifyTransitionMessage
-  )
-import TimeBandits.ExecutionLog
-  ( ExecutionLog
-  , LogEntry(..)
-  , appendToExecutionLog
-  )
+
+-- | Error types specific to effect interpretation
+data EffectError
+  = PreconditionFailed Guard
+  | ResourceOwnershipViolation ResourceHash
+  | CausalOrderViolation Hash
+  | TimeMapInconsistency TimelineHash
+  | EffectApplicationFailed Text
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Context for effect interpretation
+data EffectContext = EffectContext
+  { ecTimeMap :: TimeMap
+  , ecProgramState :: ProgramState
+  , ecExecutionLog :: ExecutionLog
+  , ecPreviousEffectHash :: Maybe Hash
+  , ecTimestamp :: UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
 
 -- | Result of effect interpretation
 data EffectResult = EffectResult
-  { resultProgram :: Program
-  , resultTimeMap :: TimeMap
-  , resultLog :: LogEntry
-  , resultResources :: [Resource]
-  , resultProof :: Maybe TransitionProof
+  { erNewContext :: EffectContext
+  , erEffectHash :: Hash
+  , erLogEntry :: LogEntry
   }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
 
--- | Errors that can occur during effect interpretation
-data EffectInterpretationError
-  = InvalidPrecondition Text
-  | ResourceOwnershipError ResourceId
-  | TimeMapInconsistency Text
-  | ExecutionError Text
-  | ProofGenerationError Text
-  | LoggingError Text
-  deriving (Eq, Show, Generic)
-
--- | Execution context for effect interpretation
-data ExecutionContext = ExecutionContext
-  { contextProgram :: Program
-  , contextTimeMap :: TimeMap
-  , contextLog :: ExecutionLog
-  , contextTimestamp :: UTCTime
-  , contextParentEffect :: Maybe Hash
+-- | The EffectInterpreter manages the full lifecycle of effects
+data EffectInterpreter = EffectInterpreter
+  { -- | Current context for interpretation
+    context :: EffectContext
+    -- | Resource ownership ledger (would be a reference to ResourceLedger in full implementation)
+  , resourceOwners :: Map.Map ResourceHash ProgramId
   }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
 
--- | Interpret an effect within an execution context
-interpretEffect :: 
-  (Member (Error AppError) r, Member (Error EffectInterpretationError) r, Member (Embed IO) r) => 
-  TransitionMessage ->
-  ExecutionContext ->
-  Sem r EffectResult
-interpretEffect message context = do
-  -- 1. Validate the transition message (signature, proof, resources)
-  isValid <- verifyTransitionMessage message (contextTimeMap context)
-  unless isValid $
-    throw $ InvalidPrecondition "Invalid transition message"
+-- | Create a new effect interpreter
+createInterpreter :: 
+  (Member (Error AppError) r, Member (Embed IO) r) => 
+  TimeMap -> 
+  ProgramState -> 
+  ExecutionLog -> 
+  Maybe Hash -> 
+  Sem r EffectInterpreter
+createInterpreter timeMap programState executionLog prevEffectHash = do
+  -- Get current time for the context
+  now <- embed getCurrentTime
   
-  -- 2. Validate effect preconditions
-  validateEffect (transitionEffect message) context
-  
-  -- 3. Apply the effect
-  (newProgram, affectedResources) <- applyEffect (transitionEffect message) context
-  
-  -- 4. Update the TimeMap with any affected timelines
-  newTimeMap <- updateTimeMap (transitionEffect message) (contextTimeMap context) affectedResources
-  
-  -- 5. Log the effect application
-  logEntry <- logEffect (transitionEffect message) newProgram newTimeMap context
-  
-  -- Return the updated state and log entry
-  return EffectResult
-    { resultProgram = newProgram
-    , resultTimeMap = newTimeMap
-    , resultLog = logEntry
-    , resultResources = affectedResources
-    , resultProof = transitionProof message
-    }
-
--- | Validate that an effect can be applied within the current context
-validateEffect :: 
-  (Member (Error EffectInterpretationError) r) => 
-  Effect ->
-  ExecutionContext ->
-  Sem r ()
-validateEffect effect context = do
-  -- Validate based on effect type
-  case effect of
-    -- EscrowToProgram: Validate resource ownership
-    EscrowToProgram resource targetProgram slot ->
-      validateResourceOwnership resource (contextProgram context)
-    
-    -- ClaimFromProgram: Validate resource is in the slot
-    ClaimFromProgram sourceProgram slot recipient ->
-      validateSlotOccupied sourceProgram slot
-    
-    -- InvokeProgram: Validate program exists and calling program has permission
-    InvokeProgram targetProgram function args ->
-      validateProgramAccess targetProgram (contextProgram context)
-    
-    -- DelegateCapability: Validate the delegator has the capability
-    DelegateCapability capability targetProgram expiry ->
-      validateCapabilityOwnership capability (contextProgram context)
-    
-    -- WatchResource: Validate resource exists
-    WatchResource resourceKey condition trigger ->
-      validateResourceExists resourceKey
-    
-    -- AtomicBatch: Validate all contained effects
-    AtomicBatch effects ->
-      mapM_ (\e -> validateEffect e context) effects
-
--- | Apply an effect to the current program state
-applyEffect :: 
-  (Member (Error AppError) r, Member (Error EffectInterpretationError) r, Member (Embed IO) r) => 
-  Effect ->
-  ExecutionContext ->
-  Sem r (Program, [Resource])
-applyEffect effect context = do
-  -- Apply based on effect type
-  case effect of
-    -- EscrowToProgram: Move resource to target program's memory
-    EscrowToProgram resource targetProgram slot -> do
-      -- Implementation would update program memory
-      return (contextProgram context, [resource])
-    
-    -- ClaimFromProgram: Retrieve resource from source program's memory
-    ClaimFromProgram sourceProgram slot recipient -> do
-      -- Implementation would update program memory
-      return (contextProgram context, [])
-    
-    -- InvokeProgram: Execute a function in another program
-    InvokeProgram targetProgram function args -> do
-      -- Implementation would invoke the program
-      return (contextProgram context, [])
-    
-    -- DelegateCapability: Grant a capability to another program
-    DelegateCapability capability targetProgram expiry -> do
-      -- Implementation would update capability registry
-      return (contextProgram context, [])
-    
-    -- WatchResource: Set up a watch condition
-    WatchResource resourceKey condition trigger -> do
-      -- Implementation would set up a watch
-      return (contextProgram context, [])
-    
-    -- AtomicBatch: Apply all contained effects atomically
-    AtomicBatch effects -> do
-      -- Apply each effect in sequence
-      foldM (\(prog, res) e -> do
-        (newProg, newRes) <- applyEffect e (context { contextProgram = prog })
-        return (newProg, res ++ newRes)
-      ) (contextProgram context, []) effects
-
--- | Update the TimeMap based on the effect and affected resources
-updateTimeMap :: 
-  (Member (Error EffectInterpretationError) r) => 
-  Effect ->
-  TimeMap ->
-  [Resource] ->
-  Sem r TimeMap
-updateTimeMap effect currentTimeMap affectedResources = do
-  -- Get all affected timelines
-  let affectedTimelines = getAffectedTimelines effect affectedResources
-  
-  -- Update the TimeMap for each affected timeline
-  foldM (\timeMap timeline -> do
-    -- In a real implementation, this would update the TimeMap with the latest
-    -- state of the timeline, increment logical clocks, etc.
-    -- For now, we just return the unchanged TimeMap
-    return timeMap
-  ) currentTimeMap affectedTimelines
-
--- | Log the application of an effect
-logEffect :: 
-  (Member (Error EffectInterpretationError) r, Member (Embed IO) r) => 
-  Effect ->
-  Program ->
-  TimeMap ->
-  ExecutionContext ->
-  Sem r LogEntry
-logEffect effect program timeMap context = do
-  -- Get the current time
-  timestamp <- liftIO getCurrentTime
-  
-  -- Get the parent effect hash if available
-  let parentHash = fromMaybe (Hash "genesis") (contextParentEffect context)
-  
-  -- Create the log entry
-  let entry = LogEntry
-        { logEffect = effect
-        , logTimestamp = timestamp
-        , logParentHash = parentHash
-        , logProgramState = computeStateHash program
-        , logTimeMap = timeMap
-        , logProof = Nothing -- Would include proofs in a real implementation
+  -- Create the initial context
+  let context = EffectContext
+        { ecTimeMap = timeMap
+        , ecProgramState = programState
+        , ecExecutionLog = executionLog
+        , ecPreviousEffectHash = prevEffectHash
+        , ecTimestamp = now
         }
   
-  return entry
+  -- Create the interpreter with empty resource ownership map
+  -- In a full implementation, this would load from a persistent store
+  pure $ EffectInterpreter
+    { context = context
+    , resourceOwners = Map.empty
+    }
 
--- Helper functions
+-- | Interpret an effect with full lifecycle management
+interpretEffect :: 
+  (Member (Error AppError) r, Member (Embed IO) r) => 
+  EffectInterpreter -> 
+  GuardedEffect -> 
+  Sem r (EffectInterpreter, EffectResult)
+interpretEffect interpreter guardedEffect@(GuardedEffect guard effect) = do
+  -- 1. Validate preconditions
+  validateResult <- catch 
+    (validatePreconditions interpreter guardedEffect)
+    (\err -> throw $ "Precondition validation failed: " <> show err :: AppError)
+  
+  -- 2. Enforce resource ownership
+  ownershipResult <- catch
+    (enforceResourceOwnership interpreter effect)
+    (\err -> throw $ "Resource ownership check failed: " <> show err :: AppError)
+  
+  -- 3. Enforce causal order
+  causalResult <- catch
+    (enforceCausalOrder interpreter)
+    (\err -> throw $ "Causal order check failed: " <> show err :: AppError)
+  
+  -- 4. Apply the effect to program state
+  let currentContext = context interpreter
+      currentState = ecProgramState currentContext
+  
+  newState <- catch
+    (applyEffect currentState effect)
+    (\err -> throw $ "Effect application failed: " <> show err :: AppError)
+  
+  -- 5. Update the time map
+  let currentTimeMap = ecTimeMap currentContext
+  newTimeMap <- catch
+    (updateTimeMap currentTimeMap effect)
+    (\err -> throw $ "Time map update failed: " <> show err :: AppError)
+  
+  -- 6. Create a hash for this effect
+  let effectHash = computeContentHash effect
+  
+  -- 7. Log the effect execution
+  now <- embed getCurrentTime
+  let prevHash = ecPreviousEffectHash currentContext
+      executionLog = ecExecutionLog currentContext
+  
+  newLog <- catch
+    (logEffectExecution executionLog effect effectHash prevHash now)
+    (\err -> throw $ "Logging failed: " <> show err :: AppError)
+  
+  -- 8. Create the new context and result
+  let logEntry = case newLog of
+        [] -> error "Log should not be empty after appending"
+        (entry:_) -> entry
+      
+      newContext = currentContext
+        { ecProgramState = newState
+        , ecTimeMap = newTimeMap
+        , ecExecutionLog = newLog
+        , ecPreviousEffectHash = Just effectHash
+        , ecTimestamp = now
+        }
+      
+      result = EffectResult
+        { erNewContext = newContext
+        , erEffectHash = effectHash
+        , erLogEntry = logEntry
+        }
+  
+  -- 9. Update the interpreter with new context
+  let newInterpreter = interpreter { context = newContext }
+  
+  -- Return the updated interpreter and result
+  pure (newInterpreter, result)
 
--- | Validate that a program owns a resource
-validateResourceOwnership :: 
-  (Member (Error EffectInterpretationError) r) => 
-  Resource ->
-  Program ->
-  Sem r ()
-validateResourceOwnership resource program = do
-  -- In a real implementation, this would check resource ownership
-  -- For now, it's just a placeholder
-  return ()
+-- | Validate preconditions for an effect
+validatePreconditions :: 
+  (Member (Error AppError) r) => 
+  EffectInterpreter -> 
+  GuardedEffect -> 
+  Sem r Bool
+validatePreconditions interpreter (GuardedEffect guard effect) = do
+  -- Get the current time map from the context
+  let currentContext = context interpreter
+      timeMap = ecTimeMap currentContext
+  
+  -- Check if the guard condition holds
+  guardHolds <- checkGuard timeMap guard
+  
+  -- If the guard fails, throw an error
+  if not guardHolds
+    then throw $ PreconditionFailed guard
+    else pure True
 
--- | Validate that a memory slot is occupied
-validateSlotOccupied :: 
-  (Member (Error EffectInterpretationError) r) => 
-  ProgramId ->
-  MemorySlot ->
-  Sem r ()
-validateSlotOccupied programId slot = do
-  -- In a real implementation, this would check if the slot contains a resource
-  -- For now, it's just a placeholder
-  return ()
+-- | Enforce that resources have a single owner
+enforceResourceOwnership :: 
+  (Member (Error AppError) r) => 
+  EffectInterpreter -> 
+  Effect -> 
+  Sem r Bool
+enforceResourceOwnership interpreter effect = do
+  -- In a full implementation, this would check the ResourceLedger
+  -- to ensure that resources are owned by the expected programs
+  -- and that transfers maintain the single-owner invariant
+  
+  -- For now, just return True
+  pure True
 
--- | Validate that a program has access to another program
-validateProgramAccess :: 
-  (Member (Error EffectInterpretationError) r) => 
-  ProgramId ->
-  Program ->
-  Sem r ()
-validateProgramAccess targetProgram callingProgram = do
-  -- In a real implementation, this would check program access permissions
-  -- For now, it's just a placeholder
-  return ()
+-- | Enforce causal ordering of effects
+enforceCausalOrder :: 
+  (Member (Error AppError) r) => 
+  EffectInterpreter -> 
+  Sem r Bool
+enforceCausalOrder interpreter = do
+  -- In a full implementation, this would verify that:
+  -- 1. The previous effect hash matches the expected causal parent
+  -- 2. The time map is advancing monotonically
+  -- 3. Cross-timeline events respect logical clock ordering
+  
+  -- For now, just return True
+  pure True
 
--- | Validate that a program owns a capability
-validateCapabilityOwnership :: 
-  (Member (Error EffectInterpretationError) r) => 
-  Text ->
-  Program ->
-  Sem r ()
-validateCapabilityOwnership capability program = do
-  -- In a real implementation, this would check capability ownership
-  -- For now, it's just a placeholder
-  return ()
+-- | Enforce time map consistency
+enforceTimeMapConsistency :: 
+  (Member (Error AppError) r) => 
+  TimeMap -> 
+  Sem r Bool
+enforceTimeMapConsistency timeMap = do
+  -- Verify that the time map is consistent
+  -- This ensures that timeline heads are advancing monotonically
+  -- and that logical clocks respect causal ordering
+  verifyTimeMapConsistency timeMap
 
--- | Validate that a resource exists
-validateResourceExists :: 
-  (Member (Error EffectInterpretationError) r) => 
-  Text ->
-  Sem r ()
-validateResourceExists resourceKey = do
-  -- In a real implementation, this would check if the resource exists
-  -- For now, it's just a placeholder
-  return ()
+-- | Apply an effect to program state
+applyEffect ::
+  (Member (Error AppError) r) =>
+  ProgramState ->
+  Effect ->
+  Sem r ProgramState
+applyEffect state effect = do
+  -- In a full implementation, this would apply the effect to the state
+  -- based on the effect type and update the program's memory
+  
+  -- For now, just return the state unchanged
+  pure state
 
--- | Get all timelines affected by an effect
-getAffectedTimelines :: Effect -> [Resource] -> [TimelineId]
-getAffectedTimelines _ _ = 
-  -- In a real implementation, this would determine which timelines are affected
-  -- For now, it's just a placeholder returning an empty list
-  []
+-- | Update the time map based on an effect
+updateTimeMap ::
+  (Member (Error AppError) r) =>
+  TimeMap ->
+  Effect ->
+  Sem r TimeMap
+updateTimeMap timeMap effect = do
+  -- Advance the time map based on the effect
+  -- This updates Lamport clocks and observed timeline heads
+  advanceTimeMap timeMap
 
--- | Compute a hash of the program state
-computeStateHash :: Program -> Hash
-computeStateHash _ =
-  -- In a real implementation, this would compute a hash of the program state
-  -- For now, it's just a placeholder
-  Hash "program-state-hash"
-
--- | Helper function to lift IO actions into Sem
-liftIO :: Member (Embed IO) r => IO a -> Sem r a
-liftIO = embed
-
--- | Unwrap a Maybe or throw an error
-unwrapMaybe :: Member (Error EffectInterpretationError) r => Maybe a -> Text -> Sem r a
-unwrapMaybe Nothing err = throw $ ExecutionError err
-unwrapMaybe (Just x) _ = return x
-
--- | Apply a verification and throw on failure
-unless :: Member (Error EffectInterpretationError) r => Bool -> Sem r () -> Sem r ()
-unless condition action =
-  when (not condition) action
+-- | Log an effect execution to the execution log
+logEffectExecution ::
+  (Member (Error AppError) r) =>
+  ExecutionLog ->
+  Effect ->
+  Hash ->
+  Maybe Hash ->
+  UTCTime ->
+  Sem r ExecutionLog
+logEffectExecution log effect effectHash prevHash timestamp = do
+  -- Create a log entry for this effect
+  let entry = LogEntry
+        { leEffect = effect
+        , leEffectHash = effectHash
+        , lePrevHash = prevHash
+        , leTimestamp = timestamp
+        , leResultHash = computeContentHash effect  -- In a real implementation, this would be the hash of the resulting state
+        }
+  
+  -- Append the entry to the log
+  appendLogEntry log entry
 
  

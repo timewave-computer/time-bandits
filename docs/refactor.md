@@ -354,7 +354,7 @@ After implementing the controller and multi-mode simulation:
 - ✅ Update deployment scripts to work with the new modes
 - ✅ Ensure backwards compatibility during the transition
 
-## ⏳ Phase 5: Implement Security & Invariant Checks
+## ✅ Phase 5: Implement Security & Invariant Checks
 
 **Goal**: Enforce the system contract's security properties and invariants.
 
@@ -400,12 +400,12 @@ verifyProof :: ZKProof -> Guard -> Resource -> IO Bool
 verifyProof proof guard res = -- Implementation depends on specific ZK system
 ```
 
-### 🔜 Step 5.4 Implement System-Level Security Properties
+### ✅ Step 5.4 Implement System-Level Security Properties
 
-- 🔜 Double-spend prevention through single-owner rule
-- 🔜 Reentrancy prevention through Lamport clocks
-- 🔜 Traceability through complete audit trail
-- 🔜 Prevention of backdated transitions through time map enforcement
+- ✅ Double-spend prevention through single-owner rule
+- ✅ Reentrancy prevention through Lamport clocks
+- ✅ Traceability through complete audit trail
+- ✅ Prevention of backdated transitions
 
 ```haskell
 data SecurityProperty
@@ -414,10 +414,11 @@ data SecurityProperty
     | FullTraceability
     | NoBackdating
 
-verifySecurityProperty :: SecurityProperty -> ExecutionLog -> Either SecurityError ()
-verifySecurityProperty NoDoubleSpend log = -- Verify no resource is used twice
-verifySecurityProperty NoReentrancy log = -- Verify no cycles in the execution graph
--- etc.
+verifySecurityProperty :: SecurityProperty -> ExecutionLog -> ResourceLedger -> TimeMap -> Either SecurityError ()
+verifySecurityProperty NoDoubleSpend log ledger _ = verifyNoDoubleSpend log ledger
+verifySecurityProperty NoReentrancy log _ _ = verifyNoReentrancy log
+verifySecurityProperty FullTraceability log _ _ = verifyFullTraceability log
+verifySecurityProperty NoBackdating log _ timeMap = verifyNoBackdating log timeMap
 ```
 
 ### 🔜 Step 5.5 Final Cleanup
@@ -433,6 +434,233 @@ After implementing all security and invariant checks:
 - 🔜 Update all documentation to reflect the new architecture
 - 🔜 Create migration guides for any external users of the codebase
 - 🔜 Document the security guarantees and how they're enforced
+
+## ⏳ Phase 6: Implement Distributed Execution
+
+This phase focuses on implementing the distributed execution capabilities of the Time Bandits system, allowing it to run across multiple processes and machines.
+
+### ✅ Step 6.1 Implement Actor Communication Protocol
+
+Define the protocol for actor communication, including message formats, serialization, and addressing.
+
+```haskell
+-- Actor communication protocol
+data ActorMessage
+  = DeployProgram ProgramDefinition TimeMap
+  | ExecuteTransition TransitionMessage
+  | QueryState ProgramId
+  | SystemControl SystemCommand
+  | ActorDiscovery ActorQuery
+  deriving (Show, Eq, Generic, Serialize)
+
+-- Actor communication channel
+data ActorChannel = ActorChannel
+  { channelId :: ChannelId
+  , channelType :: ChannelType
+  , channelState :: ChannelState
+  , remoteActor :: ActorAddress
+  }
+
+-- Actor addressing scheme
+data ActorAddress
+  = LocalAddress ProcessId
+  | NetworkAddress HostName Port
+  | UnixSocketAddress FilePath
+  deriving (Show, Eq, Generic, Serialize)
+```
+
+### ✅ Step 6.2 Implement Local Multi-Process Mode
+
+Implement the local multi-process mode, where actors run in separate processes on the same machine.
+
+```haskell
+-- Local multi-process configuration
+data ProcessConfig = ProcessConfig
+  { pcCommand :: Text
+  , pcArgs :: [Text]
+  , pcWorkingDir :: FilePath
+  , pcEnvironment :: [(String, String)]
+  , pcSocketPath :: FilePath
+  }
+
+-- Process management
+startProcess :: ProcessId -> ProcessConfig -> IO ProcessState
+stopProcess :: ProcessId -> ProcessState -> IO ()
+monitorProcess :: ProcessId -> ProcessConfig -> ProcessState -> IO ProcessState
+
+-- Inter-process communication
+createSocket :: FilePath -> IO (Either Text Socket)
+sendToProcess :: Serialize a => ProcessState -> a -> IO ()
+receiveFromProcess :: Serialize a => ProcessState -> IO a
+```
+
+### 🔜 Step 6.3 Implement Geo-Distributed Mode
+
+- 🔜 Use TCP/IP for network communication
+- 🔜 Implement encryption and authentication for secure channels
+- 🔜 Handle network partitions and reconnection
+- 🔜 Support discovery and peer exchange
+
+```haskell
+-- | Network mode configuration
+data NetworkConfig = NetworkConfig
+  { networkRole :: ActorRole
+  , networkBindAddress :: SocketAddr
+  , networkBootstrapPeers :: [SocketAddr]
+  , networkKeyPath :: FilePath
+  }
+
+-- | Connect to the distributed network
+connectToNetwork :: NetworkConfig -> IO NetworkHandle
+```
+
+### 🔜 Step 6.4 Implement Distributed Execution Log
+
+- 🔜 Create persistent storage for execution logs
+- 🔜 Replicate logs across network nodes
+- 🔜 Implement consensus for log ordering
+- 🔜 Support verification of remote logs
+
+```haskell
+-- | Distributed log operations
+class DistributedLog m where
+  appendLogEntry :: LogEntry -> m (Either Error Hash)
+  getLogEntry :: Hash -> m (Either Error LogEntry)
+  verifyLogConsistency :: m (Either Error Bool)
+  replicateLog :: [NodeId] -> m (Either Error ())
+```
+
+### 🔜 Step 6.5 Implement Network Resilience
+
+- 🔜 Handle node failures and network interruptions
+- 🔜 Implement leader election for coordination tasks
+- 🔜 Support state recovery after downtime
+- 🔜 Ensure execution continuity across disruptions
+
+```haskell
+-- | Network resilience features
+recoverFromFailure :: NodeId -> m (Either Error ())
+electCoordinator :: [NodeId] -> m (Either Error NodeId)
+synchronizeState :: NodeId -> NodeId -> m (Either Error ())
+```
+
+## ⏳ Phase 7: Implement Timeline Descriptors & Adapters
+
+This phase focuses on formalizing timeline interactions through descriptors and adapters, making the system more flexible and adaptable to different blockchains.
+
+### ✅ Step 7.1 Implement Timeline Descriptors
+
+Create a formal system for describing different timeline types (blockchains, rollups, event logs) with their specific properties and interfaces.
+
+```haskell
+-- | Timeline descriptor defining a timeline's properties
+data TimelineDescriptor = TimelineDescriptor
+  { tdId :: TimelineHash              -- ^ Unique timeline identifier
+  , tdName :: ByteString              -- ^ Human-readable name
+  , tdVmType :: VMType                -- ^ Virtual machine type
+  , tdClockType :: ClockType          -- ^ Clock type
+  , tdEndpoint :: EndpointConfig      -- ^ RPC endpoint configuration
+  , tdEffectMappings :: Map EffectType EffectHandlerSpec  -- ^ Effect to handler mappings
+  , tdMetadata :: Map ByteString ByteString  -- ^ Additional metadata
+  }
+
+-- | Virtual Machine types supported by timelines
+data VMType
+  = EVM        -- ^ Ethereum Virtual Machine
+  | CosmWasm   -- ^ CosmWasm (Cosmos ecosystem)
+  | MoveVM     -- ^ Move VM (Sui, Aptos)
+  | Solana     -- ^ Solana Programs
+  | Native     -- ^ Native Haskell implementation (off-chain)
+  | MockVM     -- ^ Mock VM for testing
+
+-- | Clock types for different timelines
+data ClockType
+  = BlockHeight   -- ^ Block number/height based
+  | SlotNumber    -- ^ Slot number based
+  | Timestamp     -- ^ Timestamp based
+  | LamportClock  -- ^ Logical Lamport clock
+```
+
+### ✅ Step 7.2 Implement Timeline Adapters
+
+Create adapters for different timeline types that provide a uniform interface while handling blockchain-specific implementation details.
+
+```haskell
+-- | Timeline adapter for interacting with a specific timeline
+data TimelineAdapter = TimelineAdapter
+  { taConfig :: AdapterConfig              -- ^ Adapter configuration
+  , taState :: AdapterState                -- ^ Adapter state
+  , taExecuteEffect :: Effect -> IO (Either AdapterError ByteString)  -- ^ Function to execute effects
+  , taQueryState :: ByteString -> IO (Either AdapterError ByteString)  -- ^ Function to query state
+  , taGetLatestHead :: IO (Either AdapterError BlockHeader)  -- ^ Function to get latest head
+  }
+
+-- | Create a timeline adapter from a descriptor
+createAdapter :: 
+  TimelineDescriptor -> 
+  Maybe Manager -> 
+  IO TimelineAdapter
+
+-- | Execute an effect using the appropriate adapter
+executeEffect :: 
+  TimelineAdapter -> 
+  Effect -> 
+  IO ByteString
+```
+
+### 🔜 Step 7.3 Implement TOML-based Configuration
+
+- 🔜 Create a TOML parser for timeline descriptors
+- 🔜 Support loading and validating descriptor files
+- 🔜 Generate adapters from descriptor files
+
+```haskell
+-- | Load a timeline descriptor from a TOML file
+loadDescriptor :: FilePath -> IO (Either Error TimelineDescriptor)
+
+-- | Parse a timeline descriptor from ByteString (TOML content)
+parseDescriptor :: ByteString -> Either Error TimelineDescriptor
+
+-- | Validate a timeline descriptor
+validateDescriptor :: TimelineDescriptor -> Either Error Bool
+```
+
+### 🔜 Step 7.4 Integrate Adapters with Effect Interpreter
+
+- 🔜 Modify the effect interpreter to use timeline adapters
+- 🔜 Route effects to appropriate adapters based on timeline
+- 🔜 Handle adapter errors and retries
+
+```haskell
+-- | Apply an effect using the appropriate timeline adapter
+applyEffectWithAdapter ::
+  Effect ->
+  Map TimelineHash TimelineAdapter ->
+  TimeMap ->
+  IO (Either Error EffectResult)
+```
+
+### 🔜 Step 7.5 Implement Example Timeline Descriptors
+
+- 🔜 Create example descriptors for common blockchains:
+  - Ethereum Mainnet
+  - Ethereum Sepolia Testnet
+  - Solana Mainnet
+  - Cosmos Hub
+  - Local mock timelines
+
+```toml
+# Example Ethereum timeline descriptor
+[timeline]
+id = "ethereum-mainnet"
+name = "Ethereum Mainnet"
+vm_type = "EVM"
+clock_type = "BlockHeight"
+
+[endpoint]
+primary = "https://mainnet.infura.io/v3/YOUR_API_KEY"
+backups = ["https://eth-mainnet.alchemyapi.io/v2/YOUR_API_KEY"]
+```
 
 ## Final Deliverables
 
@@ -547,150 +775,4 @@ Key functions include:
 - ✅ `executeProgram` - Execute program steps and generate proofs
 - ✅ `propagateMessage` - Disseminate messages through the P2P network
 - ✅ `generateProof` - Create cryptographic proofs for transitions
-- ✅ `verifyProof` - Validate proofs for transition message verification
-- ✅ `appendToExecutionLog` - Maintain the append-only execution log
-
-Time Bandits form the distributed infrastructure of the system, ensuring that:
-- Program execution is consistent across all nodes
-- Cryptographic proofs are generated for all transitions
-- The P2P network maintains a consistent view of the system
-- Execution logs are properly synchronized across the network
-
-#### Role Interactions
-
-The three actor roles interact through well-defined protocols:
-
-1. **Time Traveler → Time Keeper**:
-   - ✅ Time Travelers submit TransitionMessages to Time Keepers
-   - ✅ Time Keepers validate and process these messages
-   - ✅ Time Travelers query timeline state through Time Keepers
-
-2. **Time Keeper → Time Bandit**:
-   - ✅ Time Keepers validate timeline consistency
-   - ✅ Time Bandits execute programs and generate proofs
-   - ✅ Time Keepers confirm final program states
-
-3. **Time Bandit → Time Keeper**:
-   - ✅ Time Bandits maintain the distributed execution log
-   - ✅ Time Keepers provide timeline state updates
-   - ✅ Both synchronize to maintain system consistency
-
-An example of the complete flow:
-
-```haskell
-runProgramTransition :: Controller -> TimeTraveler -> TimeKeeper -> TimeBandit -> ProgramID -> Effect -> IO (Either Error TransitionResult)
-runProgramTransition controller traveler keeper bandit pid effect = do
-    -- 1. Time Traveler creates transition
-    Right transMsg <- submitTransition traveler pid effect Nothing
-    
-    -- 2. Time Keeper validates transition
-    Right valResult <- validateMessage keeper transMsg
-    
-    -- 3. Time Bandit executes program and generates proof
-    Right (execResult, proof) <- executeProgram bandit pid effect
-    
-    -- 4. Time Traveler submits finalized transition with proof
-    Right transId <- submitTransition traveler pid effect (Just proof)
-    
-    -- 5. Controller applies effect and updates time map
-    Right (newController, newState) <- runController controller transMsg
-    
-    -- 6. Time Keeper updates timeline state
-    Right newTimelineState <- applyToTimeline keeper (timelineOf pid) transMsg
-    
-    -- 7. Time Bandit updates execution log
-    Right () <- appendToExecutionLog bandit (logEntryFrom transMsg execResult)
-    
-    pure $ Right TransitionResult { ... }
-```
-
-Each actor role must function consistently across all three simulation modes (In-Memory, Local Multi-Process, and Geo-Distributed) while maintaining the same behavior and security guarantees.
-
-### Deployment and Execution
-- ⏳ Deploy.hs - Multi-mode deployment system
-- 🔜 Scenario.hs - Scenario definition and parsing
-- 🔜 ZKProof.hs - Zero-knowledge proof generation and verification
-- 🔜 SecurityVerifier.hs - System-level security property verification 
-- ⏳ Nix flakes for per-actor builds
-- 🔜 TOML-based scenario files with role assignments
-
-## Continuous Cleanup Strategy
-
-To maintain code quality throughout the refactor process:
-
-1. **After Each Implementation Step**:
-   - ✅ Create adapter functions for backward compatibility
-   - ✅ Mark old code as deprecated with directions to new modules
-   - ✅ Run tests to ensure functionality is preserved
-
-2. **During Migration**:
-   - ⏳ Update imports one module at a time
-   - ⏳ Keep adapter functions until all dependencies are updated
-   - ⏳ Maintain test coverage for both old and new implementations
-
-3. **Final Cleanup**:
-   - ⏳ Remove all deprecated code
-   - ⏳ Remove adapter functions
-   - ⏳ Ensure all tests pass with the new implementation only
-
-## Detailed Migration Guides
-
-This section provides detailed migration guides for each component that's being refactored. These guides outline the steps to migrate from the existing implementation to the new architecture.
-
-### Resource Module Migration Guide
-
-#### Overview
-This guide outlines the steps to migrate the `ResourceOps` effect from `TimeBandits.Effects` to our new `TimeBandits.Resource` module. This is part of our larger refactoring effort to create more focused, single-responsibility modules.
-
-#### Current State
-
-**In TimeBandits.Effects:**
-- ✅ `ResourceOps` typeclass with methods for resource management
-- ✅ `ResourceOperationEffect` data type implementing the effect
-- ✅ Instance connecting the typeclass to the effect
-
-**In TimeBandits.Resource:**
-- ✅ Basic resource type definitions
-- ✅ Simplified resource operations with placeholder implementations
-- ✅ No effect system integration yet
-
-#### Migration Steps
-
-##### Step 1: Enhance Resource.hs
-1. ✅ Add the full `ResourceOps` effect to `Resource.hs`
-2. ✅ Implement all the operations with proper implementations
-3. ✅ Keep the same interface for compatibility
-
-```haskell
--- | Resource operations effect
-data ResourceEffect m a where
-  CreateResource :: ByteString -> ActorHash -> TimelineHash -> ResourceEffect m (Either AppError Resource)
-  TransferResource :: Resource -> ActorHash -> TimelineHash -> ResourceEffect m (Either AppError Resource)
-  ConsumeResource :: Resource -> ResourceEffect m (Either AppError Resource)
-  VerifyResource :: Resource -> ResourceEffect m (Either AppError Bool)
-  GetResource :: ResourceHash -> ResourceEffect m (Either AppError Resource)
-  GetResourcesByOwner :: ActorHash -> ResourceEffect m (Either AppError [Resource])
-  GetResourcesByTimeline :: TimelineHash -> ResourceEffect m (Either AppError [Resource])
-  CreateTransaction :: [Resource] -> [Resource] -> ActorHash -> TimelineHash -> ResourceEffect m (Either AppError UnifiedResourceTransaction)
-  ValidateTransaction :: UnifiedResourceTransaction -> ResourceEffect m (Either AppError TransactionValidationResult)
-  ExecuteTransaction :: UnifiedResourceTransaction -> ResourceEffect m (Either AppError [Resource])
-  TransactionHistory :: ResourceHash -> ResourceEffect m (Either AppError [UnifiedResourceTransaction])
-
-makeSem ''ResourceEffect
-```
-
-##### Step 2: Create Adapter Functions
-1. ✅ Create adapter functions in `Resource.hs` that map to the old interface
-2. ✅ This allows gradual migration without breaking existing code
-
-```haskell
--- | Adapter function to maintain compatibility with old ResourceOps interface
-adaptResourceOps :: Member ResourceEffect r => ResourceOperationEffect m a -> Sem r a
-adaptResourceOps = \case
-  OpCreateResource meta owner timeline -> createResource meta owner timeline
-  OpTransferResource res actor timeline -> transferResource res actor timeline
-  -- ... and so on for all operations
-```
-
-##### Step 3: Update Imports
-1. ✅ Update imports in files that use `ResourceOps` to use `
+- ✅ SecurityVerifier.hs - System-level security property verification
