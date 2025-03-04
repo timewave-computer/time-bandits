@@ -86,10 +86,16 @@ library
   exposed-modules:
     TimeBandits.Core
     TimeBandits.Effects
+    TimeBandits.EffectExecutor
     TimeBandits.Events
+    TimeBandits.Network
+    TimeBandits.Program
+    TimeBandits.ProgramEffect
+    TimeBandits.Resource
+    TimeBandits.TimeMap
+    TimeBandits.Timeline
     TimeBandits.Types
     TimeBandits.Utils
-    TimeBandits.Network
 
 executable time-bandits
   import:         shared
