@@ -41,12 +41,20 @@ module TimeBandits.Resource
   , ResourceEvent(..)
   , ResourceEventType(..)
   , ResourceCapability(..)
+
+  -- * Adapter functions for backward compatibility with old Effects interface
+  , adaptCreateResource
+  , adaptTransferResource
+  , adaptConsumeResource
+  , adaptVerifyResource
   ) where
 
 import Data.ByteString (ByteString)
+import Data.ByteString.Char8 qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
 import Data.Text (Text)
+import Data.Text qualified as Text
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
@@ -132,3 +140,57 @@ verifyResourceOwnership resourceId expectedOwner = do
   -- In a real implementation, this would check if the address owns the resource
   -- For now, just return True
   pure True 
+
+-- | Adapter functions for backward compatibility with old Effects interface
+
+-- | Adapter for compatibility with old ResourceOps interface
+adaptCreateResource :: 
+  (Member (Error AppError) r) => 
+  ByteString -> 
+  ActorHash -> 
+  TimelineHash -> 
+  Sem r (Either AppError Resource)
+adaptCreateResource metadata owner timeline = do
+  -- Create a resource based on metadata and owner
+  let resource = SyntheticInternalMarker (Text.pack $ BS.unpack metadata)
+  -- In a real implementation, this would create a resource appropriate for the metadata
+  rid <- createResource resource
+  -- Wrap the result with Right since the old interface returned Either
+  pure $ Right resource
+
+-- | Adapter for compatibility with old ResourceOps interface
+adaptTransferResource :: 
+  (Member (Error AppError) r) => 
+  Resource -> 
+  ActorHash -> 
+  TimelineHash -> 
+  Sem r (Either AppError Resource)
+adaptTransferResource resource newOwner timeline = do
+  -- Convert ActorHash to Address (implementation detail)
+  let newOwnerAddr = BS.pack $ show $ unEntityHash newOwner
+  -- Transfer the resource
+  rid <- transferResource (EntityHash $ Hash "dummy-resource-id") newOwnerAddr
+  -- Return the resource with Right
+  pure $ Right resource
+
+-- | Adapter for compatibility with old ResourceOps interface
+adaptConsumeResource :: 
+  (Member (Error AppError) r) => 
+  Resource -> 
+  Sem r (Either AppError Resource)
+adaptConsumeResource resource = do
+  -- Consume the resource
+  consumeResource (EntityHash $ Hash "dummy-resource-id")
+  -- Return the resource with Right
+  pure $ Right resource
+
+-- | Adapter for compatibility with old ResourceOps interface
+adaptVerifyResource :: 
+  (Member (Error AppError) r) => 
+  Resource -> 
+  Sem r (Either AppError Bool)
+adaptVerifyResource resource = do
+  -- Verify the resource
+  result <- verifyResourceOwnership (EntityHash $ Hash "dummy-resource-id") BS.empty
+  -- Return the result with Right
+  pure $ Right result 

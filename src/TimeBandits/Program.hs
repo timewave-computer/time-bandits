@@ -37,6 +37,10 @@ module TimeBandits.Program
   , lookupMemorySlot
   , updateMemorySlot
   , clearMemorySlot
+
+  -- * Adapter functions for backward compatibility with old interfaces
+  , adaptInitializeProgram
+  , adaptExecuteProgramStep
   ) where
 
 import Data.ByteString (ByteString)
@@ -185,4 +189,30 @@ clearMemorySlot ::
   Sem r ProgramMemory
 clearMemorySlot memory slot = do
   -- Clear the slot in memory
-  pure $ memory { slots = Map.insert slot Nothing (slots memory) } 
+  pure $ memory { slots = Map.insert slot Nothing (slots memory) }
+
+-- | Adapter functions for backward compatibility with old interfaces
+
+-- | Adapter for initializing a program with default settings
+adaptInitializeProgram :: 
+  (Member (Error AppError) r) => 
+  ByteString -> 
+  Sem r Program
+adaptInitializeProgram programName = do
+  -- Create an empty time map
+  let emptyTimeMap = TimeMap Map.empty Map.empty
+  -- Create a program with the empty time map
+  createProgram emptyTimeMap
+
+-- | Adapter for executing a program step
+adaptExecuteProgramStep :: 
+  (Member (Error AppError) r) => 
+  Program -> 
+  Sem r Program
+adaptExecuteProgramStep program = do
+  -- Get the current state
+  let state = executionState program
+  -- Advance the program counter
+  advancedState <- advanceProgramCounter state
+  -- Return the updated program
+  pure $ program { executionState = advancedState } 

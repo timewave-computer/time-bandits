@@ -41,6 +41,12 @@ module TimeBandits.Timeline
   , TimelineEventType(..)
   , TimelineLog(..)
   , TimelineBlock(..)
+  
+  -- * Adapter Functions
+  , adaptGenerateProof
+  , adaptVerifyProof
+  , adaptSendMessage
+  , adaptBroadcastMessage
   ) where
 
 import Data.ByteString (ByteString)
@@ -52,7 +58,7 @@ import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
+import TimeBandits.Core (Hash(..), EntityHash(..), Message(..))
 import TimeBandits.Types
   ( TimelineHash
   , TimelineEvent(..)
@@ -174,3 +180,46 @@ verifyTimelineConsistency _ = do
   -- In a real implementation, this would verify the timeline's consistency guarantees
   -- For now, just return True
   pure True 
+
+-- | Adapter functions for backward compatibility with old Effects interface
+
+-- | Adapter for generating a proof (compatibility with old TimelineProof interface)
+adaptGenerateProof :: 
+  (Member (Error AppError) r) => 
+  Hash -> 
+  Sem r Hash
+adaptGenerateProof sourceHash = do
+  -- In a real implementation, this would generate a cryptographic proof
+  -- For now, just return a dummy hash
+  pure $ Hash "proof-hash"
+
+-- | Adapter for verifying a proof (compatibility with old TimelineProof interface)
+adaptVerifyProof :: 
+  (Member (Error AppError) r) => 
+  Hash -> 
+  Hash -> 
+  Sem r Bool
+adaptVerifyProof proofHash sourceHash = do
+  -- In a real implementation, this would verify the proof
+  -- For now, just return True
+  pure True
+
+-- | Adapter for sending a message (compatibility with old TimelineMessage interface)
+adaptSendMessage :: 
+  (Member (Error AppError) r, Message msg) => 
+  msg -> 
+  Sem r ()
+adaptSendMessage msg = do
+  -- In a real implementation, this would send the message
+  -- For now, do nothing
+  pure ()
+
+-- | Adapter for broadcasting a message (compatibility with old TimelineMessage interface)
+adaptBroadcastMessage :: 
+  (Member (Error AppError) r, Message msg) => 
+  msg -> 
+  Sem r ()
+adaptBroadcastMessage msg = do
+  -- In a real implementation, this would broadcast the message
+  -- For now, do nothing
+  pure () 

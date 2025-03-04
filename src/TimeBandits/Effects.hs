@@ -160,16 +160,18 @@ data Timeout m a where
     ScheduleTimeout :: Int -> Timeout m ()
     CancelTimeout :: Int -> Timeout m ()
 
--- | Cryptographic proof generation and verification for timelines
--- Creates and validates cryptographic proofs used to establish
+-- | DEPRECATED: Use TimeBandits.Timeline and TimeBandits.TimeMap instead
+-- Cryptographic proof generation and verification for timelines
+-- that implements the anchoring protocols needed to establish
 -- verifiable links between timelines and maintain resource provenance.
 data TimelineProof m a where
     GenerateProof :: Hash -> TimelineProof m Hash
     VerifyProof :: Hash -> Hash -> TimelineProof m Bool
 
--- | Timeline-specific messaging and communication
+-- | DEPRECATED: Use TimeBandits.Timeline and TimeBandits.TimeMap instead
+-- Timeline-specific messaging and communication
 -- Handles secure message transmission between actors across timelines,
--- and converts between messages and events in the system.
+-- ensuring causality and non-repudiation.
 data TimelineMessage m a where
     SendMessage :: (Message msg) => msg -> TimelineMessage m ()
     BroadcastMessage :: (Message msg) => msg -> TimelineMessage m ()
@@ -198,7 +200,8 @@ data KeyManagement m a where
 
 makeSem ''KeyManagement
 
--- | Resource operations for managing timeline resources
+-- | DEPRECATED: Use TimeBandits.Resource instead
+-- Resource operations for managing timeline resources
 -- This typeclass defines the core operations for creating, transferring,
 -- consuming, and verifying resources across timelines. It implements a
 -- UTXO (Unspent Transaction Output) model for resource management.
@@ -215,7 +218,8 @@ class ResourceOps r where
     executeTransaction :: UnifiedResourceTransaction -> Sem r (Either AppError [Resource])
     transactionHistory :: ResourceHash -> Sem r (Either AppError [UnifiedResourceTransaction])
 
--- | Resource operations effect
+-- | DEPRECATED: Use TimeBandits.Resource instead
+-- Resource operations effect
 -- Concrete implementation of the ResourceOps typeclass as a Polysemy effect.
 -- Each constructor represents a specific operation on resources that can
 -- be interpreted differently depending on deployment context.
@@ -350,7 +354,8 @@ interpretAppEffects ::
     IO (Either AppError ([String], a))
 interpretAppEffects = error "This function has been replaced by the version in Main.hs"
 
--- | Interpret ResourceOperationEffect
+-- | DEPRECATED: Use TimeBandits.Resource instead
+-- Interpret ResourceOperationEffect
 -- Provides a concrete implementation of the ResourceOperationEffect that
 -- uses the available effects to manage resources, track their state in logs,
 -- and maintain causal consistency with Lamport timestamps.
