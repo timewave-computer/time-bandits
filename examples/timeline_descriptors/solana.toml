@@ -1,0 +1,120 @@
+# Solana Timeline Descriptor
+# This file defines the properties and interfaces for the Solana timeline
+
+[timeline]
+id = "solana-mainnet"
+name = "Solana Mainnet"
+type = "blockchain"
+version = "1.0.0"
+description = """
+Solana mainnet timeline descriptor for Time Bandits.
+This descriptor defines the interfaces for interacting with Solana,
+including effect adapters, proof adapters, and validation rules.
+"""
+
+[properties]
+consensus = "proof-of-stake"
+block_time = 0.4
+finality = "probabilistic"
+native_token = "SOL"
+chain_id = "mainnet-beta"
+
+[clock]
+type = "SlotNumber"
+genesis_timestamp = "2020-03-16T00:00:00Z"
+target_block_time_seconds = 0.4
+
+[effect_adapters]
+# Define effect adapters for Solana
+[effect_adapters.transfer]
+name = "SolanaTransfer"
+description = "Transfer SOL or SPL tokens between addresses"
+function = "transferTokens"
+inputs = ["pubkey:from", "pubkey:to", "u64:amount", "pubkey:mint?"]
+outputs = ["bool:success", "string:signature"]
+
+[effect_adapters.program_call]
+name = "SolanaProgramCall"
+description = "Call a Solana program"
+function = "callProgram"
+inputs = ["pubkey:program", "bytes:data", "array:accounts"]
+outputs = ["bytes:result", "string:signature"]
+
+[effect_adapters.deploy_program]
+name = "SolanaDeployProgram"
+description = "Deploy a new Solana program"
+function = "deployProgram"
+inputs = ["bytes:bytecode", "pubkey:programId"]
+outputs = ["pubkey:programAddress", "string:signature"]
+
+[proof_adapters]
+# Define proof adapters for Solana
+[proof_adapters.transaction_proof]
+name = "SolanaTransactionProof"
+description = "Generate and verify proofs of Solana transactions"
+proof_type = "transaction"
+generate_function = "generateTransactionProof"
+verify_function = "verifyTransactionProof"
+inputs = ["string:signature", "u64:confirmations?"]
+outputs = ["bytes:proof"]
+
+[proof_adapters.account_proof]
+name = "SolanaAccountProof"
+description = "Generate and verify proofs of Solana account state"
+proof_type = "account"
+generate_function = "generateAccountProof"
+verify_function = "verifyAccountProof"
+inputs = ["pubkey:account", "u64:slot?"]
+outputs = ["bytes:proof"]
+
+[proof_adapters.instruction_proof]
+name = "SolanaInstructionProof"
+description = "Generate and verify proofs of Solana instruction execution"
+proof_type = "instruction"
+generate_function = "generateInstructionProof"
+verify_function = "verifyInstructionProof"
+inputs = ["string:signature", "u8:instructionIndex"]
+outputs = ["bytes:proof"]
+
+[validation_rules]
+# Define validation rules for Solana
+[validation_rules.transaction]
+name = "SolanaTransactionValidation"
+description = "Validate Solana transactions"
+rule_type = "transaction"
+function = "validateTransaction"
+inputs = ["bytes:transaction"]
+outputs = ["bool:valid", "string:error?"]
+
+[validation_rules.state]
+name = "SolanaStateValidation"
+description = "Validate Solana state transitions"
+rule_type = "state"
+function = "validateStateTransition"
+inputs = ["bytes:oldState", "bytes:newState", "bytes:transition"]
+outputs = ["bool:valid", "string:error?"]
+
+[validation_rules.ownership]
+name = "SolanaOwnershipValidation"
+description = "Validate ownership of Solana resources"
+rule_type = "ownership"
+function = "validateOwnership"
+inputs = ["pubkey:account", "pubkey:resource"]
+outputs = ["bool:isOwner", "string:error?"]
+
+[resource_mappings]
+token = "SPLToken"
+non_fungible = "SPLNFTToken"
+data = "SPLDataAccount"
+program = "SolanaProgram"
+
+[rpc_endpoints]
+primary = "https://api.mainnet-beta.solana.com"
+fallback = "https://solana-api.projectserum.com"
+archive = "https://solana-archival.example.com"
+
+[state_queries]
+get_slot = "getSlot()"
+get_transaction = "getTransaction(string)"
+get_token_balance = "getTokenAccountBalance(string)"
+get_program_accounts = "getProgramAccounts(string,object)" 

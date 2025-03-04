@@ -43,6 +43,7 @@ import Control.Monad (forM, forM_, void, when, unless)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Serialize (Serialize)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -52,8 +53,8 @@ import Polysemy (Member, Sem, Embed, embed)
 import Polysemy.Error (Error, throw, runError, fromEither)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>), takeDirectory)
+import Data.Char (isSpace)
 import qualified Data.ByteString.Char8 as BS
-import qualified Toml
 
 -- Import from TimeBandits modules
 import TimeBandits.Core (Hash(..), EntityHash(..))
@@ -162,26 +163,105 @@ parseScenarioToml ::
   Text -> 
   Sem r ScenarioConfig
 parseScenarioToml content = do
-  -- In a real implementation, this would use the Toml library to parse the content
-  -- For now, we'll create a dummy scenario config
+  -- Parse the TOML content using a simple line-by-line approach
+  let lines = T.lines content
+      
+      -- Function to find key-value pairs
+      findValue key = T.strip <$> findValueInLines key lines
+      
+      -- Extract scenario name
+      nameM = findValue "name"
+      name = fromMaybe "Unnamed Scenario" nameM
+      
+      -- Extract scenario description
+      descM = findValue "description" 
+      desc = fromMaybe "No description provided" descM
+      
+      -- Extract simulation mode
+      modeM = findValue "mode"
+      mode = case modeM of
+        Just "InMemory" -> InMemory
+        Just "LocalProcesses" -> LocalProcesses
+        Just "GeoDistributed" -> GeoDistributed
+        _ -> InMemory  -- Default to InMemory
+      
+      -- For actors, we'll use a simplified approach
+      -- In a real implementation with the toml package, we'd parse nested tables
+      timeTravelers = extractActorsByPrefix lines "time_travelers" TimeTravelerRole
+      timeKeepers = extractActorsByPrefix lines "time_keepers" TimeKeeperRole
+      timeBandits = extractActorsByPrefix lines "time_bandits" TimeBanditRole
+      allActors = timeTravelers ++ timeKeepers ++ timeBandits
+  
+  -- Create the scenario configuration
   return ScenarioConfig
-    { scenarioName = "Dummy Scenario"
-    , scenarioDescription = "A dummy scenario for testing"
-    , scenarioMode = InMemory
-    , scenarioActors = []
-    , scenarioPrograms = []
-    , scenarioInitialResources = []
+    { scenarioName = name
+    , scenarioDescription = desc
+    , scenarioMode = mode
+    , scenarioActors = allActors
+    , scenarioPrograms = []  -- We'd parse from TOML in a real implementation
+    , scenarioInitialResources = []  -- We'd parse from TOML
     , scenarioLogPath = "logs"
     , scenarioMaxSteps = 100
     , scenarioTimeout = 60
     }
 
+-- | Find a value for a key in lines of text
+findValueInLines :: Text -> [Text] -> Maybe Text
+findValueInLines key lines = 
+  let keyPrefix = key <> " = "
+      matchingLines = filter (\l -> keyPrefix `T.isPrefixOf` T.strip l) lines
+  in case matchingLines of
+       [] -> Nothing
+       (line:_) -> 
+         let parts = T.splitOn "=" line
+         in if length parts >= 2
+            then Just $ removeQuotes $ T.strip $ parts !! 1
+            else Nothing
+
+-- | Remove quotes from a text value
+removeQuotes :: Text -> Text
+removeQuotes t =
+  let t' = T.strip t
+  in if T.length t' >= 2 && T.head t' == '"' && T.last t' == '"'
+     then T.drop 1 $ T.dropEnd 1 t'
+     else t'
+
+-- | Extract actors with a specific role from TOML lines
+extractActorsByPrefix :: [Text] -> Text -> ActorRole -> [ActorSpec]
+extractActorsByPrefix lines prefix role =
+  -- For simplicity, we'll create a few predefined actors
+  -- In a real implementation, we'd parse from the TOML
+  case role of
+    TimeTravelerRole ->
+      [ ActorSpec
+        { actorSpecId = "alice"
+        , actorSpecRole = TimeTravelerRole
+        , actorSpecCapabilities = [ResourceCreation, ResourceTransfer]
+        , actorSpecDescription = "Time Traveler Alice"
+        }
+      ]
+    TimeKeeperRole ->
+      [ ActorSpec
+        { actorSpecId = "ethereum_keeper"
+        , actorSpecRole = TimeKeeperRole
+        , actorSpecCapabilities = [TimelineAccess]
+        , actorSpecDescription = "Ethereum Timeline Keeper"
+        }
+      ]
+    TimeBanditRole ->
+      [ ActorSpec
+        { actorSpecId = "network_node_1"
+        , actorSpecRole = TimeBanditRole
+        , actorSpecCapabilities = [ProofGeneration, NetworkCoordination]
+        , actorSpecDescription = "P2P Network Node"
+        }
+      ]
+
 -- | Generate TOML content from a scenario
 generateScenarioToml :: ScenarioConfig -> Text
 generateScenarioToml config =
-  -- In a real implementation, this would use the Toml library to generate the content
-  -- For now, we'll create a dummy TOML string
-  T.unlines
+  T.unlines $
+    -- Scenario section
     [ "[scenario]"
     , "name = \"" <> scenarioName config <> "\""
     , "description = \"" <> scenarioDescription config <> "\""
@@ -189,7 +269,43 @@ generateScenarioToml config =
     , "log_path = \"" <> T.pack (scenarioLogPath config) <> "\""
     , "max_steps = " <> T.pack (show (scenarioMaxSteps config))
     , "timeout = " <> T.pack (show (scenarioTimeout config))
-    ]
+    , ""
+    ] ++
+    
+    -- Time Travelers
+    concatMap (actorToToml "time_travelers") 
+      (filter (\a -> actorSpecRole a == TimeTravelerRole) (scenarioActors config)) ++
+    
+    -- Time Keepers
+    concatMap (actorToToml "time_keepers") 
+      (filter (\a -> actorSpecRole a == TimeKeeperRole) (scenarioActors config)) ++
+    
+    -- Time Bandits
+    concatMap (actorToToml "time_bandits") 
+      (filter (\a -> actorSpecRole a == TimeBanditRole) (scenarioActors config))
+
+-- | Convert an actor to TOML lines
+actorToToml :: Text -> ActorSpec -> [Text]
+actorToToml section actor =
+  [ "[[" <> section <> "]]"
+  , "id = \"" <> actorSpecId actor <> "\""
+  , "capabilities = [" <> capabilitiesToToml (actorSpecCapabilities actor) <> "]"
+  , "description = \"" <> actorSpecDescription actor <> "\""
+  , ""
+  ]
+
+-- | Convert capabilities to a TOML array string
+capabilitiesToToml :: [ActorCapability] -> Text
+capabilitiesToToml capabilities =
+  T.intercalate ", " $ map capabilityToToml capabilities
+
+-- | Convert a capability to a TOML string
+capabilityToToml :: ActorCapability -> Text
+capabilityToToml ResourceCreation = "\"ResourceCreation\""
+capabilityToToml ResourceTransfer = "\"ResourceTransfer\""
+capabilityToToml TimelineAccess = "\"TimelineAccess\""
+capabilityToToml ProofGeneration = "\"ProofGeneration\""
+capabilityToToml NetworkCoordination = "\"NetworkCoordination\""
 
 -- | Validate a scenario
 validateScenario :: 

@@ -1,193 +1,107 @@
 # Time Bandits
 
-A Haskell library for distributed time travel.
+A framework for causally consistent cross-timeline operations, resource management, and provable effects.
 
-## Overview
+## Architecture Overview
 
-Time Bandits is a framework for creating distributed programs that execute across multiple timelines with explicit ownership tracking. It enables the safe and verifiable transfer of resources between programs, providing clear tracking of causality and resource ownership.
+The Time Bandits system implements a causally consistent execution environment across multiple timelines (blockchains, rollups, event logs, etc.) with clear actor role separation and verifiable state transitions.
 
-The framework's core abstractions are:
+### Key Components
 
-- **Programs**: Stateful, resource-owning entities that execute according to defined rules
-- **Resources**: Explicit state objects owned by programs that can be transferred between them
-- **Timelines**: Causally ordered event streams with their own consistency models
-- **Actors**: Entities that interact with the system by submitting messages
-- **Controllers**: Entities that enforce the system contract and validate transitions
+#### 1. Actor Roles
 
-## Architecture
+The system explicitly separates three actor roles:
 
-The Time Bandits architecture has several core abstractions:
+- **Time Travelers**: Deploy programs and submit transition messages to timelines
+- **Time Keepers**: Maintain individual timelines, validate messages against timeline rules
+- **Time Bandits**: Operate P2P execution network, enforce causal order, maintain time maps
 
-- **Programs** have state and memory with explicit resource contracts
-- **Resources** are owned by programs and can be transferred between them
-- **Timelines** are causally ordered event streams with their own consistency models
-- **Effects** are explicit operations that programs can perform
-- **Controllers** enforce the system contract across different simulation modes
+#### 2. TimeMap
 
-All operations follow a strict contract:
-1. Each program transition is triggered by a TransitionMessage
-2. Messages include proof of resource control and guard validation
-3. Applied effects produce entries in an append-only execution log
-4. All resource ownership is tracked explicitly
+The `TimeMap` type is a first-class concept that:
+- Tracks observed timeline heads and timestamps
+- Maintains per-timeline Lamport clocks
+- Is explicitly passed to every effect application
+- Is updated after every successful transition
 
-## Actor Roles
+#### 3. Execution Log
 
-Time Bandits defines three specialized actor roles:
+All operations are recorded in a structured, content-addressed execution log with:
+- Applied effect
+- Timestamp
+- Parent effect hash (causal link)
+- Resulting program state hash
+- Attached proofs
 
-### Time Travelers
+#### 4. Timeline Descriptors
 
-Time Travelers are the primary users of the system and have the following responsibilities:
-- Creating and deploying new programs with initial time maps
-- Submitting TransitionMessage objects to advance program state
-- Querying program states and timeline information
-- Managing resource ownership and transfers
+Each supported timeline has a `timeline.toml` descriptor that defines:
+- Clock mechanism (block height, slot number, timestamp)
+- Resource mappings
+- Effect adapters
+- RPC endpoints
+- State query methods
 
-Time Travelers interact with programs by creating transition messages that represent desired state changes. Each transition must be validated by Time Keepers before it can be applied.
+#### 5. Centralized Effect Interpreter
 
-### Time Keepers
+The `EffectInterpreter` enforces the system contract by:
+- Validating effect preconditions using the current `TimeMap`
+- Applying effects through appropriate timeline adapters
+- Updating program memory
+- Updating the `TimeMap`
+- Appending to the `ExecutionLog`
 
-Time Keepers are responsible for maintaining the integrity of timelines:
-- Validating incoming transition messages against timeline rules
-- Accepting or rejecting messages based on their validity
-- Providing timeline state queries to authorized actors
-- Enforcing consistency rules within and across timelines
+#### 6. Cross-Program Resource Flow
 
-Time Keepers act as the trusted authority for timelines, ensuring that all state transitions follow the system's rules and maintain causal consistency.
+The system enforces strict resource ownership rules:
+- Every resource has exactly one owner at any time
+- Cross-program transfers use explicit escrow/claim operations
+- All transfers leave a traceable log entry proving custody transfer
 
-### Time Bandits
-
-Time Bandits operate the underlying P2P network:
-- Executing programs and generating cryptographic proofs
-- Maintaining the execution log across the distributed network
-- Facilitating communication between system components
-- Providing the infrastructure for distributed execution
-
-Time Bandits work behind the scenes to ensure the system runs smoothly, generating the cryptographic proofs needed to verify program execution and maintaining the distributed log of all operations.
-
-## Simulation Modes
+## Running Scenarios
 
 The system supports three simulation modes:
+- **InMemory**: All actors operate in a single process
+- **LocalProcesses**: Actors run in separate processes with Unix socket messaging
+- **GeoDistributed**: Actors run on remote machines with TCP/RPC messaging
 
-1. **In-Memory Mode**: All actors run in the same process for rapid testing and development
-2. **Local Multi-Process Mode**: Actors run in separate processes on the same machine, communicating via IPC
-3. **Geo-Distributed Mode**: Actors run on separate machines, communicating over the network
-
-## Getting Started
-
-### Prerequisites
-
-- GHC 9.4 or later
-- Cabal 3.6 or later
-- Nix with flakes enabled (for multi-process mode)
-
-### Building
+Scenarios can be defined in TOML files:
 
 ```bash
+# Run an example scenario
+cabal run time-bandits-scenario -- examples/simple_scenario.toml
+```
+
+## Development
+
+The project uses a Nix-based development environment:
+
+```bash
+# Enter development environment
+nix develop
+
+# Build the project
 cabal build
-```
 
-### Running
-
-```bash
-cabal run time-bandits -- --scenario examples/resource_transfer.toml
-```
-
-### Testing
-
-```bash
+# Run tests
 cabal test
 ```
 
-## Example Scenario
+## Documentation
 
-Here's an example of a scenario defined using TOML files:
+- [Refactor Plan](docs/refactor.md): Comprehensive refactoring plan
+- [Timeline API](docs/timeline_api.md): Timeline API documentation
+- [Resource Model](docs/resource_model.md): Resource ownership model
 
-```toml
-# resource_transfer.toml
-[scenario]
-name = "Resource Transfer Example"
-mode = "LocalProcesses"
+## Example Scenarios
 
-[[time_travelers]]
-id = "alice"
-capabilities = ["ResourceCreation", "ResourceTransfer"]
-resources = ["resource_1", "resource_2"]
+The `examples/` directory contains scenario definitions:
 
-[[time_travelers]]
-id = "bob"
-capabilities = ["ResourceReceive"]
-resources = []
-
-[[time_keepers]]
-id = "ethereum_keeper"
-timelines = ["ethereum_main"]
-validation_rules = ["EthereumValidation"]
-
-[[time_bandits]]
-id = "node_1"
-network_role = "Executor"
-proof_generators = ["ZkResourceTransfer"]
-
-[programs.escrow]
-type = "EscrowProgram"
-initial_state = { locked = false }
-```
-
-This scenario defines a simple resource transfer between two Time Travelers, with a Time Keeper validating the transfer and a Time Bandit executing the program and generating proofs.
+- `simple_scenario.toml`: Basic cross-timeline resource transfer
+- `causal_ordering_scenario.toml`: Demonstration of TimeMap and causal ordering
+- `execution_log_scenario.toml`: Structured execution log with causal links
+- `timeline_descriptors/`: Example timeline descriptor files
 
 ## License
 
 This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
-
-```haskell
--- | Interpreter configuration for controlling effect inclusion
-data InterpreterConfig = InterpreterConfig
-    { -- | How to handle trace logs
-      traceConfig :: TraceConfig
-    }
-
--- | Default interpreter configuration
-defaultConfig :: InterpreterConfig
-defaultConfig = InterpreterConfig
-    { traceConfig = SimpleTracing
-    }
-```
-
-You can run the application with different configurations:
-
-```haskell
--- Using default configuration
-result <- interpretAppEffects timeRef resourceLogRef storeRef subsRef program
-
--- Using verbose configuration
-result <- interpretWithConfig verboseConfig timeRef resourceLogRef storeRef subsRef program
-
--- Using silent configuration
-result <- interpretWithConfig silentConfig timeRef resourceLogRef storeRef subsRef program
-```
-
-The application supports command line options for controlling logging:
-
-- `--verbose` - Enable verbose logging with timestamps
-- `--silent` - Disable all tracing
-- (default) - Standard logging without timestamps
-
-## Development, Building, and Running
-
-```bash
-# Enter the development shell
-nix develop
-
-# Build the project
-nix build
-
-# Run the application
-nix run
-
-# Run with verbose logging
-nix run -- --verbose
-
-# Run with tracing disabled
-nix run -- --silent
-```
-

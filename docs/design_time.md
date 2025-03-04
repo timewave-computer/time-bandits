@@ -1,4 +1,4 @@
-# Time in Time Bandits: Multiple Layers
+# Time Model
 
 ## Time Types
 
@@ -13,11 +13,13 @@
 ## Lamport Clock Role
 
 ### Purpose
+
 - To establish a total order of events within each timeline as observed by Time Bandits peers.
 - To establish a total order of effects within a program execution (internal program step counter).
 - To create a globally consistent ordering for all cross-timeline events within a given time map.
 
 ### Why Lamport Clocks?
+
 Lamport clocks are the minimal viable causal clock — they only track:
 - "Happens-before" relationships.
 - Logical step counting.
@@ -27,6 +29,7 @@ This is all you need to enforce the causal ordering guarantees in the system con
 - "Effects must apply in declared order."
 
 ### What Lamport Clocks Do NOT Do
+
 - They do not track real time.
 - They do not detect external clock drift.
 - They do not relate to timestamps written into blocks.
@@ -34,19 +37,23 @@ This is all you need to enforce the causal ordering guarantees in the system con
 ### Lamport in Time Bandits — Where They Live
 
 #### Per Timeline Observation
+
 - Each peer assigns a Lamport timestamp to every event received from a timeline.
 - Each peer increments its Lamport clock every time it relays or applies an event.
 - This defines a local causal view of each timeline.
 
 #### Per Program Execution
+
 - Each program has a simple Program Counter (effectively a Lamport clock for its own internal sequence).
 - Each time a program step is applied, the program counter increments.
 
 #### Cross-Timeline Time Map
+
 - Each time map combines the Lamport heads of each timeline.
 - The time map's state hash is a Merkle root of per-timeline Lamport heads.
 
 ### Lamport Example (Per Timeline)
+
 ```
 Timeline A:
 Event 1: L = 1
@@ -60,6 +67,7 @@ This is a purely logical view that guarantees:
 - If two peers disagree on the Lamport number of an event, one of them is provably out of sync.
 
 ### Lamport Example (Within Program)
+
 ```
 Program P:
 Step 1 (Deposit Escrow): L = 1
@@ -73,11 +81,13 @@ This guarantees:
 ## Real-Time Clocks Role (Wall Clocks)
 
 ### Purpose
+
 - Detect anomalies caused by faulty time sources.
 - Provide diagnostic metadata, especially for cross-peer time reconciliation.
 - Establish coarse bounds for finality windows (e.g., timeline A and timeline B need to be "close enough" for a program to advance).
 
 ### Wall Clock Example (Diagnostic)
+
 ```
 Peer A received Block 500 at 12:00:01 UTC
 Peer B received Block 500 at 12:00:05 UTC
@@ -92,6 +102,7 @@ This has no direct causal effect on program correctness (which is governed by La
 ## Timeline Clocks (Native Timeline Time)
 
 ### Purpose
+
 - Respect each timeline's own notion of time.
 - May be:
   - Block height.
@@ -100,6 +111,7 @@ This has no direct causal effect on program correctness (which is governed by La
 - Time Bandits must trust these as long as the timeline's own consensus holds.
 
 ### Timeline Clock Example
+
 ```
 Ethereum Block 12,345 with timestamp 1709450000
 Celestia Block 4567 with timestamp 1709450200
@@ -110,6 +122,7 @@ Time Bandits does not modify or re-interpret these timestamps — it imports the
 ## Time Map (Composite Cross-Timeline Snapshot)
 
 ### Purpose
+
 - Represents a coherent multi-timeline view.
 - Combines:
   - Timeline Heads (block heights).
@@ -118,6 +131,7 @@ Time Bandits does not modify or re-interpret these timestamps — it imports the
 - Programs execute against a fixed time map.
 
 ### Example Time Map
+
 ```
 TimeMap {
   ethereum = (head = block 12345, lamport = 100, timestamp = 1709450000)
@@ -154,6 +168,7 @@ Here's how time works:
 | Program Step 3 | Time Bandits | 3 | N/A | 12:00:03 |
 
 ### Invariant Checks
+
 - Step 3's Lamport must be > Step 2 and Step 1.
 - Step 3 must only observe time maps that include Step 1 + 2.
 - Step 3's proof must attest that:

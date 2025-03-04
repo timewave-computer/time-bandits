@@ -51,7 +51,7 @@ module TimeBandits.Timeline
 
 import Data.ByteString (ByteString)
 import Data.Map.Strict qualified as Map
-import Data.Serialize (Serialize)
+import Data.Serialize (Serialize, encode)
 import Data.Time.Clock (UTCTime)
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
@@ -106,7 +106,7 @@ data BlockHeader = BlockHeader
 -- | Timeline is a causally ordered event log
 data Timeline = Timeline
   { timelineId :: TimelineId
-  , eventLog :: [Event]
+  , eventLog :: [ByteString]  -- Store serialized events
   , clock :: TimelineClock
   }
   deriving stock (Eq, Show, Generic)
@@ -122,8 +122,7 @@ createTimeline name initialClock = do
   -- Create a timeline hash from the name
   let timelineId = EntityHash $ Hash name
   
-  -- Check if timeline already exists (would be implemented with state effect in practice)
-  -- For now, just create a new timeline
+  -- Create a new timeline with empty event log
   pure $ Timeline
     { timelineId = timelineId
     , eventLog = []
@@ -142,14 +141,16 @@ observeTimeline timelineHash = do
 
 -- | Append an event to a timeline
 appendToTimeline ::
-  (Member (Error AppError) r, Event e) =>
+  (Member (Error AppError) r, Event e, Serialize e) =>
   Timeline ->
   e ->
   Sem r Timeline
 appendToTimeline timeline event = do
-  -- In a real implementation, this would validate and append the event to the timeline
-  -- For now, just return the timeline unchanged
-  pure timeline
+  -- Serialize the event
+  let serializedEvent = encode event
+  
+  -- Append to the event log
+  pure $ timeline { eventLog = eventLog timeline ++ [serializedEvent] }
 
 -- | Get the current head of a timeline
 getTimelineHead ::
@@ -179,7 +180,7 @@ verifyTimelineConsistency ::
 verifyTimelineConsistency _ = do
   -- In a real implementation, this would verify the timeline's consistency guarantees
   -- For now, just return True
-  pure True 
+  pure True
 
 -- | Adapter functions for backward compatibility with old Effects interface
 

@@ -87,6 +87,20 @@ import TimeBandits.Timeline (TimelineId)
 import TimeBandits.TimeMap (TimeMap)
 import TimeBandits.ExecutionLog (ExecutionLog, LogEntry)
 import TimeBandits.Actor (ActorCapability(..))
+import TimeBandits.ZKProof
+  ( ZKProof(..)
+  , ProofType(..)
+  , ProofInput(..)
+  , ProofError(..)
+  , generateZKProof
+  )
+import TimeBandits.TimelineProof
+  ( TimelineProof
+  , ProofRequest(..)
+  , ProofVerificationResult(..)
+  , createTransitionProof
+  , verifyTransitionProof
+  )
 
 -- | TimeBandit data type
 data TimeBandit = TimeBandit
@@ -167,9 +181,9 @@ data ExecutionResult = ExecutionResult
 data ProofResult = ProofResult
   { proofSuccess :: Bool
   , proofProgramId :: ProgramId
-  , proofHash :: Hash
-  , zkProof :: ZKProof
-  , proofMetadata :: ByteString
+  , proofIndex :: Int
+  , zkProof :: Maybe TimelineProof
+  , proofError :: Maybe Text
   }
   deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
@@ -296,150 +310,89 @@ executeProgram bandit programId transitionMsg = do
   
   pure (updatedBandit, result)
 
--- | Generate a proof for a program transition
--- 
--- This function:
--- 1. Takes a program state and transition
--- 2. Generates a cryptographic proof of correct execution
--- 3. Returns the proof result
+-- | Generate a ZK proof for a program state transition
 generateTransitionProof :: 
-  (Member (Error ProofError) r, Member (Embed IO) r) =>
+  (Member (Error AppError) r, Member (Embed IO) r) =>
   TimeBandit ->
-  ProgramId ->
   TransitionMessage ->
-  ProgramState ->
   Sem r ProofResult
-generateTransitionProof bandit programId transitionMsg programState = do
-  -- Check if the bandit has proof generation capability
-  when (CanGenerateProof `notElem` capabilities bandit) $
-    throw $ ProofGenerationFailed "Missing CanGenerateProof capability"
+generateTransitionProof bandit msg = do
+  -- Verify that the bandit has proof generation capabilities
+  when (not $ hasCapability ProofGeneration $ capabilities bandit) $
+    throw $ CapabilityError "Bandit does not have proof generation capability"
   
-  -- Extract necessary information from the state and transition message
-  let effect = effectFromMsg transitionMsg
-      stepIndex = stepIndexFromMsg transitionMsg
-      resources = resourcesFromMsg transitionMsg
-      sender = senderFromMsg transitionMsg
+  -- Extract program ID and index from the transition message
+  let programId = transitionProgramId msg
+      index = transitionIndex msg
+      effect = transitionEffect msg
   
-  -- Verify the program exists in our running programs
-  when (programId `Map.notMember` runningPrograms bandit) $
-    throw $ MissingRequirements "Program not found in running programs"
-  
-  -- Get the current program state
-  let currentState = runningPrograms bandit Map.! programId
-  
-  -- Ensure the stored state matches the provided state
-  when (currentState /= programState) $
-    throw $ InvalidProofInputs "Provided program state does not match stored state"
-  
-  -- Calculate state transition verification data
-  let prevStateHash = calculateStateHash $ getPreviousState currentState stepIndex
-      newStateHash = calculateStateHash currentState
-      stateDiff = calculateStateDiff (getPreviousState currentState stepIndex) currentState
-  
-  -- Generate timestamp for the proof
-  now <- embed getCurrentTime
-  
-  -- In a real implementation, this would generate a zero-knowledge proof
-  -- For now, create cryptographic proof of execution
-  
-  -- Simulate complex proof generation with delay
-  embed $ threadDelay 50000  -- 50ms delay
-  
-  -- Create proof inputs combining all relevant data
-  let proofInputs = encodeProofInputs 
-          programId 
-          stepIndex 
-          effect 
-          resources 
-          stateDiff 
-          prevStateHash
-          newStateHash
-          sender
-          now
-  
-  -- Generate the actual proof data
-  let proofData = generateProofData proofInputs
+  -- Get the program from running programs
+  mProgram <- getRunningProgram programId
+  case mProgram of
+    Nothing -> throw $ ProgramError $ "Program not found: " <> T.pack (show programId)
+    Just program -> do
       
-      -- Create metadata with all provable claims
-      metadata = encode 
-          ( programId
-          , stepIndex
-          , prevStateHash
-          , newStateHash 
-          , effect
-          , resources
-          , sender
-          , now
-          )
+      -- Get resources affected by this transition
+      let resources = programResources program
       
-      -- Create the execution hash that uniquely identifies this execution
-      executionHash = Hash $ hashAsBytes $ encode 
-          ( programId
-          , stepIndex
-          , effect
-          , now
-          )
+      -- Create proof inputs from program state
+      let timelineId = programTimeline program
       
-      -- Create the ZK proof
-      zkProof = ZKProof proofData
+      -- Use the new TimelineProof module to create a timeline-specific proof
+      timelineProof <- createTransitionProof 
+        timelineId 
+        programId 
+        index 
+        effect 
+        resources
       
-      -- Create the proof result
-      result = ProofResult
+      -- Return a successful proof result
+      return $ ProofResult
         { proofSuccess = True
         , proofProgramId = programId
-        , proofHash = executionHash
-        , zkProof = zkProof
-        , proofMetadata = metadata
+        , proofIndex = index
+        , zkProof = Just timelineProof
+        , proofError = Nothing
         }
-  
-  pure result
 
--- | Verify a transition proof
--- 
--- This function:
--- 1. Takes a program state, transition, and proof
--- 2. Verifies the proof is valid for the transition
--- 3. Returns verification result
-verifyTransitionProof :: 
-  (Member (Error ProofError) r, Member (Embed IO) r) =>
+-- | Verify a ZK proof against a program state
+verifyTransitionProof ::
+  (Member (Error AppError) r, Member (Embed IO) r) =>
   TimeBandit ->
   ProgramId ->
-  TransitionMessage ->
-  ZKProof ->
+  Int ->
+  Effect ->
+  [Resource] ->
+  TimelineProof ->
   Sem r Bool
-verifyTransitionProof bandit programId transitionMsg proof = do
-  -- Extract necessary information from the transition message
-  let effect = effectFromMsg transitionMsg
-      stepIndex = stepIndexFromMsg transitionMsg
-      resources = resourcesFromMsg transitionMsg
-      sender = senderFromMsg transitionMsg
+verifyTransitionProof bandit programId index effect resources proof = do
+  -- Verify that the bandit has proof verification capabilities
+  when (not $ hasCapability ProofVerification $ capabilities bandit) $
+    throw $ CapabilityError "Bandit does not have proof verification capability"
   
-  -- Decode the proof data
-  let ZKProof proofData = proof
+  -- Get the program (if it exists)
+  mProgram <- getRunningProgram programId
+  timelineId <- case mProgram of
+    Just program -> pure $ programTimeline program
+    Nothing -> throw $ ProgramError $ "Program not found: " <> T.pack (show programId)
   
-  -- Decode proof metadata if available in real implementation
-  -- For now, recreate verification inputs from available data
+  -- Use the TimelineProof module to verify the proof
+  result <- verifyTransitionProof 
+    proof 
+    programId 
+    index 
+    effect 
+    resources
   
-  -- In a real implementation, we would verify the ZK proof
-  -- For demonstration purposes, simulate verification logic
-  
-  -- Simulate verification time
-  embed $ threadDelay 30000  -- 30ms delay
-  
-  -- Calculate verification inputs
-  let verificationInputs = encodeVerificationInputs
-          programId
-          stepIndex
-          effect
-          resources
-          sender
-  
-  -- Perform proof verification
-  let verificationResult = verifyProofAgainstInputs proofData verificationInputs
-  
-  if verificationResult
-    then pure True
-    else throw $ InvalidProofInputs "Proof verification failed"
+  -- Check the verification result
+  case result of
+    ProofVerified _ _ -> pure True
+    ProofRejected _ reason -> do
+      logInfo $ "Proof rejected: " <> reason
+      pure False
+    ProofIndeterminate _ reason -> do
+      logWarning $ "Proof verification indeterminate: " <> reason
+      pure False
 
 -- | Maintain the peer-to-peer network
 -- 

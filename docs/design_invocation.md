@@ -1,6 +1,4 @@
-# Time Bandits Invocation Model
-Version: 1.0  
-Date: 2025-03-07
+# Invocation Model
 
 ## 1. Introduction
 

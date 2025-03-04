@@ -1,6 +1,6 @@
-# Concurrency Model for Time Bandits
+# Concurrency Model
 
-## 1. What is Concurrency in Time Bandits?
+## 1. How Time Bandits Thinks About Concurrency
 
 Concurrency here means:
 

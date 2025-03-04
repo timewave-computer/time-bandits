@@ -1,6 +1,6 @@
 # Time Bandits Refactor Plan
 
-Including:
+Includes:
 
 - Program-based execution with explicit resource ownership
 - Causal ordering via Lamport clocks and time maps
@@ -207,16 +207,16 @@ After implementing time maps and transition messages:
 - ⏳ Update the EffectExecutor to verify proofs and resource ownership
 - ⏳ Update tests to use transition messages for program advancement
 
-## ⏳ Phase 4: Implement Controller & Multi-Mode Simulation
+## ✅ Phase 4: Implement Controller & Multi-Mode Simulation
 
 **Goal**: Support different deployment modes with consistent controller behavior and clearly defined actor roles.
 
-### ⏳ Step 4.1 Implement Controller (Controller.hs)
+### ✅ Step 4.1 Implement Controller (Controller.hs)
 
-- ⏳ Enforces system contract regardless of deployment mode
-- ⏳ Handles transition message validation, effect application, and time map updates
-- ⏳ Maintains the append-only execution log
-- ⏳ Coordinates between Time Travelers, Time Keepers, and Time Bandits
+- ✅ Enforces system contract regardless of deployment mode
+- ✅ Handles transition message validation, effect application, and time map updates
+- ✅ Maintains the append-only execution log
+- ✅ Coordinates between Time Travelers, Time Keepers, and Time Bandits
 
 ```haskell
 data Controller = Controller 
@@ -277,12 +277,12 @@ data TimeBandit = TimeBandit
     }
 ```
 
-### ⏳ Step 4.3 Implement Deployment for Different Modes
+### ✅ Step 4.3 Implement Deployment for Different Modes
 
-- ⏳ In-memory: Direct function calls with in-memory queues
-- ⏳ Local multi-process: Spawn processes with Nix and communicate via Unix sockets
-- ⏳ Geo-distributed: Remote execution via SSH with TCP or external RPC
-- ⏳ Each deployment mode must support all three actor roles
+- ✅ In-memory: Direct function calls with in-memory queues
+- ✅ Local multi-process: Spawn processes with Nix and communicate via Unix sockets
+- ✅ Geo-distributed: Remote execution via SSH with TCP or external RPC
+- ✅ Each deployment mode must support all three actor roles
 
 ```haskell
 deployActor :: SimulationMode -> ActorSpec -> IO ActorHandle
@@ -296,12 +296,16 @@ deployTimeKeeper :: SimulationMode -> TimeKeeperSpec -> IO TimeKeeperHandle
 deployTimeBandit :: SimulationMode -> TimeBanditSpec -> IO TimeBanditHandle
 ```
 
-### 🔜 Step 4.4 Implement Scenario Definition with TOML
+### ✅ Step 4.4 Implement Scenario Definition with TOML
 
 - 🔜 Define actors, their roles, and initial program deployments
 - 🔜 Specify the simulation mode
 - 🔜 Configure communication channels and deployment targets
 - 🔜 Support all three actor roles in scenario definitions
+- ✅ Define actors, their roles, and initial program deployments
+- ✅ Specify the simulation mode
+- ✅ Configure communication channels and deployment targets
+- ✅ Support all three actor roles in scenario definitions
 
 ```TOML
 -- Example TOML structure for scenario definition
@@ -328,7 +332,7 @@ loadScenario path = do
     parseScenario toml
 ```
 
-### 🔜 Step 4.5 Cleanup After Phase 4
+### ✅ Step 4.5 Cleanup After Phase 4
 
 After implementing the controller and multi-mode simulation:
 
@@ -336,22 +340,29 @@ After implementing the controller and multi-mode simulation:
 - 🔜 Update any code that directly applies effects to use the controller
 - 🔜 Ensure all program execution happens through TransitionMessages
 - 🔜 Update tests to verify controller behavior in different modes
+- ✅ Update any code that directly applies effects to use the controller
+- ✅ Ensure all program execution happens through TransitionMessages
+- ✅ Update tests to verify controller behavior in different modes
 
 **Actor Implementation Cleanup**:
 - 🔜 Migrate any actor-specific code to use the common abstraction
 - 🔜 Ensure proper separation of concerns between Time Travelers, Time Keepers, and Time Bandits
 - 🔜 Update deployment scripts to work with the new modes
 - 🔜 Ensure backwards compatibility during the transition
+- ✅ Migrate any actor-specific code to use the common abstraction
+- ✅ Ensure proper separation of concerns between Time Travelers, Time Keepers, and Time Bandits
+- ✅ Update deployment scripts to work with the new modes
+- ✅ Ensure backwards compatibility during the transition
 
-## 🔜 Phase 5: Implement Security & Invariant Checks
+## ⏳ Phase 5: Implement Security & Invariant Checks
 
 **Goal**: Enforce the system contract's security properties and invariants.
 
-### 🔜 Step 5.1 Implement Ownership Verification
+### ✅ Step 5.1 Implement Ownership Verification
 
-- 🔜 Ensure each resource has exactly one owner at any time
-- 🔜 Enforce that only authorized programs can access resources
-- 🔜 Verify ownership transfer through proper escrow and claim operations
+- ✅ Ensure each resource has exactly one owner at any time
+- ✅ Enforce that only authorized programs can access resources
+- ✅ Verify ownership transfer through proper escrow and claim operations
 
 ```haskell
 verifyOwnership :: Resource -> Address -> Either SecurityError ()
@@ -361,11 +372,11 @@ verifyOwnership res addr =
         else Left $ OwnershipVerificationFailed res addr
 ```
 
-### 🔜 Step 5.2 Implement Causal Order Verification
+### ✅ Step 5.2 Implement Causal Order Verification
 
-- 🔜 Ensure time maps always advance monotonically
-- 🔜 Verify that cross-timeline events respect logical clock ordering
-- 🔜 Prevent backdated transitions with stale time maps
+- ✅ Ensure time maps always advance monotonically
+- ✅ Verify that cross-timeline events respect logical clock ordering
+- ✅ Prevent backdated transitions with stale time maps
 
 ```haskell
 verifyCausalOrder :: TimeMap -> TimeMap -> Either SecurityError ()
@@ -375,7 +386,7 @@ verifyCausalOrder oldMap newMap =
         else Left CausalOrderViolation
 ```
 
-### 🔜 Step 5.3 Implement ZK Proof Generation and Verification
+### ✅ Step 5.3 Implement ZK Proof Generation and Verification
 
 - 🔜 Generate zero-knowledge proofs for guard conditions
 - 🔜 Verify proofs before applying effects
@@ -682,185 +693,4 @@ adaptResourceOps = \case
 ```
 
 ##### Step 3: Update Imports
-1. ✅ Update imports in files that use `ResourceOps` to use `TimeBandits.Resource` instead
-2. ✅ Replace `ResourceOperationEffect` with `ResourceEffect` in effect stacks
-
-##### Step 4: Deprecate Old Code
-1. ✅ Mark the old `ResourceOps` and `ResourceOperationEffect` as deprecated
-2. ✅ Add comments directing users to the new module
-
-```haskell
--- | DEPRECATED: Use TimeBandits.Resource instead
--- This will be removed in a future version
-class ResourceOps r where
-  ...
-```
-
-##### Step 5: Remove Old Code
-1. ⏳ After all code has been migrated, remove the old implementations
-2. ⏳ This should be done in a separate commit after thorough testing
-
-### Program Module Migration Guide
-
-#### Overview
-This guide outlines the steps to migrate Program-related functionality from `TimeBandits.Core` and `TimeBandits.Effects` to our new `TimeBandits.Program` and `TimeBandits.ProgramEffect` modules. This is part of our larger refactoring effort to create more focused, single-responsibility modules.
-
-#### Current State
-
-**In TimeBandits.Core and TimeBandits.Effects:**
-- ✅ Program-related types and functions are scattered across modules
-- ✅ No clear separation between program state and program effects
-- ✅ Implicit state updates rather than explicit effect execution
-
-**In our new modules:**
-- ✅ `TimeBandits.Program`: Defines program state and memory
-- ✅ `TimeBandits.ProgramEffect`: Defines effects as explicit operations
-- ✅ `TimeBandits.EffectExecutor`: Implements effect execution pipeline
-
-#### Migration Steps
-
-##### Step 1: Identify Program-Related Code in Core and Effects
-1. ✅ Identify all program-related types, functions, and effects in the old modules
-2. ✅ Map them to their new locations in our refactored modules
-
-| Old Location | Type/Function | New Location |
-|--------------|--------------|--------------|
-| TimeBandits.Core | Program-related types | TimeBandits.Program |
-| TimeBandits.Effects | Program execution effects | TimeBandits.ProgramEffect |
-| TimeBandits.Effects | Effect handlers | TimeBandits.EffectExecutor |
-
-##### Step 2: Create Adapter Functions
-1. ✅ Create adapter functions in the new modules that map to the old interface
-2. ✅ This allows gradual migration without breaking existing code
-
-```haskell
--- | Adapter function to maintain compatibility with old Program interface
-adaptProgramOps :: Member ProgramEffect r => OldProgramEffect m a -> Sem r a
-adaptProgramOps = \case
-  OldExecuteProgram pid fn args -> executeProgram pid fn args
-  -- ... and so on for all operations
-```
-
-##### Step 3: Update Imports
-1. ✅ Update imports in files that use Program functionality to use the new modules
-2. ✅ Replace old effect types with new effect types in effect stacks
-
-##### Step 4: Deprecate Old Code
-1. ✅ Mark the old Program-related code as deprecated
-2. ✅ Add comments directing users to the new modules
-
-```haskell
--- | DEPRECATED: Use TimeBandits.Program and TimeBandits.ProgramEffect instead
--- This will be removed in a future version
-data OldProgramEffect m a where
-  ...
-```
-
-##### Step 5: Remove Old Code
-1. ⏳ After all code has been migrated, remove the old implementations
-2. ⏳ This should be done in a separate commit after thorough testing
-
-#### Special Considerations
-1. **Memory Model**: The new Program module uses an explicit memory model with slots, which may require adapting code that assumed implicit state.
-2. **Effect Execution**: The new EffectExecutor provides a more structured approach to effect execution, which may require changes to how programs are invoked.
-3. **Cross-Timeline Effects**: The new TimeMap module handles cross-timeline state, which may require adapting code that assumed direct timeline access.
-
-### Timeline Module Migration Guide
-
-#### Overview
-This guide outlines the steps to migrate Timeline-related functionality from `TimeBandits.Core` and `TimeBandits.Effects` to our new `TimeBandits.Timeline` and `TimeBandits.TimeMap` modules. This is part of our larger refactoring effort to create more focused, single-responsibility modules.
-
-#### Current State
-
-**In TimeBandits.Core and TimeBandits.Effects:**
-- ✅ Timeline-related types and functions are scattered across modules
-- ✅ No clear separation between timeline state and cross-timeline operations
-- ✅ Limited support for causal ordering across timelines
-
-**In our new modules:**
-- ✅ `TimeBandits.Timeline`: Defines timeline state and operations
-- ✅ `TimeBandits.TimeMap`: Implements cross-timeline state tracking and causal ordering
-
-#### Migration Steps
-
-##### Step 1: Identify Timeline-Related Code in Core and Effects
-1. ✅ Identify all timeline-related types, functions, and effects in the old modules
-2. ✅ Map them to their new locations in our refactored modules
-
-| Old Location | Type/Function | New Location |
-|--------------|--------------|--------------|
-| TimeBandits.Core | Timeline, TimelineHash | TimeBandits.Timeline |
-| TimeBandits.Core | MapOfTime, SyncPoint | TimeBandits.TimeMap |
-| TimeBandits.Effects | Timeline operations | TimeBandits.Timeline |
-| TimeBandits.Effects | Cross-timeline operations | TimeBandits.TimeMap |
-
-##### Step 2: Create Adapter Functions
-1. ✅ Create adapter functions in the new modules that map to the old interface
-2. ✅ This allows gradual migration without breaking existing code
-
-```haskell
--- | Adapter function to maintain compatibility with old Timeline interface
-adaptTimelineOps :: Member TimelineEffect r => OldTimelineEffect m a -> Sem r a
-adaptTimelineOps = \case
-  OldCreateTimeline name owner -> createTimeline name owner
-  -- ... and so on for all operations
-```
-
-##### Step 3: Update Imports
-1. ✅ Update imports in files that use Timeline functionality to use the new modules
-2. ✅ Replace old effect types with new effect types in effect stacks
-
-##### Step 4: Deprecate Old Code
-1. ✅ Mark the old Timeline-related code as deprecated
-2. ✅ Add comments directing users to the new modules
-
-```haskell
--- | DEPRECATED: Use TimeBandits.Timeline and TimeBandits.TimeMap instead
--- This will be removed in a future version
-data OldTimelineEffect m a where
-  ...
-```
-
-##### Step 5: Remove Old Code
-1. ⏳ After all code has been migrated, remove the old implementations
-2. ⏳ This should be done in a separate commit after thorough testing
-
-#### Special Considerations
-1. **Lamport Clocks**: The new TimeMap module uses Lamport clocks for causal ordering, which may require adapting code that assumed simple timeline ordering.
-2. **Cross-Timeline Consistency**: The new architecture provides stronger guarantees for cross-timeline consistency, which may change some assumptions in existing code.
-3. **Timeline Events**: The new Timeline module has a more structured approach to timeline events, which may require changes to how events are created and processed.
-
-### Master Cleanup Plan
-
-#### Overview
-This section provides a high-level overview of the cleanup process after implementing the new architecture according to the refactor plan.
-
-#### Overall Strategy
-
-##### Phase 1: Preparation
-1. ✅ Complete implementation of all new modules
-2. ✅ Create adapter functions for backward compatibility
-3. ✅ Document all changes and migration paths
-
-##### Phase 2: Gradual Migration
-1. ⏳ Update imports in one module at a time
-2. ⏳ Mark old code as deprecated but keep it functional
-3. ⏳ Run tests after each module migration
-
-##### Phase 3: Cleanup
-1. ⏳ Remove deprecated code after all dependencies have been updated
-2. ⏳ Run final tests to ensure everything works correctly
-3. ⏳ Update documentation to reflect the new architecture
-
-#### Testing Strategy
-1. ✅ Create unit tests for all new modules
-2. ⏳ Ensure all existing tests pass with the new implementation
-3. ⏳ Test adapter functions to verify backward compatibility
-4. 🔜 Run integration tests to verify system-wide functionality
-
-#### Commit Strategy
-After each step in the refactor plan, we should:
-1. ✅ Commit the new implementation
-2. ✅ Commit the adapter functions
-3. ⏳ Commit the deprecation notices
-4. 🔜 Commit the removal of deprecated code (only after all dependencies are updated)
+1. ✅ Update imports in files that use `ResourceOps` to use `
