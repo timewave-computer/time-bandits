@@ -1,0 +1,113 @@
+# Multi-Timeline Simulation
+# This simulation demonstrates operations across multiple timelines
+
+[scenario]
+name = "Cross-Timeline Resource Transfer"
+description = "A simulation where resources are transferred between different timelines"
+mode = "InMemory"
+log_path = "logs/multi_timeline"
+max_steps = 200
+timeout = 120  # seconds
+
+# Timeline definitions
+[[timelines]]
+id = "ethereum"
+type = "blockchain"
+descriptor = "../../fixtures/timelines/ethereum.toml"
+
+[[timelines]]
+id = "solana"
+type = "blockchain"
+descriptor = "../../fixtures/timelines/solana.toml"
+
+# Actor definitions
+[[actors]]
+id = "traveler1"
+role = "TimeTraveler"
+capabilities = ["CanCreateResource", "CanTransferResource", "CanCrossTimelines"]
+initial_programs = ["program1"]
+timeline = "ethereum"
+
+[[actors]]
+id = "traveler2"
+role = "TimeTraveler"
+capabilities = ["CanTransferResource"]
+initial_programs = []
+timeline = "solana"
+
+[[actors]]
+id = "keeper1"
+role = "TimeKeeper"
+capabilities = ["CanValidateTransitions", "CanVerifyProofs"]
+timeline = "ethereum"
+
+[[actors]]
+id = "keeper2"
+role = "TimeKeeper"
+capabilities = ["CanValidateTransitions", "CanVerifyProofs"]
+timeline = "solana"
+
+[[actors]]
+id = "bandit1"
+role = "TimeBandit"
+capabilities = ["CanAttemptAttack"]
+timeline = "ethereum"
+
+# Program definitions
+[[programs]]
+id = "program1"
+name = "Cross-Timeline Transfer"
+description = "A program that creates and transfers resources across timelines"
+initial_state = { memory = {}, resources = [] }
+
+# Execution steps
+[[steps]]
+actor = "traveler1"
+action = "CreateResource"
+params = { name = "CrossTimelineToken", data = "Token for cross-timeline transfer" }
+timeline = "ethereum"
+expected_result = "Success"
+
+[[steps]]
+actor = "traveler1"
+action = "PrepareTransfer"
+params = { resource_id = "${result.steps[0].resource_id}", target_timeline = "solana" }
+timeline = "ethereum"
+expected_result = "Success"
+
+[[steps]]
+actor = "traveler1"
+action = "GenerateProof"
+params = { resource_id = "${result.steps[0].resource_id}", target_timeline = "solana" }
+timeline = "ethereum"
+expected_result = "Success"
+
+[[steps]]
+actor = "traveler2"
+action = "ReceiveResource"
+params = { resource_id = "${result.steps[0].resource_id}", source_timeline = "ethereum", proof = "${result.steps[2].proof}" }
+timeline = "solana"
+expected_result = "Success"
+
+[[steps]]
+actor = "traveler2"
+action = "VerifyResourceOwnership"
+params = { resource_id = "${result.steps[0].resource_id}" }
+timeline = "solana"
+expected_result = "Success"
+
+# Simultaneous attack simulation
+[[steps]]
+actor = "bandit1"
+action = "AttemptDoubleSpend"
+params = { resource_id = "${result.steps[0].resource_id}" }
+timeline = "ethereum"
+expected_result = "Failure"
+
+# Verification
+[verification]
+final_owner = "traveler2"
+resource_transfers = 1
+cross_timeline_transfers = 1
+execution_log_entries = 6
+security_properties = ["NoDoubleSpend", "CrossTimelineConsistency"] 

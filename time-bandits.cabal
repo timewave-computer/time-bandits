@@ -82,40 +82,117 @@ common shared
 
   default-language:   GHC2021
 
+-- Core library with shared types and fundamental abstractions
+library time-bandits-core
+  import:          shared
+  hs-source-dirs:  core/src
+  exposed-modules:
+    TimeBandits.Core
+    TimeBandits.Core.Types
+    TimeBandits.Core.Effects
+    TimeBandits.Core.Resource
+    TimeBandits.Core.ResourceLedger
+    TimeBandits.Core.Timeline
+    TimeBandits.Core.TimelineDescriptor
+    TimeBandits.Core.TimeMap
+    TimeBandits.Core.Utils
+
+-- Programs library with program-specific logic
+library time-bandits-programs
+  import:          shared
+  hs-source-dirs:  programs/src
+  exposed-modules:
+    TimeBandits.Programs.Program
+    TimeBandits.Programs.ProgramEffect
+    TimeBandits.Programs.PreconditionEvaluator
+    TimeBandits.Programs.Scenario
+  build-depends:
+    time-bandits-core
+
+-- Actors library with actor implementations
+library time-bandits-actors
+  import:          shared
+  hs-source-dirs:  actors/src
+  exposed-modules:
+    TimeBandits.Actors.Actor
+    TimeBandits.Actors.ActorCommunication
+    TimeBandits.Actors.ActorCoordination
+    TimeBandits.Actors.TimeBandit
+    TimeBandits.Actors.TimeKeeper
+    TimeBandits.Actors.TimeTraveler
+    TimeBandits.Actors.TransitionMessage
+  build-depends:
+    time-bandits-core
+
+-- Execution library for effect interpretation and execution
+library time-bandits-execution
+  import:          shared
+  hs-source-dirs:  execution/src
+  exposed-modules:
+    TimeBandits.Execution.DistributedLog
+    TimeBandits.Execution.EffectAdapterGenerator
+    TimeBandits.Execution.EffectExecutor
+    TimeBandits.Execution.EffectInterpreter
+    TimeBandits.Execution.Events
+    TimeBandits.Execution.ExecutionLog
+    TimeBandits.Execution.LocalMultiProcess
+  build-depends:
+    time-bandits-core,
+    time-bandits-programs
+
+-- Adapters library for external timeline integrations
+library time-bandits-adapters
+  import:          shared
+  hs-source-dirs:  adapters/src
+  exposed-modules:
+    TimeBandits.Adapters.Network
+    TimeBandits.Adapters.NetworkAdapter
+    TimeBandits.Adapters.NetworkQUIC
+    TimeBandits.Adapters.TimelineAdapter
+  build-depends:
+    time-bandits-core
+
+-- Proofs library for proof generation and verification
+library time-bandits-proofs
+  import:          shared
+  hs-source-dirs:  proofs/src
+  exposed-modules:
+    TimeBandits.Proofs.SecurityVerifier
+    TimeBandits.Proofs.TimelineProof
+    TimeBandits.Proofs.ZKProof
+  build-depends:
+    time-bandits-core
+
+-- CLI library for command-line interfaces
+library time-bandits-cli
+  import:          shared
+  hs-source-dirs:  cli/src
+  exposed-modules:
+    TimeBandits.CLI.Controller
+    TimeBandits.CLI.Deployment
+    TimeBandits.CLI.Main
+  build-depends:
+    time-bandits-core,
+    time-bandits-programs,
+    time-bandits-actors,
+    time-bandits-execution,
+    time-bandits-adapters,
+    time-bandits-proofs
+
+-- Main library that re-exports functionality from all components
 library
   import:          shared
   hs-source-dirs:  src
   exposed-modules:
     TimeBandits
-    TimeBandits.Core
-    TimeBandits.Types
-    TimeBandits.Program
-    TimeBandits.Resource
-    TimeBandits.Effects
-    TimeBandits.EffectInterpreter
-    TimeBandits.EffectExecutor
-    TimeBandits.Events
-    TimeBandits.ExecutionLog
-    TimeBandits.Timeline
-    TimeBandits.TimelineAdapter
-    TimeBandits.TimelineDescriptor
-    TimeBandits.Cache
-    TimeBandits.TransitionMessage
-    TimeBandits.Controller
-    TimeBandits.ZKProof
-    TimeBandits.TimelineProof
-    TimeBandits.ResourceLedger
-    TimeBandits.ActorCommunication
-    TimeBandits.LocalMultiProcess
-    TimeBandits.SecurityVerifier
-    TimeBandits.Network
-    TimeBandits.NetworkQUIC
-    TimeBandits.NetworkAdapter
-    TimeBandits.Actor
-    TimeBandits.DistributedLog
-    TimeBandits.PreconditionEvaluator
-    TimeBandits.ProgramEffect
-    TimeBandits.TimeMap
+  build-depends:
+    time-bandits-core,
+    time-bandits-programs,
+    time-bandits-actors,
+    time-bandits-execution,
+    time-bandits-adapters,
+    time-bandits-proofs,
+    time-bandits-cli
 
 executable time-bandits
   import:         shared
@@ -139,6 +216,13 @@ test-suite time-bandits-test
                    , DistributedLogTest
   build-depends:    base >= 4.16 && < 5,
                    time-bandits,
+                   time-bandits-core,
+                   time-bandits-programs,
+                   time-bandits-actors,
+                   time-bandits-execution,
+                   time-bandits-adapters,
+                   time-bandits-proofs,
+                   time-bandits-cli,
                    polysemy,
                    polysemy-plugin,
                    tasty,

@@ -1,0 +1,122 @@
+# Distributed Actors Simulation
+# This simulation demonstrates a geo-distributed deployment of Time Bandits actors
+
+[scenario]
+name = "Geo-Distributed Actors"
+description = "A simulation where actors are distributed across multiple locations"
+mode = "GeoDistributed"
+log_path = "logs/distributed_actors"
+max_steps = 300
+timeout = 180  # seconds
+
+# Network configuration
+[network]
+topology = "FullMesh"
+latency = "Variable"
+packet_loss = 0.01
+bandwidth_limit = "10Mbps"
+
+# Node definitions
+[[nodes]]
+id = "node1"
+region = "us-east"
+ip = "10.0.0.1"
+port = 8001
+
+[[nodes]]
+id = "node2"
+region = "us-west"
+ip = "10.0.0.2"
+port = 8002
+
+[[nodes]]
+id = "node3"
+region = "eu-central"
+ip = "10.0.0.3"
+port = 8003
+
+[[nodes]]
+id = "node4"
+region = "ap-southeast"
+ip = "10.0.0.4"
+port = 8004
+
+# Timeline definitions
+[[timelines]]
+id = "shared-timeline"
+type = "distributed-log"
+descriptor = "../../fixtures/timelines/ethereum.toml"
+
+# Actor definitions with node assignments
+[[actors]]
+id = "traveler1"
+role = "TimeTraveler"
+capabilities = ["CanCreateResource", "CanTransferResource"]
+initial_programs = ["program1"]
+node = "node1"
+timeline = "shared-timeline"
+
+[[actors]]
+id = "traveler2"
+role = "TimeTraveler"
+capabilities = ["CanTransferResource"]
+initial_programs = []
+node = "node2"
+timeline = "shared-timeline"
+
+[[actors]]
+id = "keeper1"
+role = "TimeKeeper"
+capabilities = ["CanValidateTransitions", "CanVerifyProofs"]
+node = "node3"
+timeline = "shared-timeline"
+
+[[actors]]
+id = "keeper2"
+role = "TimeKeeper"
+capabilities = ["CanValidateTransitions", "CanVerifyProofs"]
+node = "node4"
+timeline = "shared-timeline"
+
+# Program definitions
+[[programs]]
+id = "program1"
+name = "Distributed Resource Transfer"
+description = "A program that transfers resources in a distributed environment"
+initial_state = { memory = {}, resources = [] }
+
+# Execution steps
+[[steps]]
+actor = "traveler1"
+action = "CreateResource"
+params = { name = "DistributedToken", data = "Token for distributed transfer" }
+expected_result = "Success"
+
+[[steps]]
+actor = "traveler1"
+action = "TransferResource"
+params = { resource_id = "${result.steps[0].resource_id}", recipient = "traveler2" }
+expected_result = "Success"
+
+# Latency and network partition simulation
+[network_events]
+[[network_events.partitions]]
+start_step = 2
+end_step = 3
+nodes = ["node2", "node3"]
+description = "Temporary network partition between node2 and node3"
+
+[[network_events.latency_spikes]]
+start_step = 4
+duration = 2
+affected_nodes = ["node1", "node4"]
+latency_ms = 500
+description = "High latency between node1 and node4"
+
+# Verification
+[verification]
+final_owner = "traveler2"
+resource_transfers = 1
+consistency_after_partition = true
+max_consensus_delay_ms = 2000
+security_properties = ["EventualConsistency", "PartitionRecovery"] 

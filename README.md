@@ -6,6 +6,37 @@ Time Bandits is a distributed system for deploying and executing programs that c
 
 Programs are not executed directly on any single chain. Instead, they live as a set of zero knowledge verification keys committed to the involved chains, and executed by a P2P network. All program actions are captured by content-addressed, hash-linked logs. These append-only logs, combined with zk proofs of execution, ensure that programs are fully replayable and auditable, even across conflicting or adversarial timelines.
 
+## Getting Started
+
+### Enter the environment and build
+
+```
+# Set up development environment with Nix
+nix develop
+
+# Build the project
+cabal build
+```
+
+### Running a Simple Scenario
+
+```bash
+# Run an in-memory simulation with the basic scenario
+./scripts/run_in_memory_simulation.sh --scenario basic
+
+# Or run directly with cabal
+cabal run time-bandits -- sim in-memory --scenario basic
+```
+
+### Documentation
+
+For more detailed information about the Time-Bandits system, please refer to:
+
+- [Codebase Overview](docs/codebase_overview.md) - Overview of the main components and architecture
+- [Onboarding Guide](docs/onboarding_guide.md) - Detailed guide for new developers
+- [Developer Workflow](docs/dev_workflow.md) - Common development workflows
+- [Glossary](docs/glossary.md) - Definitions of key terms and concepts
+
 ## Actors
 
 **Time Travelers**
