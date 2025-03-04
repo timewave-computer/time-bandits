@@ -9,9 +9,11 @@ Programs are not executed directly on any single chain. Instead, they live as a 
 ## Actors
 
 **Time Travelers**
+
 Time Travelers are the entities who deploy programs and submit state transition messages to the timelines. They are responsible for initiating program execution by creating signed transition messages that include necessary proofs and resources.
 
 **Time Keepers**
+
 Time Keepers are per-timeline actors responsible for:
 - Maintaining the integrity of individual timelines (e.g., blockchains, event logs).
 - Validating and recording new messages (deposits, claims, calls).
@@ -19,6 +21,7 @@ Time Keepers are per-timeline actors responsible for:
 - Ensuring that all applied transitions follow timeline-specific rules.
 
 **Time Bandits**
+
 Time Bandits operate the P2P network that forms the backbone of the system. They:
 - Execute program steps and generate cryptographic proofs.
 - Disseminate messages through the network.
