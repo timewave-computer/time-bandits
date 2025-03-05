@@ -10,6 +10,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: Simulation.Controller
+Description: Centralized simulation management
+
 This module provides the simulation controller abstraction, responsible for:
 
 - Setting up and configuring the simulation environment
@@ -17,6 +20,7 @@ This module provides the simulation controller abstraction, responsible for:
 - Deploying and coordinating actors (Time Travelers, Time Keepers, Time Bandits)
 - Managing the simulation lifecycle
 - Collecting and reporting simulation results
+- Coordinating account programs for all actors
 
 The Controller is agnostic to the deployment mode (in-memory, local processes, or geo-distributed)
 and provides a consistent interface for running simulations.
@@ -28,6 +32,7 @@ module Simulation.Controller
   , ControllerSpec(..)
   , SimulationMode(..)
   , ControllerError(..)
+  , SimulationResult(..)
   
   -- * Controller Operations
   , runController
@@ -43,274 +48,351 @@ module Simulation.Controller
   , createTimeTravelersForScenario
   , createTimeKeepersForScenario
   , createTimeBanditsForScenario
+  
+  -- * Account Program Management
+  , createAccountProgramsForActors
+  , getAccountProgramForActor
+  , routeMessageThroughAccount
   ) where
 
 import Control.Exception (Exception, throwIO, catch, throw)
 import Control.Monad (forM, forM_, unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.ByteString (ByteString)
-import Data.IORef (IORef, newIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.List (isPrefixOf)
-import Data.Maybe (fromMaybe)
-import Polysemy (Member, Sem)
-import Polysemy.Error (Error, throw, catch)
-import Polysemy.Output (Output)
-import Polysemy.State (State)
-import Polysemy.Trace (Trace)
+import Data.Maybe (fromMaybe, isJust)
 import GHC.Generics (Generic)
 import System.Directory (createDirectoryIfMissing)
 
 -- Core imports
+import Core.Common (EntityHash, ActorId)
+import Core.Resource (ResourceId)
 import Core.Timeline (TimelineHash, Timeline)
-import Core.TimeMap (TimeMap)
+import Core.Types (LamportTime)
 
 -- Programs imports
-import Programs.Program (ProgramId, ProgramState)
+import Programs.Program (Program, ProgramId, ProgramState)
+import Programs.AccountProgram (AccountProgram, createAccountProgram)
 
 -- Simulation imports
 import Simulation.Scenario (Scenario(..), scenarioEntities, scenarioTimelines)
-import Simulation.Messaging (ActorSpec(..), ActorID, ActorRole(..))
+import Simulation.Messaging (ActorSpec(..), ActorID, ActorRole(..), Message, MessageType(..))
 
--- | A simplified log store for simulation purposes
-data LogStore = LogStore
-  { logPath :: FilePath
-  , logEntries :: IORef [LogEntry]
-  , logVerbose :: Bool
-  }
-
--- | A simplified log entry for simulation purposes
-data LogEntry = LogEntry
-  { logTimestamp :: Int
-  , logMessage :: Text
-  , logSource :: Text
-  }
-  deriving (Show, Eq)
-
--- | Create a new log store
-createLogStore :: MonadIO m => FilePath -> m LogStore
-createLogStore path = liftIO $ do
-  -- Create the directory if it doesn't exist
-  createDirectoryIfMissing True path
-  -- Create a new empty log entries reference
-  entriesRef <- newIORef []
-  -- Return the log store
-  return LogStore 
-    { logPath = path
-    , logEntries = entriesRef
-    , logVerbose = False
-    }
-
--- | Address of an actor in the system
-type Address = ActorID
-
--- | Handle for interacting with an actor
-data ActorHandle r = ActorHandle
-  { -- Implementation details would be here
-  }
-
--- | Deployment mode for the controller
-data DeploymentMode
-  = SingleNode       -- ^ Everything runs in a single process
-  | MultiNode        -- ^ Components run in separate processes but on the same machine
-  | DistributedNodes -- ^ Components run on different machines
+-- | Simulation mode determines how the simulation is executed
+data SimulationMode
+  = InMemoryMode      -- ^ Run everything in a single process
+  | LocalProcessMode  -- ^ Run actors as separate local processes
+  | DistributedMode   -- ^ Run actors as distributed processes
   deriving (Show, Eq, Generic)
   deriving anyclass (Serialize)
 
--- | Alias for SimulationMode to maintain compatibility
-type SimulationMode = DeploymentMode
-
--- | The main controller state that manages the simulation
-data Controller = Controller
-  { controllerMode :: SimulationMode
-  , controllerTimeMap :: TimeMap
-  , controllerLogStore :: LogStore
-  , controllerPrograms :: Map ProgramId ProgramState
-  , controllerResources :: Map Text Int  -- Simplified resource ledger
-  , controllerActors :: Map Address (ActorHandle '[])
-  , controllerIsInitialized :: Bool
-  , controllerDeploymentMode :: DeploymentMode
-  }
-
--- | Configuration for the controller
+-- | Controller configuration
 data ControllerConfig = ControllerConfig
-  { configMode :: SimulationMode
-  , configLogPath :: FilePath
-  , configVerbose :: Bool
+  { configLogPath :: FilePath        -- ^ Path for simulation logs
+  , configVerbose :: Bool            -- ^ Verbose logging
+  , configMode :: SimulationMode     -- ^ Simulation execution mode
+  , configTimeLimit :: Maybe Int     -- ^ Optional time limit in seconds
+  , configSeed :: Maybe Int          -- ^ Optional random seed
   }
-  deriving (Show, Eq)
-
--- | Controller specification for initialization
-data ControllerSpec = ControllerSpec
-  { controllerSpecMode :: DeploymentMode
-  , controllerSpecLogPath :: FilePath
-  , controllerSpecVerbose :: Bool
-  }
-  deriving (Eq, Show, Generic)
+  deriving (Show, Eq, Generic)
   deriving anyclass (Serialize)
 
--- | Errors that can occur during controller operation
+-- | Controller specification
+data ControllerSpec = ControllerSpec
+  { specName :: Text                 -- ^ Simulation name
+  , specDescription :: Text          -- ^ Simulation description
+  , specScenarioPath :: FilePath     -- ^ Path to scenario file
+  , specConfig :: ControllerConfig   -- ^ Controller configuration
+  }
+  deriving (Show, Eq, Generic)
+  deriving anyclass (Serialize)
+
+-- | Controller errors
 data ControllerError
-  = ScenarioLoadError String
-  | ActorDeploymentError Text
-  | DeploymentError Text
-  | SimulationError String
-  | ProgramNotFound ProgramId
-  deriving (Show, Eq)
+  = ScenarioLoadError Text           -- ^ Error loading scenario
+  | ActorDeploymentError Text        -- ^ Error deploying actors
+  | SimulationExecutionError Text    -- ^ Error during simulation execution
+  | TimeoutError Text                -- ^ Simulation timed out
+  | ConfigurationError Text          -- ^ Invalid configuration
+  deriving (Show, Eq, Generic, Exception)
 
-instance Exception ControllerError
+-- | Simulation result
+data SimulationResult = SimulationResult
+  { resultSuccess :: Bool                    -- ^ Whether simulation completed successfully
+  , resultErrors :: [Text]                   -- ^ Any errors encountered
+  , resultMetrics :: Map Text Double         -- ^ Performance metrics
+  , resultLogs :: [LogEntry]                 -- ^ Simulation logs
+  , resultAccountStates :: Map ActorId ProgramState  -- ^ Final account program states
+  }
+  deriving (Show, Eq, Generic)
+  deriving anyclass (Serialize)
 
--- | Set the simulation mode
-setSimulationMode :: Controller -> SimulationMode -> Controller
-setSimulationMode controller mode =
-  controller { controllerMode = mode }
+-- | A simplified log entry for simulation purposes
+data LogEntry = LogEntry
+  { logTimestamp :: LamportTime
+  , logMessage :: Text
+  , logSource :: Text
+  , logData :: Maybe ByteString
+  }
+  deriving (Show, Eq, Generic)
+  deriving anyclass (Serialize)
 
--- | Get the current simulation mode
-getSimulationMode :: Controller -> SimulationMode
-getSimulationMode = controllerMode 
+-- | The simulation controller
+data Controller = Controller
+  { controllerSpec :: ControllerSpec
+  , controllerScenario :: Maybe Scenario
+  , controllerActors :: IORef (Map ActorID ActorSpec)
+  , controllerAccountPrograms :: IORef (Map ActorId AccountProgram)
+  , controllerLogs :: IORef [LogEntry]
+  , controllerMetrics :: IORef (Map Text Double)
+  , controllerErrors :: IORef [Text]
+  , controllerRunning :: IORef Bool
+  }
 
--- | Create a controller from a specification
-createController :: (Member (Error ControllerError) r)
-                 => ControllerSpec
-                 -> Sem r Controller
-createController spec = do
-  -- Create an empty time map
-  let timeMap = mempty
+-- | Create a new controller
+createController :: MonadIO m => ControllerSpec -> m Controller
+createController spec = liftIO $ do
+  -- Create the log directory
+  createDirectoryIfMissing True (configLogPath $ specConfig spec)
   
-  -- Initialize the log store
-  logStore <- createLogStore (controllerSpecLogPath spec)
+  -- Create IORef fields
+  actorsRef <- newIORef Map.empty
+  accountsRef <- newIORef Map.empty
+  logsRef <- newIORef []
+  metricsRef <- newIORef Map.empty
+  errorsRef <- newIORef []
+  runningRef <- newIORef False
   
-  -- Return the initialized controller
-  return Controller
-    { controllerMode = controllerSpecMode spec
-    , controllerTimeMap = timeMap
-    , controllerLogStore = logStore
-    , controllerPrograms = Map.empty
-    , controllerResources = Map.empty
-    , controllerActors = Map.empty
-    , controllerIsInitialized = False
-    , controllerDeploymentMode = controllerSpecMode spec
+  pure Controller
+    { controllerSpec = spec
+    , controllerScenario = Nothing
+    , controllerActors = actorsRef
+    , controllerAccountPrograms = accountsRef
+    , controllerLogs = logsRef
+    , controllerMetrics = metricsRef
+    , controllerErrors = errorsRef
+    , controllerRunning = runningRef
     }
 
--- | Deploy specialized actors based on their roles
-deploySpecializedActors :: (Member (Error ControllerError) r)
-                       => DeploymentMode
-                       -> [ActorSpec]
-                       -> Sem r (Map.Map Address (ActorHandle r))
-deploySpecializedActors mode specs = do
-  -- Deploy each specialized actor
-  actors <- forM specs $ \spec -> do
-    -- Deploy the actor with the specialized implementation
-    actorHandle <- catch
-      (deployActor spec mode)
-      (\e -> throw $ DeploymentError $ "Actor initialization failed: " <> T.pack (show e))
-    
-    -- Return the actor handle with its ID
-    return (actorSpecID spec, actorHandle)
+-- | Load a scenario into the controller
+loadScenario :: MonadIO m => Controller -> Scenario -> m ()
+loadScenario controller scenario = liftIO $ do
+  -- Store the scenario
+  let controller' = controller { controllerScenario = Just scenario }
   
-  -- Return a map of actor handles by address
-  return $ Map.fromList actors
-
--- | Deploy an actor based on its specification and mode
-deployActor :: (Member (Error ControllerError) r)
-            => ActorSpec
-            -> DeploymentMode
-            -> Sem r (ActorHandle r)
-deployActor _ _ = error "deployActor: Not implemented"  -- Placeholder
-
--- | Load a scenario from a file
-loadScenario :: (Member (Error ControllerError) r)
-             => FilePath
-             -> Sem r Scenario
-loadScenario path = do
-  -- Here you would load and parse the scenario file
-  -- For now, we'll just create a placeholder
-  -- In a real implementation, this would parse YAML or similar
-  throw $ ScenarioLoadError "Scenario loading not implemented yet"
+  -- Determine required actors
+  actors <- determineRequiredActors controller' scenario
+  writeIORef (controllerActors controller') actors
+  
+  -- Log the scenario load
+  let logEntry = LogEntry 0 ("Loaded scenario: " <> scenarioName scenario) "Controller" Nothing
+  modifyIORef (controllerLogs controller') (logEntry :)
 
 -- | Run the controller with a scenario
-runWithScenario :: (Member (Error ControllerError) r)
-                => ControllerSpec
-                -> Scenario
-                -> Sem r Controller
-runWithScenario spec scenario = do
-  -- Create the controller from the specification
-  controller <- createController spec
+runWithScenario :: MonadIO m => Controller -> Scenario -> m SimulationResult
+runWithScenario controller scenario = liftIO $ do
+  -- Load the scenario
+  loadScenario controller scenario
   
-  -- Deploy actors based on the scenario requirements
-  let requiredActors = determineRequiredActors scenario
+  -- Set controller to running
+  writeIORef (controllerRunning controller) True
   
-  -- Group actors by role for specialized deployment
-  let travelers = filter (\s -> actorSpecRole s == TimeTravelerRole) requiredActors
-      keepers = filter (\s -> actorSpecRole s == TimeKeeperRole) requiredActors
-      bandits = filter (\s -> actorSpecRole s == TimeBanditRole) requiredActors
+  -- Deploy actors
+  actors <- readIORef (controllerActors controller)
+  deploySpecializedActors controller actors
   
-  -- Deploy specialized actors
-  travelerActors <- deploySpecializedActors (controllerDeploymentMode controller) travelers
-  keeperActors <- deploySpecializedActors (controllerDeploymentMode controller) keepers
-  banditActors <- deploySpecializedActors (controllerDeploymentMode controller) bandits
+  -- Create account programs for all actors
+  createAccountProgramsForActors controller
   
-  -- Combine all actor maps
-  let allActors = travelerActors `Map.union` keeperActors `Map.union` banditActors
+  -- Execute the simulation
+  runController controller `catch` \(e :: ControllerError) -> do
+    -- Log the error
+    let errorMsg = T.pack $ show e
+    modifyIORef (controllerErrors controller) (errorMsg :)
+    writeIORef (controllerRunning controller) False
   
-  -- Update the controller with the deployed actors
-  let updatedController = controller 
-        { controllerActors = allActors
-        , controllerIsInitialized = True
-        }
+  -- Collect results
+  logs <- readIORef (controllerLogs controller)
+  metrics <- readIORef (controllerMetrics controller)
+  errors <- readIORef (controllerErrors controller)
+  accounts <- readIORef (controllerAccountPrograms controller)
   
-  -- Return the updated controller
-  return updatedController
+  -- Create account states map
+  let accountStates = Map.empty  -- Placeholder, would extract states from programs
+  
+  -- Return the simulation result
+  pure SimulationResult
+    { resultSuccess = null errors
+    , resultErrors = errors
+    , resultMetrics = metrics
+    , resultLogs = reverse logs
+    , resultAccountStates = accountStates
+    }
 
--- | Determine which actors are required for a scenario
-determineRequiredActors :: Scenario -> [ActorSpec]
-determineRequiredActors scenario = 
-  -- Create actor specs for each role required by the scenario
-  concat
-    [ createTimeTravelersForScenario scenario
-    , createTimeKeepersForScenario scenario
-    , createTimeBanditsForScenario scenario
-    ]
+-- | Run the controller
+runController :: MonadIO m => Controller -> m ()
+runController controller = liftIO $ do
+  -- Check if we have a scenario
+  scenario <- case controllerScenario controller of
+    Just s -> pure s
+    Nothing -> throwIO $ ConfigurationError "No scenario loaded"
+  
+  -- Log simulation start
+  let logEntry = LogEntry 0 "Starting simulation" "Controller" Nothing
+  modifyIORef (controllerLogs controller) (logEntry :)
+  
+  -- Execute scenario steps
+  executeScenarioSteps controller scenario
+  
+  -- Set controller to not running
+  writeIORef (controllerRunning controller) False
+  
+  -- Log simulation end
+  let logEntry' = LogEntry 0 "Simulation completed" "Controller" Nothing
+  modifyIORef (controllerLogs controller) (logEntry' :)
 
--- | Create Time Traveler actor specs for a scenario
-createTimeTravelersForScenario :: Scenario -> [ActorSpec]
-createTimeTravelersForScenario scenario =
-  -- For each entity in the scenario that needs a Time Traveler role
-  map (\(idx, entity) -> ActorSpec
-    { _actorSpecID = "traveler-" <> T.pack (show idx)
-    , _actorSpecRole = TimeTravelerRole
-    , _actorSpecName = "Time Traveler " <> T.pack (show idx)
-    , _actorSpecConfig = Map.empty
-    }) (zip [1..] (scenarioEntities scenario))
+-- | Execute scenario steps
+executeScenarioSteps :: MonadIO m => Controller -> Scenario -> m ()
+executeScenarioSteps controller scenario = liftIO $ do
+  -- Placeholder for scenario execution
+  -- In a real implementation, this would:
+  -- 1. Initialize the scenario state
+  -- 2. Execute each step in sequence
+  -- 3. Route messages through account programs
+  -- 4. Collect results
+  pure ()
 
--- | Create Time Keeper actor specs for a scenario
-createTimeKeepersForScenario :: Scenario -> [ActorSpec]
-createTimeKeepersForScenario scenario =
-  -- For each timeline in the scenario that needs a Time Keeper role
-  map (\(idx, timeline) -> ActorSpec
-    { _actorSpecID = "keeper-" <> T.pack (show idx)
-    , _actorSpecRole = TimeKeeperRole
-    , _actorSpecName = "Time Keeper " <> T.pack (show idx)
-    , _actorSpecConfig = Map.empty
-    }) (zip [1..] (scenarioTimelines scenario))
+-- | Determine required actors for a scenario
+determineRequiredActors :: MonadIO m => Controller -> Scenario -> m (Map ActorID ActorSpec)
+determineRequiredActors _ scenario = liftIO $ do
+  -- Extract actors from scenario
+  let actors = scenarioEntities scenario
+  
+  -- Create a map of actor IDs to actor specs
+  pure $ Map.fromList [(actorId actor, actor) | actor <- actors]
+  where
+    actorId :: ActorSpec -> ActorID
+    actorId spec = _actorSpecID spec
 
--- | Create Time Bandit actor specs for a scenario
-createTimeBanditsForScenario :: Scenario -> [ActorSpec]
-createTimeBanditsForScenario scenario =
-  -- Create a fixed number of Time Bandits based on the scenario configuration
-  let numBandits = 3  -- Default number, could be configurable
-  in
-  map (\idx -> ActorSpec
-    { _actorSpecID = "bandit-" <> T.pack (show idx)
-    , _actorSpecRole = TimeBanditRole
-    , _actorSpecName = "Time Bandit " <> T.pack (show idx)
-    , _actorSpecConfig = Map.empty
-    }) [1..numBandits]
+-- | Set the simulation mode
+setSimulationMode :: MonadIO m => Controller -> SimulationMode -> m ()
+setSimulationMode controller mode = liftIO $ do
+  let spec = controllerSpec controller
+      config = specConfig spec
+      newConfig = config { configMode = mode }
+      newSpec = spec { specConfig = newConfig }
+  
+  -- Update the controller spec
+  let controller' = controller { controllerSpec = newSpec }
+  
+  -- Log the mode change
+  let logEntry = LogEntry 0 ("Set simulation mode to: " <> T.pack (show mode)) "Controller" Nothing
+  modifyIORef (controllerLogs controller') (logEntry :)
 
--- | Run the controller with the specified configuration
-runController :: ControllerConfig -> IO ()
-runController _ = error "runController: Not implemented"  -- Placeholder
+-- | Get the current simulation mode
+getSimulationMode :: MonadIO m => Controller -> m SimulationMode
+getSimulationMode controller = liftIO $ do
+  let config = specConfig $ controllerSpec controller
+  pure $ configMode config
+
+-- | Deploy specialized actors based on their roles
+deploySpecializedActors :: MonadIO m => Controller -> Map ActorID ActorSpec -> m ()
+deploySpecializedActors controller actors = liftIO $ do
+  -- Group actors by role
+  let travelers = Map.filter (\a -> _actorSpecRole a == TimeTraveler) actors
+      keepers = Map.filter (\a -> _actorSpecRole a == TimeKeeper) actors
+      bandits = Map.filter (\a -> _actorSpecRole a == TimeBandit) actors
+  
+  -- Deploy each type of actor
+  createTimeTravelersForScenario controller travelers
+  createTimeKeepersForScenario controller keepers
+  createTimeBanditsForScenario controller bandits
+  
+  -- Log deployment
+  let logEntry = LogEntry 0 
+        ("Deployed actors: " <> 
+         T.pack (show (Map.size travelers)) <> " travelers, " <>
+         T.pack (show (Map.size keepers)) <> " keepers, " <>
+         T.pack (show (Map.size bandits)) <> " bandits")
+        "Controller" Nothing
+  modifyIORef (controllerLogs controller) (logEntry :)
+
+-- | Create time travelers for the scenario
+createTimeTravelersForScenario :: MonadIO m => Controller -> Map ActorID ActorSpec -> m ()
+createTimeTravelersForScenario _ _ = liftIO $ do
+  -- Placeholder for time traveler creation
+  pure ()
+
+-- | Create time keepers for the scenario
+createTimeKeepersForScenario :: MonadIO m => Controller -> Map ActorID ActorSpec -> m ()
+createTimeKeepersForScenario _ _ = liftIO $ do
+  -- Placeholder for time keeper creation
+  pure ()
+
+-- | Create time bandits for the scenario
+createTimeBanditsForScenario :: MonadIO m => Controller -> Map ActorID ActorSpec -> m ()
+createTimeBanditsForScenario _ _ = liftIO $ do
+  -- Placeholder for time bandit creation
+  pure ()
+
+-- | Create account programs for all actors
+createAccountProgramsForActors :: MonadIO m => Controller -> m ()
+createAccountProgramsForActors controller = liftIO $ do
+  -- Get all actors
+  actors <- readIORef (controllerActors controller)
+  
+  -- Create account programs for each actor
+  accountPrograms <- forM (Map.elems actors) $ \actor -> do
+    let actorId = _actorId actor
+        initialBalances = _initialBalances actor
+    program <- createAccountProgram actorId initialBalances
+    pure (actorId, program)
+  
+  -- Store the account programs
+  writeIORef (controllerAccountPrograms controller) (Map.fromList accountPrograms)
+  
+  -- Log creation
+  let logEntry = LogEntry 0 
+        ("Created account programs for " <> T.pack (show (length accountPrograms)) <> " actors")
+        "Controller" Nothing
+  modifyIORef (controllerLogs controller) (logEntry :)
+
+-- | Get the account program for an actor
+getAccountProgramForActor :: MonadIO m => Controller -> ActorId -> m (Maybe AccountProgram)
+getAccountProgramForActor controller actorId = liftIO $ do
+  accounts <- readIORef (controllerAccountPrograms controller)
+  pure $ Map.lookup actorId accounts
+
+-- | Route a message through an actor's account program
+routeMessageThroughAccount :: MonadIO m => Controller -> ActorId -> Message -> m (Maybe Message)
+routeMessageThroughAccount controller actorId message = liftIO $ do
+  -- Get the actor's account program
+  accountProgram <- getAccountProgramForActor controller actorId
+  
+  case accountProgram of
+    Just program -> do
+      -- Route the message through the account program
+      -- This is a placeholder - in a real implementation, this would:
+      -- 1. Process the message through the account program
+      -- 2. Apply any effects
+      -- 3. Return any response message
+      
+      -- Log the message routing
+      let logEntry = LogEntry 0 
+            ("Routed message through account program for actor " <> T.pack (show actorId))
+            "Controller" (Just $ "message-data")
+      modifyIORef (controllerLogs controller) (logEntry :)
+      
+      pure $ Just message  -- Placeholder response
+      
+    Nothing -> do
+      -- Log the error
+      let errorMsg = "No account program found for actor " <> T.pack (show actorId)
+      modifyIORef (controllerErrors controller) (errorMsg :)
+      pure Nothing

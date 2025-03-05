@@ -10,16 +10,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
-Module: TimeBandits.Program
+Module: Programs.Program
 Description: Program abstraction and execution model for Time-Bandits.
 
 This module provides the Program abstraction and related functionality.
-It encapsulates program state and memory.
-
-Programs are declarative state machines that operate within a time map, consisting of:
-- Program Definition: Immutable sequence of GuardedEffects
-- Memory Contract: Immutable declaration of per-step resource expectations
-- Program State: Current execution counter and memory
+It connects the static ProgramDefinition with the dynamic ProgramState
+to form a complete program entity.
 
 In the Time-Bandits architecture, Programs serve as the primary abstraction for:
 
@@ -35,25 +31,26 @@ In the Time-Bandits architecture, Programs serve as the primary abstraction for:
 4. Deterministic Execution: Programs provide a deterministic execution model where
    effects are applied in a well-defined order, with explicit preconditions.
 
-The Program module bridges the high-level application logic (defined by users)
-with the low-level execution mechanisms (provided by the EffectExecutor). It serves
-as the primary interface for defining complex cross-timeline operations in a
-declarative, verifiable manner.
+This module has been refactored to separate static program definition
+(ProgramDefinition) from mutable program state (ProgramState), providing clearer
+boundaries and better security properties.
 -}
-module TimeBandits.Program 
+module Programs.Program 
   ( -- * Core Types
     Program(..)
   , ProgramId
+  , ProgramOwner
+  
+  -- * Re-exports from ProgramState
   , ProgramState(..)
   , ProgramMemory(..)
   , MemorySlot(..)
-  , TimeMap(..)
+  
+  -- * Re-exports from ProgramDefinition
   , ProgramDefinition(..)
   , MemoryContract(..)
   , SlotSpec(..)
-  , ResourceClaim(..)
   , ResourceRequirement(..)
-  , ProgramOwner
   
   -- * Program Operations
   , createProgram
@@ -89,21 +86,40 @@ import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
--- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
-  ( AppError(..)
-  , LamportTime(..)
-  )
-import TimeBandits.Resource 
-  ( Resource
-  , Address
-  , EscrowId
-  )
-import TimeBandits.Timeline (TimelineHash, BlockHeader)
+-- Import from Core modules
+import Core.Types (AppError(..), ProgramErrorType(..))
+import Core.Common (EntityHash(..), Hash(..))
+import Core.Resource (Resource, Address, EscrowId)
+import Core.Timeline (TimelineHash, BlockHeader)
 
--- Forward declaration for ProgramEffect
-data GuardedEffect
+-- Import from Programs modules
+import Programs.ProgramState 
+  ( ProgramState(..)
+  , ProgramMemory(..)
+  , MemorySlot(..)
+  , TimeMap(..)
+  , ResourceClaim(..)
+  , createInitialState
+  , advanceProgramCounter
+  , updateTimeMap
+  , lookupMemorySlot
+  , updateMemorySlot
+  , clearMemorySlot
+  )
+
+import Programs.ProgramDefinition
+  ( ProgramDefinition(..)
+  , MemoryContract(..)
+  , SlotSpec(..)
+  , ResourceRequirement(..)
+  , createProgramDefinition
+  , validateProgramDefinition
+  , addProgramFunction
+  , getProgramFunction
+  , validateMemoryContract
+  )
+
+import Programs.ProgramEffect (GuardedEffect)
 
 -- | Unique identifier for a Program
 type ProgramId = EntityHash Program
@@ -111,88 +127,11 @@ type ProgramId = EntityHash Program
 -- | Program owner address
 type ProgramOwner = Address
 
--- | A memory slot is a named container for resources within program memory
-newtype MemorySlot = MemorySlot Text
-  deriving stock (Eq, Ord, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Program memory tracks the runtime state of program-owned resources
-newtype ProgramMemory = ProgramMemory
-  { slots :: Map.Map MemorySlot (Maybe Resource) }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Time map is a composed view of multiple timelines
-data TimeMap = TimeMap
-  { timelines :: Map.Map TimelineHash LamportTime
-  , observedHeads :: Map.Map TimelineHash BlockHeader
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Program state represents the current execution state of a program
-data ProgramState = ProgramState
-  { programCounter :: Int
-  , programMemory :: ProgramMemory
-  , programTimeMap :: TimeMap
-  , programResourceClaims :: [ResourceClaim]
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Specification for a memory slot in a contract
-data SlotSpec = SlotSpec
-  { slotName :: MemorySlot
-  , slotRequired :: Bool
-  , slotDescription :: Text
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Resource requirement for a program step
-data ResourceRequirement = ResourceRequirement
-  { requiredSlot :: MemorySlot
-  , requiredResourceType :: Text
-  , isOptional :: Bool
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Memory contract defines what resources a program expects
-data MemoryContract = MemoryContract
-  { slotSpecs :: [SlotSpec]
-  , stepRequirements :: Map.Map Int [ResourceRequirement]
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Program definition contains the immutable sequence of guarded effects
-data ProgramDefinition = ProgramDefinition
-  { programName :: Text
-  , programDescription :: Text
-  , programEffects :: [GuardedEffect]
-  , programFunctions :: Map.Map Text [GuardedEffect]
-  , programMemoryContract :: MemoryContract
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Resource claim tracks ownership of resources by programs
-data ResourceClaim = ResourceClaim
-  { claimedResource :: Resource
-  , claimEscrowId :: EscrowId
-  , claimTimestamp :: LamportTime
-  , claimExpiryTime :: Maybe LamportTime
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
 -- | A program is a declarative state machine operating within a time map
 data Program = Program
   { programId :: ProgramId
-  , executionState :: ProgramState
+  , programState :: ProgramState
   , programDefinition :: ProgramDefinition
-  , memory :: ProgramMemory
   , owner :: ProgramOwner
   , authorizedCallers :: [Address]
   }
@@ -207,23 +146,16 @@ createProgram ::
   ProgramOwner ->
   Sem r Program
 createProgram timeMap definition programOwner = do
+  -- Create initial program state
+  initialState <- createInitialState timeMap
+  
   -- Create a program ID
   let programId = EntityHash $ Hash "dummy-program-id"
-      -- Initialize empty memory
-      emptyMemory = ProgramMemory Map.empty
-      -- Initialize program state
-      initialState = ProgramState
-        { programCounter = 0
-        , programMemory = emptyMemory
-        , programTimeMap = timeMap
-        , programResourceClaims = []
-        }
   
   pure $ Program
     { programId = programId
-    , executionState = initialState
+    , programState = initialState
     , programDefinition = definition
-    , memory = emptyMemory
     , owner = programOwner
     , authorizedCallers = [programOwner]  -- Owner is always authorized
     }
@@ -241,267 +173,160 @@ deployProgram program = do
 -- | Get the current state of a program
 getProgramState ::
   (Member (Error AppError) r) =>
-  ProgramId ->
+  Program ->
   Sem r ProgramState
-getProgramState programId = do
-  -- In a real implementation, this would look up the program state
-  -- For now, just return a dummy state
-  let emptyMemory = ProgramMemory Map.empty
-      emptyTimeMap = TimeMap Map.empty Map.empty
-  pure $ ProgramState
-    { programCounter = 0
-    , programMemory = emptyMemory
-    , programTimeMap = emptyTimeMap
-    , programResourceClaims = []
-    }
+getProgramState program = do
+  -- Return the program state directly
+  pure $ programState program
 
--- | Advance the program counter
-advanceProgramCounter ::
-  (Member (Error AppError) r) =>
-  ProgramState ->
-  Sem r ProgramState
-advanceProgramCounter state = do
-  -- Increment the program counter
-  pure $ state { programCounter = programCounter state + 1 }
-
--- | Look up a resource in a memory slot
-lookupMemorySlot ::
-  (Member (Error AppError) r) =>
-  ProgramMemory ->
-  MemorySlot ->
-  Sem r (Maybe Resource)
-lookupMemorySlot memory slot = do
-  -- Look up the slot in memory
-  pure $ case Map.lookup slot (slots memory) of
-    Just (Just resource) -> Just resource
-    _ -> Nothing
-
--- | Update a memory slot with a resource
-updateMemorySlot ::
-  (Member (Error AppError) r) =>
-  ProgramMemory ->
-  MemorySlot ->
-  Resource ->
-  Sem r ProgramMemory
-updateMemorySlot memory slot resource = do
-  -- Update the slot in memory
-  pure $ memory { slots = Map.insert slot (Just resource) (slots memory) }
-
--- | Clear a memory slot
-clearMemorySlot ::
-  (Member (Error AppError) r) =>
-  ProgramMemory ->
-  MemorySlot ->
-  Sem r ProgramMemory
-clearMemorySlot memory slot = do
-  -- Clear the slot in memory
-  pure $ memory { slots = Map.insert slot Nothing (slots memory) }
-
--- | Invoke a program function with arguments
+-- | Invoke a program function
 invokeProgram ::
   (Member (Error AppError) r) =>
   Program ->
-  Text ->      -- Function name
-  [Resource] -> -- Arguments
-  Address ->   -- Caller address
-  Sem r ProgramState
-invokeProgram program functionName args callerAddr = do
+  Text ->  -- ^ Function name
+  [Text] ->  -- ^ Function arguments
+  Address ->  -- ^ Caller address
+  Sem r Program
+invokeProgram program functionName args caller = do
   -- Check if caller is authorized
-  isAuthorized <- isAuthorizedCaller program callerAddr
-  unless isAuthorized $
-    throw $ ProgramError $ "Caller " <> show callerAddr <> " not authorized to invoke program"
+  authorized <- isAuthorizedCaller program caller
+  unless authorized $
+    throw $ ProgramError $ UnauthorizedCaller "Caller is not authorized"
   
   -- Look up the function in the program definition
   let functions = programFunctions $ programDefinition program
   case Map.lookup functionName functions of
-    Nothing -> throw $ ProgramError $ "Function " <> show functionName <> " not found"
-    Just effects -> do
-      -- In a real implementation, this would execute the effects
-      -- For now, just return the current state
-      pure $ executionState program
+    Nothing -> 
+      throw $ ProgramError $ FunctionNotFound $ "Function not found: " <> functionName
+    Just _ -> do
+      -- For now, just return the program (actual invocation would modify state)
+      pure program
 
--- | Register a new function in a program
+-- | Register a new program function
 registerProgramFunction ::
   (Member (Error AppError) r) =>
   Program ->
-  Text ->           -- Function name
-  [GuardedEffect] -> -- Function effects
-  Address ->        -- Caller address (must be owner)
+  Text ->  -- ^ Function name
+  [GuardedEffect] ->  -- ^ Function body
+  Address ->  -- ^ Caller address
   Sem r Program
-registerProgramFunction program functionName effects callerAddr = do
+registerProgramFunction program functionName effects caller = do
   -- Check if caller is the owner
-  unless (owner program == callerAddr) $
-    throw $ ProgramError "Only the owner can register functions"
+  unless (caller == owner program) $
+    throw $ ProgramError $ UnauthorizedCaller "Only owner can register functions"
   
   -- Add the function to the program definition
-  let definition = programDefinition program
-      updatedFunctions = Map.insert functionName effects (programFunctions definition)
-      updatedDefinition = definition { programFunctions = updatedFunctions }
+  updatedDef <- addProgramFunction (programDefinition program) functionName effects
   
-  -- Return the updated program
-  pure $ program { programDefinition = updatedDefinition }
+  -- Return updated program
+  pure $ program { programDefinition = updatedDef }
 
--- | Escrow a resource to a program's memory slot
+-- | Verify that a program satisfies its memory contract
+verifyMemoryContract ::
+  (Member (Error AppError) r) =>
+  Program ->
+  Sem r Bool
+verifyMemoryContract program = do
+  -- For now, just validate the memory contract itself
+  validateMemoryContract $ programMemoryContract $ programDefinition program
+
+-- | Escrow a resource to a program
 escrowToProgram ::
   (Member (Error AppError) r) =>
   Program ->
-  Resource ->      -- Resource to escrow
-  MemorySlot ->    -- Target memory slot
-  Address ->       -- Address escrowing the resource
+  Resource ->
+  MemorySlot ->
   Sem r Program
-escrowToProgram program resource slot escrowingAddr = do
-  -- In a real implementation, this would create an escrow and update program memory
-  -- For now, just update the memory slot
-  let currentState = executionState program
-      currentMemory = programMemory currentState
+escrowToProgram program resource slot = do
+  -- Update the memory slot with the resource
+  newState <- updateMemorySlot (programState program) slot resource
   
-  updatedMemory <- updateMemorySlot currentMemory slot resource
-  let updatedState = currentState { programMemory = updatedMemory }
-  
-  -- Return the updated program
-  pure $ program { executionState = updatedState }
+  -- Return updated program
+  pure $ program { programState = newState }
 
--- | Claim a resource from a program's memory slot
+-- | Claim a resource from a program
 claimFromProgram ::
   (Member (Error AppError) r) =>
   Program ->
-  MemorySlot ->    -- Source memory slot
-  Address ->       -- Address claiming the resource
-  Sem r (Program, Resource)
-claimFromProgram program slot claimingAddr = do
-  -- Check if there is a resource in the slot
-  let currentState = executionState program
-      currentMemory = programMemory currentState
+  MemorySlot ->
+  Address ->  -- ^ Claimer address
+  Sem r (Program, Maybe Resource)
+claimFromProgram program slot claimer = do
+  -- Check if claimer is authorized
+  authorized <- isAuthorizedCaller program claimer
+  unless authorized $
+    throw $ ProgramError $ UnauthorizedCaller "Claimer is not authorized"
   
-  maybeResource <- lookupMemorySlot currentMemory slot
-  case maybeResource of
-    Nothing -> throw $ ProgramError $ "No resource in slot " <> show slot
-    Just resource -> do
-      -- Clear the slot
-      updatedMemory <- clearMemorySlot currentMemory slot
-      let updatedState = currentState { programMemory = updatedMemory }
-      
-      -- Return the updated program and the claimed resource
-      pure (program { executionState = updatedState }, resource)
+  -- Look up the resource in the memory slot
+  resource <- lookupMemorySlot (programState program) slot
+  
+  -- Clear the memory slot
+  newState <- clearMemorySlot (programState program) slot
+  
+  -- Return updated program and the resource
+  pure (program { programState = newState }, resource)
 
--- | Transfer program ownership to a new address
-transferProgramOwnership ::
-  (Member (Error AppError) r) =>
-  Program ->
-  Address ->       -- New owner address
-  Address ->       -- Current owner address (must match)
-  Sem r Program
-transferProgramOwnership program newOwner currentOwnerAddr = do
-  -- Check if caller is the current owner
-  unless (owner program == currentOwnerAddr) $
-    throw $ ProgramError "Only the current owner can transfer ownership"
-  
-  -- Update the owner and authorized callers
-  let updatedAuthorizedCallers = newOwner : filter (/= currentOwnerAddr) (authorizedCallers program)
-  
-  -- Return the updated program
-  pure $ program { owner = newOwner, authorizedCallers = updatedAuthorizedCallers }
-
--- | Check if an address is authorized to call the program
+-- | Check if a caller is authorized to invoke program functions
 isAuthorizedCaller ::
   (Member (Error AppError) r) =>
   Program ->
-  Address ->       -- Caller to check
+  Address ->  -- ^ Caller address
   Sem r Bool
-isAuthorizedCaller program callerAddr = do
-  -- Check if the address is in the authorized callers list
-  pure $ callerAddr `elem` authorizedCallers program
+isAuthorizedCaller program caller = do
+  -- Check if caller is in the authorized callers list
+  pure $ caller `elem` authorizedCallers program
 
--- | Record a resource claim by the program
+-- | Transfer program ownership to a new owner
+transferProgramOwnership ::
+  (Member (Error AppError) r) =>
+  Program ->
+  Address ->  -- ^ New owner
+  Address ->  -- ^ Current owner (must match)
+  Sem r Program
+transferProgramOwnership program newOwner currentOwner = do
+  -- Check if caller is the current owner
+  unless (currentOwner == owner program) $
+    throw $ ProgramError $ UnauthorizedCaller "Only current owner can transfer ownership"
+  
+  -- Update the owner and add to authorized callers
+  let updatedCallers = newOwner : filter (/= currentOwner) (authorizedCallers program)
+  
+  -- Return updated program
+  pure $ program { owner = newOwner, authorizedCallers = updatedCallers }
+
+-- | Record a resource claim in the program state
 recordResourceClaim ::
   (Member (Error AppError) r) =>
-  ProgramState ->
+  Program ->
   ResourceClaim ->
-  Sem r ProgramState
-recordResourceClaim state claim = do
-  -- Add the claim to the program's resource claims
-  let updatedClaims = claim : programResourceClaims state
-  
-  -- Return the updated state
-  pure $ state { programResourceClaims = updatedClaims }
-
--- | Verify that a program state satisfies its memory contract
-verifyMemoryContract ::
-  (Member (Error AppError) r) =>
-  ProgramState ->
-  MemoryContract ->
-  Sem r Bool
-verifyMemoryContract state contract = do
-  -- Get the current step requirements
-  let stepReqs = case Map.lookup (programCounter state) (stepRequirements contract) of
-        Just reqs -> reqs
-        Nothing -> []  -- No specific requirements for this step
-  
-  -- Check each requirement
-  let memory = programMemory state
-  forM stepReqs $ \req -> do
-    let slot = requiredSlot req
-    maybeResource <- lookupMemorySlot memory slot
-    
-    -- If the resource is required but not present, fail
-    if isOptional req || isJust maybeResource
-      then pure True
-      else pure False
-  
-  -- All requirements must be satisfied
-  pure True
-
--- Utility functions for Maybe and boolean operations
-
--- | Check if a Maybe value is Just
-isJust :: Maybe a -> Bool
-isJust (Just _) = True
-isJust Nothing = False
-
--- | Execute an action only if a condition is True
-unless :: Applicative f => Bool -> f () -> f ()
-unless condition action = if condition then pure () else action
-
--- | Execute multiple actions in sequence and return a list of results
-forM :: (Traversable t, Monad m) => t a -> (a -> m b) -> m [b]
-forM xs f = sequence (fmap f xs)
-
--- | Adapter functions for backward compatibility with old interfaces
-
--- | Adapter for initializing a program with default settings
-adaptInitializeProgram :: 
-  (Member (Error AppError) r) => 
-  ByteString -> 
   Sem r Program
-adaptInitializeProgram programName = do
-  -- Create an empty time map
-  let emptyTimeMap = TimeMap Map.empty Map.empty
-      
-      -- Create a dummy program definition
-      emptyContract = MemoryContract [] Map.empty
-      definition = ProgramDefinition
-        { programName = "Legacy Program"
-        , programDescription = "Automatically migrated from old system"
-        , programEffects = []
-        , programFunctions = Map.empty
-        , programMemoryContract = emptyContract
-        }
-      
-      -- Use a default owner address
-      defaultOwner = "default-owner"
+recordResourceClaim program claim = do
+  -- Add the claim to the program state
+  let currentState = programState program
+      currentClaims = programResourceClaims currentState
+      updatedState = currentState { programResourceClaims = claim : currentClaims }
   
-  -- Create a program with the empty time map and dummy definition
-  createProgram emptyTimeMap definition defaultOwner
+  -- Return updated program
+  pure $ program { programState = updatedState }
 
--- | Adapter for executing a program step
-adaptExecuteProgramStep :: 
-  (Member (Error AppError) r) => 
-  Program -> 
+-- | Adapter function for backward compatibility with old interfaces
+adaptInitializeProgram ::
+  (Member (Error AppError) r) =>
+  ProgramDefinition ->
+  Address ->
+  TimeMap ->
+  Sem r Program
+adaptInitializeProgram definition owner timeMap = do
+  createProgram timeMap definition owner
+
+-- | Adapter function for backward compatibility with old interfaces
+adaptExecuteProgramStep ::
+  (Member (Error AppError) r) =>
+  Program ->
   Sem r Program
 adaptExecuteProgramStep program = do
-  -- Get the current state
-  let state = executionState program
   -- Advance the program counter
-  advancedState <- advanceProgramCounter state
-  -- Return the updated program
-  pure $ program { executionState = advancedState } 
+  newState <- advanceProgramCounter (programState program)
+  
+  -- Return updated program
+  pure $ program { programState = newState } 

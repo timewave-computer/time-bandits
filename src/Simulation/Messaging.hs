@@ -43,6 +43,14 @@ module Simulation.Messaging
   , actorSpecID
   , actorSpecRole
   , actorSpecName
+  
+  -- * Message Routing
+  , sendMessage
+  , receiveMessage
+  , receiveCallback
+  
+  -- * Message Processing
+  , processMessage
   ) where
 
 import Data.ByteString (ByteString)
@@ -53,6 +61,18 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 import Core.Timeline (TimelineHash)
+import Core.ActorId (ActorId)
+import Core.ProgramId (ProgramId)
+import Core.Effect (Effect(..))
+import Core.AccountProgram (AccountMessage(..), AccountProgram(..))
+import Execution.EffectInterpreter (EffectInterpreter, interpretEffect, ProposedEffect(..))
+import Core.TimeMap (TimeMap, getCurrentTimeMap)
+
+import Control.Concurrent.STM (TVar, atomically, readTVar, writeTVar)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import qualified Data.ByteString as BS
+import qualified Data.Text as T
+import Data.Time (getCurrentTime)
 
 -- | Uniquely identifies an actor in the system
 type ActorID = Text
@@ -70,6 +90,8 @@ data ActorSpec = ActorSpec
   , _actorSpecRole :: ActorRole
   , _actorSpecName :: Text
   , _actorSpecConfig :: Map Text Text  -- ^ Role-specific configuration
+  , _actorId :: ActorId  -- ^ Actor ID for account program
+  , _initialBalances :: Map ResourceId Integer  -- ^ Initial balances for account program
   }
   deriving (Show, Eq, Generic, Serialize)
 
@@ -138,3 +160,82 @@ actorSpecRole = _actorSpecRole
 -- | Get the actor name from a spec
 actorSpecName :: ActorSpec -> Text
 actorSpecName = _actorSpecName
+
+-- | Send a message from one program to another via account programs
+sendMessage :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProgramId -> 
+  AccountMessage -> 
+  m (Either T.Text MessageId)
+sendMessage interpreter fromProgram message = liftIO $ do
+  -- Get the current time map
+  currentTimeMap <- getCurrentTimeMap
+  
+  -- Create a proposed effect
+  let proposedEffect = ProposedEffect
+        { effect = AccountMessageEffect fromProgram message
+        , observedTimeMap = currentTimeMap
+        , readSet = []  -- Would be populated based on message type
+        , writeSet = []  -- Would be populated based on message type
+        }
+  
+  -- Interpret the effect
+  result <- interpretEffect interpreter proposedEffect
+  
+  -- Generate a message ID based on the effect
+  let messageId = generateMessageId proposedEffect
+  
+  -- Return the message ID if successful, otherwise an error
+  case result of
+    EffectApplied _ _ -> pure $ Right messageId
+    EffectFailed err -> pure $ Left err
+    _ -> pure $ Left "Message could not be sent"
+
+-- | Receive a callback from a program
+receiveCallback :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProgramId -> 
+  T.Text -> 
+  m (Either T.Text MessageId)
+receiveCallback interpreter toProgramId payload = liftIO $ do
+  -- Get the current time map
+  currentTimeMap <- getCurrentTimeMap
+  
+  -- Create a callback message
+  let callbackMessage = ReceiveCallbackMessage
+        { sourceProgram = toProgramId
+        , payload = payload
+        }
+  
+  -- Create a proposed effect
+  let proposedEffect = ProposedEffect
+        { effect = AccountMessageEffect toProgramId callbackMessage
+        , observedTimeMap = currentTimeMap
+        , readSet = []  -- Would be populated based on message type
+        , writeSet = []  -- Would be populated based on message type
+        }
+  
+  -- Interpret the effect
+  result <- interpretEffect interpreter proposedEffect
+  
+  -- Generate a message ID based on the effect
+  let messageId = generateMessageId proposedEffect
+  
+  -- Return the message ID if successful, otherwise an error
+  case result of
+    EffectApplied _ _ -> pure $ Right messageId
+    EffectFailed err -> pure $ Left err
+    _ -> pure $ Left "Callback could not be received"
+
+-- | Generate a message ID from a proposed effect
+generateMessageId :: ProposedEffect -> MessageId
+generateMessageId _ = "msg-" <> T.pack (show (hash "placeholder"))  -- Placeholder
+
+-- | Message ID type
+type MessageId = T.Text
+
+-- | Hash function (placeholder)
+hash :: String -> Int
+hash s = length s  -- Placeholder, would use a real hash function
