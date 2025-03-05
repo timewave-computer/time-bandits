@@ -1,352 +1,223 @@
 # Time Bandits System Specification
-Version: 1.1
-Date: 2025-03-07
+Version: 1.2
+Date: 2025-03-05
+# Time Bandits Specification
 
-## 1. Overview
+## Overview
 
-Time Bandits is a system for deploying and executing cross-timeline programs that enforce strict causal and resource ownership guarantees. Programs execute over a sharded time map (a composite view across multiple timelines) and produce content-addressed, fully auditable logs of their execution.
+Time Bandits is a system for defining, executing, and verifying cross-timeline programs — programs that interact with multiple independent blockchains, rollups, and distributed ledgers, while maintaining causal consistency, auditability, and strong security guarantees.
 
-The system is built around three key actor roles:
+This specification defines:
+- Core data structures
+- Actor and program boundaries
+- Effect lifecycle
+- Resource management
+- Causal consistency rules
+- Messaging model
+- Proof requirements
+- Simulation environments
 
-- **Time Travelers**: Create and use programs by submitting messages to timelines
-- **Time Keepers**: Maintain the integrity of timelines, validate messages, and provide state queries
-- **Time Bandits**: Operate the P2P network, execute programs, and generate cryptographic proofs
+## Core Abstractions
 
-This document defines the technical specification for programs, timelines, resources, effects, messaging, simulation modes, and the responsibilities of each actor role.
+### Time Travelers
 
-## 2. Core Entities
+Time Travelers are external actors that create programs, initiate deposits, and invoke program functions.  
+Travelers do not directly own resources. Instead, each traveler has exactly one Account Program, which acts as their gateway into the system.
 
-### 2.1 Timeline
+### Programs
 
-- An external, ordered event stream (blockchain, rollup, DA log).
-- Defines its own consistency and validity rules (e.g., no double spends).
-- Owns:
-  - Native time (height/slot/timestamp).
-  - Native assets (tokens, contracts, escrows).
+Programs are verifiable off-chain state machines, defined by:
+- A static code (list of effects it supports).
+- A mutable memory (key-value store).
+- A set of owned resources (assets held on behalf of the program).
+- A set of causal logs recording every applied effect.
 
-### 2.2 Time Map
+All changes to program state — internal memory updates, resource transfers, or cross-program messaging — must occur via proven effects.
 
-- A sharded snapshot of multiple timelines at a specific moment.
-- Contains:
-  - Timeline heads (block heights/slots).
-  - Observed timestamps (real time).
-  - Lamport clocks (logical causal order).
-- Programs only interact with the time map they were deployed with.
+### Account Programs
 
-### 2.3 Asset (External Object)
+Each traveler has a dedicated account program, which:
+- Holds all the traveler’s resources across timelines.
+- Acts as the only entry/exit point for the traveler to interact with other programs.
+- Provides a unified inbox/outbox for messages between the traveler and programs.
+- Can be composed into other programs (multi-sig management, delegation, etc.).
 
-- Exists directly on a timeline (ETH, USDC, on-chain contract state).
-- Time Bandits does not custody assets — programs own claims on assets via internal resources.
+Programs only communicate with account programs — not directly with off-chain actors.
 
-### 2.4 Resource (Internal Object)
+### Time Keepers
 
-- A unit of state inside program memory.
-- Always has exactly one owner program at a time.
-- Can represent:
-  - A claim on an external asset.
-  - An escrow receipt.
-  - A synthetic internal marker.
+Each supported timeline (e.g., Ethereum, Celestia) has a Time Keeper, responsible for:
+- Observing new timeline events.
+- Maintaining a time map — a snapshot of each timeline’s latest state.
+- Providing proofs of inclusion and balances on request.
+- Ensuring external facts referenced by programs are correct.
 
-### 2.5 Program
+### Time Bandits
 
-- An immutable, replayable sequence of guarded effects.
-- Owns its own memory (resource slots).
-- Operates within a time map.
+Time Bandits are the distributed peer-to-peer network responsible for:
+- Receiving proposed effects from travelers.
+- Applying effects to programs.
+- Checking causal consistency.
+- Updating the resource ledger.
+- Recording applied effects into per-resource logs.
+- Generating and verifying proofs.
+- Gossiping applied effects to other Bandits.
 
-### 2.6 Effect
+## Data Structures
 
-- A single, atomic state transition.
-- May consume or produce resources.
-- May transfer resources across programs.
-- May invoke other programs.
-- Is causally ordered via a log.
+### Effect
 
-## 3. Core Modules and Abstractions
+Effects are the atomic unit of state change. Each effect:
+- Declares its preconditions.
+- Declares the resources it reads/writes.
+- References a specific time map snapshot.
+- Produces a proof after application.
 
-### 3.1 Type Abstractions
-
-Each core entity is implemented as a first-class type with a dedicated module:
-
-- **Timeline** (`TimeBandits.Timeline`): Represents an external, ordered event stream with its own consistency rules, clock, and state.
-- **TimeMap** (`TimeBandits.Timeline`): A sharded view of multiple timeline states with logical clock ordering.
-- **Resource** (`TimeBandits.Resource`): Represents transferable assets with single-owner guarantees and explicit transfer semantics.
-- **Program** (`TimeBandits.Program`): Contains program state, memory, and execution logic with resource management capabilities.
-- **Effect** (`TimeBandits.Effect`): Explicit operations that modify state, with guards that must be validated before execution.
-- **TransitionMessage** (`TimeBandits.TransitionMessage`): Proof-carrying messages that trigger program transitions with resource validation.
-- **ExecutionLog** (`TimeBandits.ExecutionLog`): Append-only, causally-linked log of all effect applications with full traceability.
-
-### 3.2 Execution Model
-
-The Time Bandits execution model follows these steps:
-
-1. **Time Travelers** create transition messages with necessary proofs and resources
-2. **Time Keepers** validate messages against timeline rules and causal ordering
-3. **Time Bandits** execute program transitions and generate proofs
-4. **Controllers** enforce the system contract and coordinate between actors
-
-This process ensures:
-- Strict causal ordering (via Lamport clocks)
-- Single-owner resource guarantees (no double-spending)
-- Complete audit trail (via the execution log)
-- Security property verification (via the SecurityVerifier)
-
-### 3.3 Security Verification
-
-The `TimeBandits.SecurityVerifier` module enforces critical security properties:
-
-- **NoDoubleSpend**: Ensures each resource has exactly one owner at any time
-- **NoReentrancy**: Prevents cycles in program invocation using Lamport clocks
-- **FullTraceability**: Verifies that every operation has a complete audit trail
-- **NoBackdating**: Prevents transactions that attempt to modify past states
-
-### 3.4 Actor Abstractions
-
-The system defines three main actor roles:
-
-- **Time Travelers** (`TimeBandits.TimeTraveler`): Create and use programs by submitting transition messages
-- **Time Keepers** (`TimeBandits.TimeKeeper`): Maintain timeline integrity and validate messages
-- **Time Bandits** (`TimeBandits.TimeBandit`): Run the P2P network, execute programs, and generate proofs
-
-### 3.5 Deployment Modes
-
-The Time Bandits system supports three deployment modes:
-
-- **In-Memory**: All actors run in the same process with direct function calls
-- **Local Multi-Process**: Actors run in separate processes with Unix socket communication
-- **Geo-Distributed**: Actors run on different machines with TCP/IP communication
-
-These modes are implemented through a unified interface, allowing the same code to run in any deployment context.
-
-### 3.6 Timeline Descriptors and Adapters
-
-The system uses timeline descriptors (`TimeBandits.TimelineDescriptor`) to formally describe different timeline types (blockchains, rollups, event logs) and adapters (`TimeBandits.TimelineAdapter`) to provide a uniform interface for interacting with them.
-
-## 4. Program Lifecycle
-
-### 4.1 Deployment
-
-- Time Traveler submits:
-  - Program definition (effects and guards)
-  - Initial time map (declared timelines)
-- Time Keeper validates:
-  - Program is well-formed
-  - Time map is fresh and consistent with timeline state
-- Controller (operated by Time Bandits) computes:
-  - Memory contract (expected resource flow per step)
-  - Initial program state
-- Program is registered on the network and with relevant timelines
-
-### 4.2 Execution
-
-- Time Traveler submits:
-  - TransitionMessage with:
-    - Effect proof
-    - Resources
-    - Parent effect hash
-- Time Keeper:
-  - Validates message against timeline rules
-  - Accepts or rejects the transition
-- Time Bandit:
-  - Executes the program step
-  - Generates required proofs
-  - Maintains P2P network state
-- Controller:
-  - Validates message
-  - Applies effect
-  - Advances time map
-  - Appends to causal log
-
-### 4.3 Finalization
-
-- Programs complete after the last effect
-- Final memory state is sealed
-- Time Bandits generate final proof
-- Time Keepers validate and confirm the final state
-- Final proof and log are published to all relevant timelines
-
-## 5. Effects
-
-5.1 Effect Types
-
-- EscrowToProgram (transfer resource to another program).
-- ClaimFromProgram (recover escrowed resource from another program).
-- InvokeProgram (call another program's entry point with arguments).
-- DelegateCapability (grant temporary rights to another program).
-- WatchResource (react to external event or resource condition).
-- AtomicBatch (group multiple effects into a single atomic unit).
-
-- All effects:
-  - Reference a time map snapshot.
-  - Leave a trace log entry.
-
-### 5.2 Effect Precondition (Guard)
-
-- Every effect has an explicit guard:
-  - BalanceAtLeast (check resource balance).
-  - EscrowExists (check escrow presence).
-  - ContractInState (check external contract state).
-  - ActorAuthorized (check actor permissions).
-  - TimeAfter (check timeline time).
-  - Always (no guard).
-
-## 6. Program Memory and Ownership
-
-- Each program has:
-  - A private ProgramMemory.
-  - Each step's memory contract (expected resource layout).
-  - Every resource has exactly one owner program at any time.
-- All inter-program transfers must use:
-  - EscrowToProgram
-  - ClaimFromProgram
-  - InvokeProgram
-
-## 7. Time and Causality
-
-### 7.1 Per-Timeline Time
-
-- Native time (height/slot/timestamp).
-- Logical time (Lamport clock).
-
-### 7.2 Per-Program Time
-
-- Program Counter (internal Lamport clock).
-
-### 7.3 Time Map
-
-- Every effect applies against a time map:
-  - Contains per-timeline clocks.
-  - Advances as new transitions apply.
-  - Is always causally consistent.
-
-## 8. Messaging
-
-### 8.1 Transition Message
-- All program advancement comes from signed messages: 
 ```haskell
-TransitionMessage
-programId
-stepIndex
-parentEffectHash
-proof
-resources
+data Effect
+    = Deposit { resource :: ResourceId, amount :: Integer, toProgram :: ProgramId }
+    | Withdraw { resource :: ResourceId, amount :: Integer, fromProgram :: ProgramId }
+    | Transfer { resource :: ResourceId, amount :: Integer, toProgram :: ProgramId }
+    | InternalStateUpdate { key :: Text, newValue :: Value }
+    | Invoke { targetProgram :: ProgramId, entrypoint :: String, arguments :: [Value] }
+    | ReceiveCallback { fromProgram :: ProgramId, payload :: Value }
 ```
 
-- parentEffectHash ensures causal linking.
-- proof ensures:
-  - Guard satisfaction.
-  - Correct resource flow.
-  - Message transport depends on simulation mode.
+### ProposedEffect
 
-## 9. Execution Log
+Each traveler submits effects for approval, bundling:
 
-- Every effect produces a log entry:
+- The effect itself.
+- The time map snapshot observed when the effect was proposed.
+ResourceLedger
+
+This tracks who owns each resource at all times.
+
 ```haskell
-LogEntry
-effect
-appliedAt
-causalParent
-resultingStateHash
+type ResourceLedger = Map ResourceId (ProgramId, ResourceState)
 ```
 
-- Log is:
-  - Content-addressed.
-  - Append-only.
-  - Causally linked.
+### Time Map
 
-## 10. Controller
+The Time Map tracks:
 
-The Controller is a core system component operated by Time Bandits and is responsible for:
+- The latest observed block height for each timeline.
+- The corresponding block hashes and timestamps.
+- A Lamport clock tying together all timeline updates.
 
-- Deploying programs based on Time Traveler submissions
-- Tracking time maps across all relevant timelines
-- Validating transitions submitted by Time Travelers
-- Applying effects after validation by Time Keepers
-- Maintaining causal logs for replay and audit
-- Ensuring system invariants across all operations
-- Coordinating with Time Keepers for timeline state updates
+### Execution Log
 
-The Controller acts as the central coordination point between Time Travelers who submit programs and messages, Time Keepers who maintain timeline integrity, and Time Bandits who execute programs and generate proofs. It ensures that all system operations maintain the required security and consistency properties regardless of the deployment mode.
+Each resource has its own causal log — a content-addressed append-only log recording every applied effect that touched that resource.
 
-## 11. Simulation Modes
+### Program Memory
 
-### 11.1 In-Memory Mode
+Each program has a simple key-value store for internal state:
 
-- All actors run in-process.
-- Messaging is direct function calls.
-
-### 11.2 Local Multi-Process Mode
-
-- Each actor runs in its own process.
-- Messaging is via Unix sockets or stdin/stdout.
-- Controller spawns actors via nix run.
-
-### 11.3 Geo-Distributed Mode
-
-- Each actor runs remotely (e.g., nix run over SSH).
-- Messaging uses TCP or external RPC.
-- Controller manages distributed coordination.
-
-## 12. Invariants
-
-- Timeline Consistency: Each timeline obeys its own rules.
-- Cross-Timeline Isolation: Programs only see declared timelines.
-- Monotonic Time: Programs observe strictly advancing time maps.
-- Single Owner: Each resource has exactly one owner at any time.
-- No Implicit Access: Programs only modify memory via declared effects.
-- Replay Determinism: Replay with the same inputs yields the same outputs.
-- Causal Linking: Every effect links to its parent.
-- Complete Audit Trail: Every applied effect is logged.
-- Proof-Carrying Transitions: Every transition carries a ZK proof.
-
-## 13. Security Properties
-
-- Double Spend Prevention: Enforced by single-owner rule.
-- No Reentrancy: Enforced by Lamport clocks.
-- Full Traceability: Enforced by content-addressed logs.
-- No Backdating: Enforced by time map checking.
-
-## 14. Example Flow
-
-- Cross-Program Escrow Trade:
-  1. Program A escrows 100 GoldCoin into Program B.
-  2. Program B watches for SilverCoin deposit.
-  3. Program B invokes Program C to finalize.
-  4. Program C claims GoldCoin from B and completes trade.
-  5. Each step emits a trace log entry with a proof.
-  6. Time map advances at each step.
-
-## 15. System Diagram
-
-```
-+-----------------------------------------------------------+
-|                    Time Bandits System                     |
-+-----------------------------------------------------------+
-           |                |                 |
-    +------+------+  +------+------+  +-------+-------+
-    | Time Travelers|  | Time Keepers |  |  Time Bandits  |
-    +------+------+  +------+------+  +-------+-------+
-           |                |                 |
-           v                v                 v
-    +-------------+  +-------------+  +----------------+
-    |   Programs  |  |  Timelines  |  |   Controller   |
-    +------+------+  +------+------+  +-------+-------+
-           |                |                 |
-           v                v                 v
-    +--------------+ +---------------+ +----------------+
-    |Program Memory| |Timeline State | | Execution Log  |
-    +--------------+ +---------------+ +----------------+
-                                       |
-                                       v
-                                 +-------------+
-                                 |  Time Map   |
-                                 +-------------+
+```haskell
+type ProgramMemory = Map Text Value
 ```
 
-- Time Travelers submit program definitions and transition messages to advance program state
-- Time Keepers maintain timeline integrity, validate messages, and ensure timeline consistency
-- Time Bandits operate the P2P network, execute programs, and generate required cryptographic proofs
-- Controller validates messages, applies effects, and maintains the execution log
-- Programs own memory slots and resources with explicit ownership tracking
-- Resources move explicitly between programs through controlled effects
-- All operations maintain a consistent time map across timelines
-- All changes are logged and proof-checked in the execution log
+## Concurrency Model
+
+### Resource-Centric Concurrency
+
+Effects are the unit of concurrency, not programs.
+Effects apply in parallel if they touch disjoint resources.
+- Each effect locks the resources it touches.
+- If locks are free, the effect applies immediately.
+- If locks are held, the effect waits.
+
+### Per-Resource Logs
+
+Each resource tracks its own causal log.
+A program’s full history is assembled from its per-resource logs plus internal memory updates.
+
+### Time Map Consistency
+
+Every effect records the exact time map snapshot it observed when proposed.
+Before applying, the interpreter compares this with the current time map:
+
+- If the time map advanced, preconditions are rechecked.
+
+## Messaging Model
+
+All actor-initiated messages flow through Account Programs.
+
+- Deposit: Move assets into a target program.
+- Withdraw: Retrieve assets back into the account.
+- Invoke: Call another program.
+- ReceiveCallback: Receive async response from a program.
+
+This gives each traveler:
+- A unified inbox/outbox.
+- A consistent causal record of all their interactions.
+- A single point of governance for future upgrades (delegation, recovery, etc.).
+
+Programs only send messages to other programs (including account programs).
+No direct program-to-actor communication is allowed.
+
+## Effect Lifecycle
+
+1. Traveler submits a `ProposedEffect` (to their account program).
+2. Account program applies the effect to its own state.
+3. If the effect is a `Deposit`, `Invoke`, or similar, it emits a cross-program message.
+4. Target program applies the effect (if preconditions hold).
+5. Applied effect is recorded in the per-resource log.
+6. Applied effect is gossiped to other Bandits.
+7. ZK proof is generated and attached to the log entry.
+
+## Invariants
+
+| Invariant                | Description                                               |
+|--------------------------|-----------------------------------------------------------|
+| Resource Ownership       | Every resource has exactly one program owner at all times. |
+| Actor Separation         | Actors interact only through account programs.            |
+| Effect-Only Changes      | All state changes flow through applied effects.           |
+| Per-Resource Causal Logs | Each resource maintains its own log.                      |
+| Causal Consistency       | Every effect observes a specific time map.                |
+| Proof Completeness       | Every applied effect has a proof.                         |
+| Replayability            | Replaying logs reconstructs exact state.                  |
+| Simulation Parity        | Same rules hold across all simulation modes.              |
+
+## Simulation Modes
+
+The system runs in three environments:
+
+| Mode            | Description                                           |
+|-----------------|-------------------------------------------------------|
+| In-Memory       | All actors run in a single process (fast development).|
+| Multi-Process   | Each actor is a process (realistic local test).       |
+| Geo-Distributed | Actors run on separate machines (full deployment test). |
+
+All invariants and causal consistency rules must hold in all modes.
+
+## Proof Model
+
+Every applied effect must produce a proof that covers:
+- Preconditions held.
+- Time map was correct.
+- Resource ledger changes were valid.
+- Internal state changes followed declared logic.
+
+The proof is:
+- Attached to the effect log entry.
+- Verifiable by anyone from first principles (program code, time map, previous state).
+
+## Summary Flow
+
+1. Traveler submits effect via account program.
+2. Account program applies effect.
+3. Account program emits cross-program message.
+4. Target program receives message.
+5. Target program applies effect (if valid).
+6. Effect is logged and proven.
+7. Effect is gossiped.
+
+---
+
+This specification defines the complete lifecycle of effects, resource ownership, and causal consistency, ensuring that Time Bandits programs are:
+
+- Verifiable
+- Replayable
+- Causally consistent across multiple blockchains
+- Safe from reentrancy, race conditions, and direct actor interference

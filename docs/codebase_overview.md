@@ -1,92 +1,208 @@
-# Time-Bandits Codebase Overview
+# Time Bandits: Codebase Overview
 
-This document provides an overview of the Time-Bandits codebase, explaining the main components, what each folder contains, and the typical flow of data and control during program execution.
+This document provides a high-level overview of the Time Bandits codebase structure, the key modules, and their dependencies. Understanding these relationships is essential for navigating the codebase and contributing effectively.
 
-## Main Components
+## Architecture
 
-The Time-Bandits system is organized into several high-level functional areas:
+Time Bandits is designed with a modular architecture that separates concerns and minimizes coupling between subsystems:
 
-### Core
+```
++-----------+     +------------+     +------------+
+|           |     |            |     |            |
+|   Core    |<----+  Programs  |<----+  Execution |
+|           |     |            |     |            |
++-----------+     +------------+     +------------+
+      ^                 ^                  ^
+      |                 |                  |
+      v                 v                  v
++-----------+     +------------+     +------------+
+|           |     |            |     |            |
+|  Adapters |<--->| Simulation |<--->|   Actors   |
+|           |     |            |     |            |
++-----------+     +------------+     +------------+
+                        ^
+                        |
+                        v
+                  +------------+
+                  |            |
+                  |    Proofs  |
+                  |            |
+                  +------------+
+                        ^
+                        |
+                        v
+                  +------------+
+                  |            |
+                  |    CLI     |
+                  |            |
+                  +------------+
+```
 
-The `core/` directory contains the shared types, data structures, and foundational logic that is used throughout the system. This includes:
+## Directory Structure
 
-- **Effect.hs**: Defines the core effect system that enables time-travel operations
-- **Resource.hs**: Defines the resources that can be manipulated across timelines
-- **Timeline.hs**: Core timeline abstractions and operations
-- **TimeMap.hs**: Manages mappings between timeline states and resources
-- **ResourceLedger.hs**: Tracks and manages resources across timelines
-- **TimelineDescriptor.hs**: Describes the structure and properties of timelines
+The codebase is organized as follows:
 
-### Programs
+```
+time-bandits/
+├── src/           # Source code
+│   ├── Core/      # Core types and data structures
+│   ├── Programs/  # Program model and state management
+│   ├── Execution/ # Program execution and effect handling
+│   ├── Adapters/  # External system interfaces
+│   ├── Actors/    # Actor model implementations
+│   ├── Simulation/# Simulation framework
+│   ├── Proofs/    # Cryptographic proofs and verification
+│   └── CLI/       # Command-line interface
+├── test/          # Test suite
+├── docs/          # Documentation
+└── examples/      # Example programs and scenarios
+```
 
-The `programs/` directory contains program-specific logic for the Time-Bandits system:
+## Module Dependencies
 
-- **Program.hs**: Defines the core program structure and operations
-- **ProgramMemory.hs**: Manages program state and memory across executions
-- **Preconditions.hs**: Defines and evaluates preconditions for program execution
-- **Scenario.hs**: Defines scenarios that combine multiple programs for testing and demonstration
+### Core Layer
 
-### Actors
+The Core layer forms the foundation of the Time Bandits system:
 
-The `actors/` directory contains actor-specific logic:
+```
+Core/
+├── Timeline.hs       # Timeline representation and operations
+├── Resource.hs       # Resource management primitives
+├── TimeMap.hs        # Timeline relationship tracking
+├── Types.hs          # Fundamental type definitions
+└── Hash.hs           # Cryptographic hashing utilities
+```
 
-- **TimeTraveler.hs**: Implements the time traveler actor that navigates across timelines
-- **TimeKeeper.hs**: Implements the time keeper actor that maintains timeline consistency
-- **TimeBandit.hs**: Implements the time bandit actor that attempts to exploit timeline vulnerabilities
-- **Actor.hs**: Common actor functionality and abstractions
-- **ActorCommunication.hs**: Handles communication between actors
-- **ActorCoordination.hs**: Coordinates activities between multiple actors
+**Dependencies**: None (except standard libraries)
 
-### Execution
+### Programs Layer
 
-The `execution/` directory handles the unified interpreter, logging, and state transitions:
+The Programs layer implements the programming model:
 
-- **EffectInterpreter.hs**: Interprets effects across the system
-- **ExecutionLog.hs**: Logs execution events and state changes
-- **EffectExecutor.hs**: Executes effects in the appropriate context
-- **EffectAdapterGenerator.hs**: Generates adapters for effects
-- **DistributedLog.hs**: Manages logs in a distributed setting
-- **LocalMultiProcess.hs**: Handles multi-process execution locally
+```
+Programs/
+├── Program.hs        # Program definition and state
+├── Effect.hs         # Effect data structures
+├── Types.hs          # Program-specific types
+├── Memory.hs         # Program memory model
+└── Precondition.hs   # Precondition evaluation
+```
 
-### Adapters
+**Dependencies**: Core
 
-The `adapters/` directory contains external timeline adapters:
+### Execution Layer
 
-- **TimelineAdapter.hs**: Base timeline adapter functionality
-- **NetworkAdapter.hs**: Adapters for network communication
-- **Network.hs**: Core network functionality
-- **NetworkQUIC.hs**: QUIC protocol implementation for network communication
+The Execution layer handles runtime execution:
 
-### Proofs
+```
+Execution/
+├── Interpreter.hs    # Effect interpreter
+├── Controller.hs     # Execution control
+├── LogStore.hs       # Execution logging
+└── ResourceLedger.hs # Resource accounting
+```
 
-The `proofs/` directory handles proof generation and verification:
+**Dependencies**: Core, Programs
 
-- **ZKProof.hs**: Zero-knowledge proof implementation
-- **TimelineProof.hs**: Proofs for timeline operations
-- **SecurityVerifier.hs**: Verifies security properties
+### Adapters Layer
 
-### CLI
+The Adapters layer interfaces with external systems:
 
-The `cli/` directory contains the command-line interface and entry points:
+```
+Adapters/
+├── Storage/          # Storage backends
+├── Network/          # Network communication
+├── TimeSource.hs     # External time sources
+└── Crypto.hs         # Cryptographic operations
+```
 
-- **Main.hs**: The main entry point for the CLI application
-- **Controller.hs**: Handles the simulation controller logic
-- **Deployment.hs**: Manages deployment of the system
+**Dependencies**: Core
 
-## Typical Flow of Data and Control
+### Actors Layer
 
-1. **Initialization**: The system starts with the `Main.hs` entry point in the CLI module, which initializes the simulation environment and actors.
+The Actors layer implements the actor model:
 
-2. **Program Definition**: Users define programs that specify operations to be performed on timelines.
+```
+Actors/
+├── Actor.hs          # Base actor functionality
+├── TimeTraveler.hs   # Timeline manipulation actor
+├── TimeKeeper.hs     # Timeline consistency actor
+└── TimeBandit.hs     # Security testing actor
+```
 
-3. **Actor Execution**: Time Travelers, Time Keepers, and Time Bandits execute programs by generating effects.
+**Dependencies**: Core, Programs, Execution
 
-4. **Effect Interpretation**: Effects are interpreted by the Effect Interpreter and executed by the Effect Executor.
+### Simulation Layer
 
-5. **Timeline Interaction**: Timeline adapters facilitate interaction with external timelines (e.g., blockchain systems).
+The Simulation layer provides the simulation framework:
 
-6. **Logging and Verification**: All operations are logged in the Execution Log and can be verified using the Proof system.
+```
+Simulation/
+├── Controller.hs     # Simulation control
+├── Scenario.hs       # Scenario definition and loading
+└── Messaging.hs      # Actor-to-actor messaging
+```
 
-7. **Resource Management**: Resources are tracked and managed by the Resource Ledger throughout the system.
+**Dependencies**: Core, Programs, Execution, Actors
 
-This flow allows for complex time-travel operations across multiple timelines, with proper validation, security, and consistency guarantees. 
+### Proofs Layer
+
+The Proofs layer handles cryptographic proofs:
+
+```
+Proofs/
+├── TimelineProof.hs  # Timeline state proofs
+├── ZKProof.hs        # Zero-knowledge proofs
+└── SecurityVerifier.hs # Security property verification
+```
+
+**Dependencies**: Core, Programs, Simulation
+
+### CLI Layer
+
+The CLI layer provides the command-line interface:
+
+```
+CLI/
+├── Main.hs           # Main entry point
+└── Commands.hs       # Command handlers
+```
+
+**Dependencies**: Core, Programs, Execution, Simulation, Proofs
+
+## Dependency Guidelines
+
+To maintain a clean architecture:
+
+1. **Lower layers should not depend on higher layers**:
+   - Core should not import from any other subsystem
+   - Programs should only import from Core
+   - Execution can import from Core and Programs
+   - Adapters should only import from Core
+   - Actors can import from Core, Programs, and Execution
+   - Simulation can import from Core, Programs, Execution, and Actors
+   - Proofs can import from Core, Programs, and Simulation
+   - CLI can import from any subsystem
+
+2. **Avoid circular dependencies**:
+   - If module A imports module B, module B should not import module A
+   - Use interface abstractions when bidirectional communication is needed
+
+3. **Use typeclasses for abstraction**:
+   - Define interfaces in lower layers
+   - Implement in higher layers
+   - Use dependency injection via the Effects system
+
+4. **Keep imports explicit**:
+   - Avoid wildcard imports (`import X.*`)
+   - Name imports clearly (`import qualified X as X`)
+
+## Dependency Management
+
+Dependencies are managed through:
+
+1. **The Cabal file**: External dependencies and version constraints
+2. **The Nix flake**: Development environment with fixed dependency versions
+3. **Module wiring**: Internal dependency relationships
+
+By following these guidelines, we maintain a codebase that is modular, testable, and easy to understand and extend. 

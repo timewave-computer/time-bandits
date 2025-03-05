@@ -11,62 +11,50 @@ This module re-exports functionality from all Time-Bandits components.
 -}
 module TimeBandits 
   ( -- * Core Exports
-    module TimeBandits.Core
+    module Core
   
     -- * Program-related Exports
-  , module TimeBandits.Programs.Program
-  , module TimeBandits.Programs.ProgramEffect
-  , module TimeBandits.Programs.PreconditionEvaluator
-  , module TimeBandits.Programs.Scenario
+  , module Programs
   
     -- * Actor-related Exports
-  , module TimeBandits.Actors.Actor
-  , module TimeBandits.Actors.TimeTraveler
-  , module TimeBandits.Actors.TimeKeeper
-  , module TimeBandits.Actors.TimeBandit
+  , module Actors
   
     -- * Execution-related Exports
-  , module TimeBandits.Execution.EffectInterpreter
-  , module TimeBandits.Execution.EffectExecutor
-  , module TimeBandits.Execution.ExecutionLog
+  , module Execution
   
     -- * Adapter-related Exports
-  , module TimeBandits.Adapters.TimelineAdapter
+  , module Adapters
   
     -- * Proof-related Exports
-  , module TimeBandits.Proofs.ZKProof
-  , module TimeBandits.Proofs.TimelineProof
+  , module Proofs
+  
+    -- * Simulation-related Exports
+  , module Simulation
   
     -- * CLI-related Exports
-  , module TimeBandits.CLI.Controller
+  , module CLI
   ) where
 
 -- Core imports
-import TimeBandits.Core
+import Core
 
 -- Program imports
-import TimeBandits.Programs.Program
-import TimeBandits.Programs.ProgramEffect
-import TimeBandits.Programs.PreconditionEvaluator
-import TimeBandits.Programs.Scenario
+import Programs
 
 -- Actor imports
-import TimeBandits.Actors.Actor
-import TimeBandits.Actors.TimeTraveler
-import TimeBandits.Actors.TimeKeeper
-import TimeBandits.Actors.TimeBandit
+import Actors
 
 -- Execution imports
-import TimeBandits.Execution.EffectInterpreter
-import TimeBandits.Execution.EffectExecutor
-import TimeBandits.Execution.ExecutionLog
+import Execution
 
 -- Adapter imports
-import TimeBandits.Adapters.TimelineAdapter
+import Adapters
 
 -- Proof imports
-import TimeBandits.Proofs.ZKProof
-import TimeBandits.Proofs.TimelineProof
+import Proofs
+
+-- Simulation imports
+import Simulation
 
 -- CLI imports
-import TimeBandits.CLI.Controller 
+import CLI 
