@@ -5,6 +5,8 @@ import qualified ControllerTest
 import qualified TimelineDescriptorTest
 import qualified DistributedLogTest
 
+{-# OPTIONS_GHC -F -pgmF hspec-discover #-}
+
 main :: IO ()
 main = Tasty.defaultMain $ Tasty.testGroup "Time Bandits Tests"
   [ SimpleNetworkConfig.tests

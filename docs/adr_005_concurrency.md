@@ -18,6 +18,14 @@ Time Bandits presents unique challenges for concurrency:
 
 We will implement a resource-scoped concurrency model with the following high-level principles:
 
+Programs describe concurrent goals. The system resolves actual concurrency based on what’s causally safe.
+
+This mirrors:
+
+- STM (software transactional memory) in Haskell.
+- Optimistic concurrency in databases (conflict resolution at commit time).
+- CRDT-like causal graphs where effects can fork and merge.
+
 ### High-Level Principles
 
 1. **Resource-Centric Concurrency**: The unit of concurrency is the resource, not the program or thread. Each resource can be updated independently and concurrently with other resources.

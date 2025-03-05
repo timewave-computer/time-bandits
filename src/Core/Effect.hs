@@ -64,6 +64,8 @@ import Core.Common (Hash, computeHash)
 import Core.ProgramId (ProgramId)
 import Core.ResourceId (ResourceId)
 import Core.TimelineId (TimelineId)
+import Core.ActorId (ActorId)
+import Core.AccountProgram (AccountMessage)
 
 -- | Unique identifier for effects
 type EffectId = Hash
@@ -114,6 +116,7 @@ data Effect
   | TimelineEffect TimelineId ByteString  -- ^ Effect on a timeline
   | ProgramEffect ProgramId ByteString    -- ^ Effect on a program
   | CompositeEffect [Effect]              -- ^ Composition of multiple effects
+  | AccountMessageEffect ActorId AccountMessage  -- ^ Message to an account program
   deriving (Show, Eq, Generic, Serialize)
 
 -- | Create a new effect with metadata
@@ -146,6 +149,7 @@ effectPreconditions (TimelineEffect _ _) = []  -- Placeholder, actual implementa
 effectPreconditions (ProgramEffect _ _) = []   -- Placeholder, actual implementation depends on effect
 effectPreconditions (CompositeEffect effects) = 
   concatMap effectPreconditions effects        -- Combine preconditions from all sub-effects
+effectPreconditions (AccountMessageEffect _ _) = []  -- Placeholder, actual implementation depends on message type
 
 -- | Get all postconditions guaranteed by an effect
 effectPostconditions :: Effect -> [Precondition]
@@ -154,6 +158,7 @@ effectPostconditions (TimelineEffect _ _) = []  -- Placeholder, actual implement
 effectPostconditions (ProgramEffect _ _) = []   -- Placeholder, actual implementation depends on effect
 effectPostconditions (CompositeEffect effects) = 
   concatMap effectPostconditions effects        -- Combine postconditions from all sub-effects
+effectPostconditions (AccountMessageEffect _ _) = []  -- Placeholder, actual implementation depends on message type
 
 -- | Serialize an effect to bytes
 serializeEffect :: Effect -> ByteString

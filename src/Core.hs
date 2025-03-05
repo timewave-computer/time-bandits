@@ -1,7 +1,9 @@
 -- | Core module that re-exports all Core submodules
 module Core 
   ( -- * Core Types
-    module Core.Common
+    module Core.AccountProgram
+  , module Core.ActorId
+  , module Core.Common
   , module Core.Effect
   , module Core.Effects
   , module Core.ProgramId
@@ -18,6 +20,8 @@ module Core
   ) where
 
 -- Import all Core submodules
+import Core.AccountProgram
+import Core.ActorId
 import Core.Common
 import Core.Effect
 import Core.Effects

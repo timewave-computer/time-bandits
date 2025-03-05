@@ -43,6 +43,12 @@ module Simulation.Scenario
   -- * Result Handling
   , summarizeResults
   , formatScenarioReport
+  
+  -- * Account Programs
+  , createAccountPrograms
+  , runScenarioWithAccountPrograms
+  , initializeScenarioWithAccounts
+  , executeStepWithAccounts
   ) where
 
 import Control.Exception (Exception, throwIO)
@@ -57,9 +63,14 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import GHC.Generics (Generic)
 import System.FilePath (takeFileName)
+import Data.Time (getCurrentTime)
 
 import Core.Timeline (TimelineHash)
-import Simulation.Messaging (ActorSpec)
+import Core.ActorId (ActorId(..))
+import Core.ProgramId (ProgramId(..))
+import Core.ResourceId (ResourceId)
+import Core.AccountProgram (AccountProgram(..))
+import Simulation.Messaging (ActorSpec(..), ActorID)
 
 -- | Configuration for a scenario
 data ScenarioConfig = ScenarioConfig
@@ -188,4 +199,64 @@ formatScenarioReport result = T.unlines
       , "Status: " <> if stepResultSuccess result then "✅ Success" else "❌ Failure"
       , "Message: " <> stepResultMessage result
       , ""
-      ] 
+      ]
+
+-- | Create account programs for all actors in a scenario
+createAccountPrograms :: Scenario -> Map.Map ActorID AccountProgram
+createAccountPrograms scenario = 
+  Map.fromList $ map createAccountProgram (scenarioActors scenario)
+  where
+    createAccountProgram :: ActorSpec -> (ActorID, AccountProgram)
+    createAccountProgram spec = 
+      ( _actorSpecID spec
+      , AccountProgram
+          { owner = _actorId spec
+          , balances = _initialBalances spec
+          , inbox = []
+          , outbox = []
+          , timelineAccounts = Map.empty
+          }
+      )
+
+-- | Run a scenario with account programs
+runScenarioWithAccountPrograms :: 
+  (MonadIO m) => 
+  ScenarioConfig -> 
+  Scenario -> 
+  m ScenarioResult
+runScenarioWithAccountPrograms config scenario = do
+  -- Create account programs for all actors
+  let accountPrograms = createAccountPrograms scenario
+  
+  -- Initialize the scenario with account programs
+  initResult <- initializeScenarioWithAccounts config scenario accountPrograms
+  
+  -- Run the scenario steps
+  stepResults <- forM (scenarioSteps scenario) $ \step -> do
+    executeStepWithAccounts config scenario accountPrograms step
+  
+  -- Return the overall result
+  pure ScenarioResult
+    { scenarioResultSuccess = all stepResultSuccess stepResults
+    , scenarioResultSteps = stepResults
+    , scenarioResultTotalTime = sum (map (scenarioResultTotalTime . snd) stepResults)
+    }
+
+-- | Initialize a scenario with account programs
+initializeScenarioWithAccounts ::
+  (MonadIO m) =>
+  ScenarioConfig ->
+  Scenario ->
+  Map.Map ActorID AccountProgram ->
+  m ()
+initializeScenarioWithAccounts _ _ _ = pure ()  -- Placeholder
+
+-- | Execute a scenario step with account programs
+executeStepWithAccounts ::
+  (MonadIO m) =>
+  ScenarioConfig ->
+  Scenario ->
+  Map.Map ActorID AccountProgram ->
+  ScenarioStep ->
+  m StepResult
+executeStepWithAccounts _ _ _ _ = pure $ StepResult True "Step executed" []  -- Placeholder 

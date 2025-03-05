@@ -10,16 +10,20 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: Execution.EffectInterpreter
+Description: Core effect application logic with resource-centric concurrency
+
 This module provides the EffectInterpreter, which is responsible for the full lifecycle
 of effects in the Time Bandits system. It centralizes precondition checking, effect application,
 and ensures causal determinism across the system.
 
 The EffectInterpreter:
-1. Validates effect preconditions against the current time map
-2. Ensures resources have a single owner
-3. Applies effects to program state
-4. Updates the execution log with causal links
-5. Maintains the time map for causal ordering
+1. Locks only the write set of each effect
+2. Validates effect preconditions against the current time map
+3. Ensures resources have a single owner
+4. Applies effects to program state or resource ledger
+5. Appends to per-resource logs
+6. Releases locks
 -}
 module Execution.EffectInterpreter 
   ( -- * Core Types
@@ -27,14 +31,19 @@ module Execution.EffectInterpreter
   , EffectResult(..)
   , EffectContext(..)
   , EffectError(..)
+  , ProposedEffect(..)
   
   -- * Interpreter Operations
   , createInterpreter
   , interpretEffect
-  , validatePreconditions
   , applyEffect
-  , updateTimeMap
-  , logEffectExecution
+  , lockResources
+  , releaseResources
+  
+  -- * Effect Application
+  , applyResourceTransfer
+  , applyInternalStateUpdate
+  , applyAccountMessage
   
   -- * Causal Enforcement
   , enforceResourceOwnership
@@ -79,10 +88,17 @@ import Polysemy.Output (Output)
 import Polysemy.State qualified as PS
 import Polysemy.Trace (Trace, trace)
 import System.Random qualified as Random
+import qualified Data.Map as Map
+import qualified Data.Text as T
+import qualified Data.ByteString as BS
+import Data.Hashable (Hashable)
+import Control.Concurrent.STM (STM, atomically, TVar, readTVar, writeTVar, readTVarIO)
+import Control.Concurrent.STM.TVar (newTVar)
+import Control.Monad (forM_, when)
 
 -- Import from Core modules
 import Core.Common (Hash(..), Signature(..), computeHash, computeSha256)
-import Core.Effect (Effect(..), EffectResult(..), EffectStatus(..))
+import Core.Effect (Effect(..), EffectResult(..), EffectStatus(..), EffectId)
 import Core.Effects
     ( ResourceOps(..)
     , ResourceOperationEffect(..)
@@ -105,111 +121,394 @@ import Core.Effects
 import Core.ResourceId (ResourceId(..))
 import Core.TimelineId (TimelineId(..))
 import Core.ProgramId (ProgramId(..))
-import Execution.LogStore (LogStore, LogEntry, createLogStore, appendLog, queryLog)
+import Core.TimeMap (TimeMap)
+import Core.ResourceLedger (ResourceLedger, ResourceState)
+import Core.ActorId (ActorId)
+import Core.AccountProgram (AccountProgram)
+
 import Execution.ExecutionLog (ExecutionLog, ExecutionLogEntry, createExecutionLog, recordEffect)
+import Execution.PreconditionEvaluator (PreconditionEvaluator, PreconditionResult(..), ProposedEffect(..))
+import Execution.EffectLogger (EffectLogger, LogResult(..))
 
--- | The primary effect interpreter, responsible for validating and applying effects
-data EffectInterpreter = EffectInterpreter
-  { eiConfig :: InterpreterConfig            -- ^ Configuration for the interpreter
-  , eiKeyStore :: Map.Map Text ByteString    -- ^ Store of cryptographic keys
-  , eiLogicalClock :: IORef.IORef LamportTime -- ^ Current logical time
-  , eiP2PNodes :: [P2PNode]                  -- ^ Connected P2P network nodes
-  , eiResourceStore :: Map.Map ResourceId Resource -- ^ Current resource state
-  , eiExecutionLog :: ExecutionLog           -- ^ Log of all executed effects
-  , eiLogStore :: LogStore                   -- ^ Persistent storage for logs
-  }
+-- | Result of interpreting an effect
+data EffectResult =
+    EffectApplied Effect BS.ByteString  -- ^ Effect and resulting state hash
+  | EffectRejected EffectError
+  deriving (Eq, Show, Generic)
 
--- | The result of interpreting an effect
-data EffectResult a = EffectResult
-  { erStatus :: EffectStatus       -- ^ Success or failure
-  , erTimestamp :: LamportTime     -- ^ When the effect was executed
-  , erValue :: Maybe a             -- ^ Optional return value
-  , erLogs :: [Text]               -- ^ Execution logs
-  }
-  deriving (Show, Generic)
-
--- | The context in which an effect is interpreted
+-- | Context for effect interpretation
 data EffectContext = EffectContext
-  { ecProgramId :: ProgramId           -- ^ Program ID
-  , ecTimelineId :: TimelineId         -- ^ Timeline ID  
-  , ecActor :: Actor                   -- ^ Actor executing the effect
-  , ecTimestamp :: UTCTime             -- ^ Wall clock time
-  , ecLogicalTime :: LamportTime       -- ^ Logical time
+  { currentTimeMap :: TimeMap
+  , programMemory :: Map.Map ProgramId (Map.Map T.Text BS.ByteString)
+  , accountPrograms :: Map.Map ProgramId AccountProgram
   }
   deriving (Show, Generic)
 
--- | Errors that can occur during effect interpretation
-data EffectError
-  = PreconditionFailure Text
-  | ResourceNotFound ResourceId
-  | OwnershipViolation ResourceId
-  | InvalidSignature
-  | CausalOrderViolation
-  | NetworkError Text
-  | SerializationError Text
-  | StorageError Text
-  deriving (Show, Generic)
+-- | Error types for effect interpretation
+data EffectError =
+    PreconditionFailed T.Text
+  | ResourceLocked ResourceId EffectId
+  | TimeMapInconsistency T.Text
+  | ResourceOwnershipError T.Text
+  | InternalStateError T.Text
+  | LoggingError T.Text
+  deriving (Eq, Show, Generic)
 
--- | Trace verbosity configuration
-data TraceConfig
-  = Silent        -- ^ No tracing
-  | Normal        -- ^ Standard tracing
-  | Verbose       -- ^ Verbose tracing with full context
-  deriving (Show, Eq, Generic)
-
--- | Configuration for the interpreter
-data InterpreterConfig = InterpreterConfig
-  { icTraceLevel :: TraceConfig           -- ^ How much to trace
-  , icEnforceOwnership :: Bool            -- ^ Whether to strictly enforce resource ownership
-  , icEnforceCausality :: Bool            -- ^ Whether to enforce causal order
-  , icMaxTries :: Int                     -- ^ Maximum retries for failed effects
-  , icTimeout :: Int                      -- ^ Timeout in milliseconds
-  , icResilienceStrategy :: Text          -- ^ Strategy for handling failures
+-- | EffectInterpreter handles the full lifecycle of effects
+data EffectInterpreter = EffectInterpreter
+  { resourceLedger :: TVar ResourceLedger
+  , lockTable :: TVar LockTable
+  , preconditionEvaluator :: PreconditionEvaluator
+  , effectLogger :: EffectLogger
+  , executionContext :: TVar EffectContext
   }
-  deriving (Show, Generic)
+  deriving (Generic)
 
--- | Default interpreter configuration
-defaultConfig :: InterpreterConfig
-defaultConfig = InterpreterConfig
-  { icTraceLevel = Normal
-  , icEnforceOwnership = True
-  , icEnforceCausality = True
-  , icMaxTries = 3
-  , icTimeout = 5000
-  , icResilienceStrategy = "exponential-backoff"
-  }
-
--- | Verbose interpreter configuration
-verboseConfig :: InterpreterConfig
-verboseConfig = defaultConfig { icTraceLevel = Verbose }
-
--- | Silent interpreter configuration
-silentConfig :: InterpreterConfig
-silentConfig = defaultConfig { icTraceLevel = Silent }
-
--- | Create a new effect interpreter with the given configuration
-createInterpreter :: InterpreterConfig -> IO EffectInterpreter
-createInterpreter config = do
-  initialTime <- LamportTime <$> Random.randomRIO (1, 1000)
-  clockRef <- IORef.newIORef initialTime
-  logStore <- createLogStore
-  executionLog <- createExecutionLog
+-- | Create a new effect interpreter
+createInterpreter :: 
+  ResourceLedger -> 
+  PreconditionEvaluator -> 
+  EffectLogger -> 
+  EffectContext -> 
+  IO EffectInterpreter
+createInterpreter ledger evaluator logger context = do
+  ledgerVar <- newTVar ledger
+  lockTableVar <- newTVar Map.empty
+  contextVar <- newTVar context
   
   pure $ EffectInterpreter
-    { eiConfig = config
-    , eiKeyStore = Map.empty
-    , eiLogicalClock = clockRef
-    , eiP2PNodes = []
-    , eiResourceStore = Map.empty
-    , eiExecutionLog = executionLog
-    , eiLogStore = logStore
+    { resourceLedger = ledgerVar
+    , lockTable = lockTableVar
+    , preconditionEvaluator = evaluator
+    , effectLogger = logger
+    , executionContext = contextVar
     }
 
--- | Interpret an effect with a given configuration
-interpretWithConfig :: InterpreterConfig -> Effect a -> IO (EffectResult a)
-interpretWithConfig config effect = do
-  interpreter <- createInterpreter config
-  interpretEffect interpreter effect
+-- | Interpret a proposed effect
+interpretEffect :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProposedEffect -> 
+  m EffectResult
+interpretEffect interpreter proposedEffect = liftIO $ do
+  -- 1. Lock resources in the write set
+  lockResult <- atomically $ lockResources interpreter (writeSet proposedEffect) (effect proposedEffect)
+  case lockResult of
+    Left err -> pure $ EffectRejected err
+    Right _ -> do
+      -- 2. Get current context
+      context <- readTVarIO (executionContext interpreter)
+      
+      -- 3. Validate preconditions
+      ledger <- readTVarIO (resourceLedger interpreter)
+      preconditionResult <- liftIO $ evaluatePreconditions 
+        (preconditionEvaluator interpreter) 
+        proposedEffect 
+        ledger 
+        (currentTimeMap context)
+      
+      case preconditionResult of
+        PreconditionsNotSatisfied errs -> do
+          -- Release locks if preconditions fail
+          atomically $ releaseResources interpreter (writeSet proposedEffect)
+          pure $ EffectRejected $ PreconditionFailed $ T.pack $ show errs
+          
+        PreconditionsSatisfied -> do
+          -- 4. Apply the effect
+          applyResult <- applyEffect interpreter proposedEffect
+          
+          -- 5. Release locks regardless of application result
+          atomically $ releaseResources interpreter (writeSet proposedEffect)
+          
+          -- 6. Return the result
+          pure applyResult
+
+-- | Lock resources for an effect
+lockResources :: 
+  EffectInterpreter -> 
+  [ResourceId] -> 
+  Effect -> 
+  STM (Either EffectError ())
+lockResources interpreter resources effect = do
+  -- Get current lock table
+  locks <- readTVar (lockTable interpreter)
+  
+  -- Check if any resources are already locked
+  let lockedResources = filter (\r -> case Map.lookup r locks of
+                                       Just (LockedBy _) -> True
+                                       _ -> False) resources
+  
+  -- If any resources are locked, fail
+  if not (null lockedResources)
+    then do
+      let lockedResource = head lockedResources
+          lockingEffect = case Map.lookup lockedResource locks of
+                            Just (LockedBy effectId) -> effectId
+                            _ -> error "Impossible: resource is locked but no locking effect"
+      pure $ Left $ ResourceLocked lockedResource lockingEffect
+    else do
+      -- Lock all resources
+      let effectId = getEffectId effect
+          newLocks = foldr (\r acc -> Map.insert r (LockedBy effectId) acc) locks resources
+      
+      -- Update lock table
+      writeTVar (lockTable interpreter) newLocks
+      pure $ Right ()
+
+-- | Release resources after effect application
+releaseResources :: 
+  EffectInterpreter -> 
+  [ResourceId] -> 
+  STM ()
+releaseResources interpreter resources = do
+  -- Get current lock table
+  locks <- readTVar (lockTable interpreter)
+  
+  -- Release all locks
+  let newLocks = foldr (\r acc -> Map.insert r Unlocked acc) locks resources
+  
+  -- Update lock table
+  writeTVar (lockTable interpreter) newLocks
+
+-- | Apply an effect to the system
+applyEffect :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProposedEffect -> 
+  m EffectResult
+applyEffect interpreter proposedEffect = liftIO $ do
+  -- Get current context and ledger
+  context <- readTVarIO (executionContext interpreter)
+  ledger <- readTVarIO (resourceLedger interpreter)
+  
+  -- Apply the effect based on its type
+  case effect proposedEffect of
+    ResourceTransfer{} ->
+      applyResourceTransfer interpreter proposedEffect ledger
+      
+    InternalStateUpdate{} ->
+      applyInternalStateUpdate interpreter proposedEffect context
+      
+    AccountMessageEffect{} ->
+      applyAccountMessage interpreter proposedEffect context
+      
+    _ ->
+      -- For other effect types, we would have specific handlers
+      pure $ EffectRejected $ InternalStateError "Unsupported effect type"
+
+-- | Apply a resource transfer effect
+applyResourceTransfer :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProposedEffect -> 
+  ResourceLedger -> 
+  m EffectResult
+applyResourceTransfer interpreter proposedEffect ledger = do
+  -- In a real implementation, this would update the resource ledger
+  -- and log the effect
+  pure $ EffectApplied (effect proposedEffect) BS.empty
+
+-- | Apply an internal state update effect
+applyInternalStateUpdate :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProposedEffect -> 
+  EffectContext -> 
+  m EffectResult
+applyInternalStateUpdate interpreter proposedEffect context = do
+  -- In a real implementation, this would update the program memory
+  -- and log the effect
+  pure $ EffectApplied (effect proposedEffect) BS.empty
+
+-- | Apply an account message effect
+applyAccountMessage :: 
+  (MonadIO m) => 
+  EffectInterpreter -> 
+  ProposedEffect -> 
+  EffectContext -> 
+  m EffectResult
+applyAccountMessage interpreter proposedEffect context = do
+  case effect proposedEffect of
+    AccountMessageEffect actorId message -> do
+      -- Get the account program for this actor
+      let maybeAccountProgram = findAccountProgram actorId context
+      
+      case maybeAccountProgram of
+        Nothing -> 
+          pure $ EffectFailed $ "Account program not found for actor: " <> show actorId
+        
+        Just accountProgram -> do
+          -- Process the message based on its type
+          result <- case message of
+            DepositMessage resource amount to -> do
+              -- Check if the account has sufficient balance
+              let currentBalance = Map.findWithDefault 0 resource (balances accountProgram)
+              if currentBalance >= amount
+                then do
+                  -- Update the account program's balances
+                  let updatedBalances = Map.adjust (\b -> b - amount) resource (balances accountProgram)
+                  let updatedAccount = accountProgram { balances = updatedBalances }
+                  
+                  -- Update the resource ledger to reflect the transfer
+                  ledger <- readTVarIO (resourceLedger interpreter)
+                  let updatedLedger = updateResourceOwner resource to amount ledger
+                  
+                  -- Record the message in the outbox
+                  let outboxMsg = createSentMessage "deposit" to (show resource <> ":" <> show amount)
+                  let finalAccount = updatedAccount { outbox = outboxMsg : outbox updatedAccount }
+                  
+                  -- Update the account program in the context
+                  updateAccountProgram finalAccount context
+                  
+                  -- Update the resource ledger
+                  atomically $ writeTVar (resourceLedger interpreter) updatedLedger
+                  
+                  pure $ EffectApplied (effect proposedEffect) (encode finalAccount)
+                else
+                  pure $ EffectFailed $ "Insufficient balance for resource: " <> show resource
+            
+            WithdrawMessage resource amount from -> do
+              -- Check if the target program owns the resource
+              ledger <- readTVarIO (resourceLedger interpreter)
+              let ownership = getResourceOwner resource ledger
+              
+              case ownership of
+                Just (owner, _) | owner == from -> do
+                  -- Update the resource ledger
+                  let updatedLedger = transferResource resource from (owner accountProgram) amount ledger
+                  
+                  -- Update the account program's balances
+                  let updatedBalances = Map.insertWith (+) resource amount (balances accountProgram)
+                  let updatedAccount = accountProgram { balances = updatedBalances }
+                  
+                  -- Record the message in the outbox
+                  let outboxMsg = createSentMessage "withdraw" from (show resource <> ":" <> show amount)
+                  let finalAccount = updatedAccount { outbox = outboxMsg : outbox updatedAccount }
+                  
+                  -- Update the account program in the context
+                  updateAccountProgram finalAccount context
+                  
+                  -- Update the resource ledger
+                  atomically $ writeTVar (resourceLedger interpreter) updatedLedger
+                  
+                  pure $ EffectApplied (effect proposedEffect) (encode finalAccount)
+                
+                _ -> pure $ EffectFailed $ "Resource not owned by target program: " <> show resource
+            
+            InvokeMessage targetProgram entrypoint args -> do
+              -- Create a message in the outbox
+              let payload = "entrypoint:" <> entrypoint <> ",args:" <> T.intercalate "," args
+              let outboxMsg = createSentMessage "invoke" targetProgram payload
+              let updatedAccount = accountProgram { outbox = outboxMsg : outbox accountProgram }
+              
+              -- Update the account program in the context
+              updateAccountProgram updatedAccount context
+              
+              pure $ EffectApplied (effect proposedEffect) (encode updatedAccount)
+            
+            ReceiveCallbackMessage sourceProgram payload -> do
+              -- Create a message in the inbox
+              let inboxMsg = createReceivedMessage "callback" sourceProgram payload
+              let updatedAccount = accountProgram { inbox = inboxMsg : inbox accountProgram }
+              
+              -- Update the account program in the context
+              updateAccountProgram updatedAccount context
+              
+              pure $ EffectApplied (effect proposedEffect) (encode updatedAccount)
+            
+            CustomAccountMessage messageType payload -> do
+              -- Handle custom messages based on type
+              -- This is a placeholder for extensibility
+              let inboxMsg = createReceivedMessage (T.unpack messageType) (owner accountProgram) payload
+              let updatedAccount = accountProgram { inbox = inboxMsg : inbox accountProgram }
+              
+              -- Update the account program in the context
+              updateAccountProgram updatedAccount context
+              
+              pure $ EffectApplied (effect proposedEffect) (encode updatedAccount)
+          
+          -- Log the effect
+          logEffect interpreter proposedEffect result
+          
+          pure result
+    
+    _ -> pure $ EffectFailed "Not an account message effect"
+
+-- | Helper function to find an account program by actor ID
+findAccountProgram :: ActorId -> EffectContext -> Maybe AccountProgram
+findAccountProgram _ _ = Nothing  -- Placeholder, would look up in a real implementation
+
+-- | Helper function to update an account program in the context
+updateAccountProgram :: AccountProgram -> EffectContext -> IO ()
+updateAccountProgram _ _ = pure ()  -- Placeholder, would update in a real implementation
+
+-- | Helper function to create a sent message
+createSentMessage :: String -> ProgramId -> T.Text -> SentMessage
+createSentMessage typeStr to payload = SentMessage
+  { sentMessageId = T.pack $ show (hash (typeStr <> show to <> T.unpack payload))
+  , sentMessageType = messageTypeFromString typeStr
+  , toProgram = to
+  , sentPayload = payload
+  , sentStatus = Pending
+  , sentTimestamp = 0  -- Would use current time in a real implementation
+  }
+
+-- | Helper function to create a received message
+createReceivedMessage :: String -> ProgramId -> T.Text -> ReceivedMessage
+createReceivedMessage typeStr from payload = ReceivedMessage
+  { rcvMessageId = T.pack $ show (hash (typeStr <> show from <> T.unpack payload))
+  , rcvMessageType = messageTypeFromString typeStr
+  , fromProgram = from
+  , rcvPayload = payload
+  , rcvStatus = Pending
+  , rcvTimestamp = 0  -- Would use current time in a real implementation
+  }
+
+-- | Convert a string to a MessageType
+messageTypeFromString :: String -> MessageType
+messageTypeFromString "deposit" = Deposit
+messageTypeFromString "withdraw" = Withdraw
+messageTypeFromString "invoke" = Invoke
+messageTypeFromString "transfer" = Transfer
+messageTypeFromString "callback" = ReceiveCallback
+messageTypeFromString _ = CustomMessage
+
+-- | Helper function to get resource owner
+getResourceOwner :: ResourceId -> ResourceLedger -> Maybe (ProgramId, ResourceState)
+getResourceOwner resource ledger = Map.lookup resource ledger
+
+-- | Helper function to update resource owner
+updateResourceOwner :: ResourceId -> ProgramId -> Integer -> ResourceLedger -> ResourceLedger
+updateResourceOwner resource newOwner amount ledger =
+  Map.insert resource (newOwner, ResourceState amount) ledger
+
+-- | Helper function to transfer a resource
+transferResource :: ResourceId -> ProgramId -> ProgramId -> Integer -> ResourceLedger -> ResourceLedger
+transferResource resource from to amount ledger =
+  case Map.lookup resource ledger of
+    Just (owner, ResourceState currentAmount) | owner == from && currentAmount >= amount ->
+      let remainingAmount = currentAmount - amount
+      in if remainingAmount > 0
+         then Map.insert resource (from, ResourceState remainingAmount) ledger
+         else Map.delete resource ledger
+    _ -> ledger  -- No change if conditions not met
+
+-- | Log an effect (placeholder)
+logEffect :: (MonadIO m) => EffectInterpreter -> ProposedEffect -> EffectResult -> m ()
+logEffect _ _ _ = pure ()  -- Placeholder, would log in a real implementation
+
+-- | Get the effect ID from an effect
+getEffectId :: Effect -> EffectId
+getEffectId _ = BS.empty  -- Placeholder
+
+-- | Evaluate preconditions (placeholder)
+evaluatePreconditions :: 
+  PreconditionEvaluator -> 
+  ProposedEffect -> 
+  ResourceLedger -> 
+  TimeMap -> 
+  IO PreconditionResult
+evaluatePreconditions _ _ _ _ = pure PreconditionsSatisfied  -- Placeholder
 
 -- | Interpret the ResourceOperationEffect
 interpretResourceOp :: (Member (Embed IO) r, Member Trace r) 
@@ -421,5 +720,58 @@ interpretAppEffects config resourceLog keyStore clockRef nodesRef =
 when :: Applicative f => Bool -> f () -> f ()
 when True f = f
 when False _ = pure ()
+
+-- | Trace verbosity configuration
+data TraceConfig
+  = Silent        -- ^ No tracing
+  | Normal        -- ^ Standard tracing
+  | Verbose       -- ^ Verbose tracing with full context
+  deriving (Show, Eq, Generic)
+
+-- | Configuration for the interpreter
+data InterpreterConfig = InterpreterConfig
+  { icTraceLevel :: TraceConfig           -- ^ How much to trace
+  , icEnforceOwnership :: Bool            -- ^ Whether to strictly enforce resource ownership
+  , icEnforceCausality :: Bool            -- ^ Whether to enforce causal order
+  , icMaxTries :: Int                     -- ^ Maximum retries for failed effects
+  , icTimeout :: Int                      -- ^ Timeout in milliseconds
+  , icResilienceStrategy :: Text          -- ^ Strategy for handling failures
+  }
+  deriving (Show, Generic)
+
+-- | Default interpreter configuration
+defaultConfig :: InterpreterConfig
+defaultConfig = InterpreterConfig
+  { icTraceLevel = Normal
+  , icEnforceOwnership = True
+  , icEnforceCausality = True
+  , icMaxTries = 3
+  , icTimeout = 5000
+  , icResilienceStrategy = "exponential-backoff"
+  }
+
+-- | Verbose interpreter configuration
+verboseConfig :: InterpreterConfig
+verboseConfig = defaultConfig { icTraceLevel = Verbose }
+
+-- | Silent interpreter configuration
+silentConfig :: InterpreterConfig
+silentConfig = defaultConfig { icTraceLevel = Silent }
+
+-- | Interpret an effect with a given configuration
+interpretWithConfig :: InterpreterConfig -> Effect a -> IO (EffectResult a)
+interpretWithConfig config effect = do
+  interpreter <- createInterpreter config
+  interpretEffect interpreter effect
+
+-- | Causal enforcement
+enforceResourceOwnership :: EffectInterpreter -> ResourceId -> Bool
+enforceResourceOwnership _ _ = True  -- Placeholder
+
+enforceCausalOrder :: EffectInterpreter -> Bool
+enforceCausalOrder _ = True  -- Placeholder
+
+enforceTimeMapConsistency :: EffectInterpreter -> Bool
+enforceTimeMapConsistency _ = True  -- Placeholder
 
  

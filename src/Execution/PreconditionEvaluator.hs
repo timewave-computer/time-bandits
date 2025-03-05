@@ -10,376 +10,200 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: Execution.PreconditionEvaluator
+Description: Evaluates effect preconditions against the current time map and resource ledger
+
 This module provides the PreconditionEvaluator, which centralizes all precondition
-checks for effects in the Time Bandits system. It ensures that all guard conditions
+checks for effects in the Time Bandits system. It ensures that all preconditions
 are evaluated consistently across the system.
 
 The PreconditionEvaluator:
-1. Evaluates guard conditions against the current time map and program state
+1. Evaluates preconditions against the current time map and resource ledger
 2. Provides a unified interface for precondition checking
-3. Ensures consistent evaluation of guard conditions
+3. Ensures consistent evaluation of preconditions
 4. Supports formal verification of precondition schemas
 -}
-module TimeBandits.PreconditionEvaluator 
+module Execution.PreconditionEvaluator 
   ( -- * Core Types
     PreconditionEvaluator(..)
   , PreconditionResult(..)
   , PreconditionError(..)
+  , ProposedEffect(..)
   
   -- * Evaluator Operations
   , createEvaluator
-  , evaluatePrecondition
-  , evaluateGuard
-  , evaluateGuardedEffect
+  , evaluatePreconditions
+  , checkPrecondition
   
-  -- * Guard Evaluation
-  , checkBalanceGuard
-  , checkEscrowGuard
-  , checkContractStateGuard
-  , checkAuthorizationGuard
-  , checkTimeGuard
-  , checkOwnershipGuard
-  , checkProgramOwnershipGuard
-  , checkResourceInSlotGuard
-  , checkSlotEmptyGuard
-  , checkEscrowClaimableGuard
+  -- * Precondition Types
+  , checkResourceOwnership
+  , checkResourceBalance
+  , checkTimeMapConsistency
+  , checkExternalFacts
   ) where
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as Data.ByteString
-import Data.Map.Strict qualified as Map
-import Data.Serialize (Serialize)
-import Data.Text (Text)
+import qualified Data.Map as Map
+import qualified Data.Text as T
+import qualified Data.ByteString as BS
 import GHC.Generics (Generic)
-import Polysemy (Member, Sem)
-import Polysemy.Error (Error, throw)
+import Data.Hashable (Hashable)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 
--- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
-  ( AppError(..)
-  , LamportTime(..)
-  )
-import TimeBandits.ProgramEffect
-  ( Effect(..)
-  , Guard(..)
-  , GuardedEffect(..)
-  )
-import TimeBandits.Program
-  ( ProgramId
-  , ProgramState(..)
-  , TimeMap
-  , ProgramMemory(..)
-  , MemorySlot
-  , lookupMemorySlot
-  , programMemory
-  )
-import TimeBandits.Resource
-  ( Resource(..)
-  , ResourceHash
-  , TokenId
-  , Address
-  , Amount
-  , ContractId
-  , EscrowId
-  )
-import TimeBandits.ResourceLedger
-  ( ResourceLedger
-  )
+import Core.ResourceId (ResourceId)
+import Core.ProgramId (ProgramId)
+import Core.Effect (Effect, EffectId)
+import Core.TimeMap (TimeMap)
+import Core.ResourceLedger (ResourceLedger, ResourceState)
 
--- | Error types specific to precondition evaluation
-data PreconditionError
-  = BalanceInsufficient TokenId Address Amount Amount  -- Expected vs Actual
-  | EscrowNotFound EscrowId
-  | ContractStateInvalid ContractId ByteString ByteString  -- Expected vs Actual
-  | ActorNotAuthorized Address
-  | TimeConditionNotMet LamportTime LamportTime  -- Required vs Current
-  | OwnershipVerificationFailed ResourceHash Address
-  | ProgramOwnershipVerificationFailed ProgramId Address
-  | ResourceNotInSlot MemorySlot
-  | SlotNotEmpty MemorySlot
-  | EscrowNotClaimable EscrowId Address
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+-- | Result of evaluating preconditions
+data PreconditionResult =
+    PreconditionsSatisfied
+  | PreconditionsNotSatisfied [PreconditionError]
+  deriving (Eq, Show, Generic)
 
--- | Result of precondition evaluation
-data PreconditionResult
-  = PreconditionSatisfied
-  | PreconditionFailed PreconditionError
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+-- | Error types for precondition evaluation
+data PreconditionError =
+    ResourceNotOwned ResourceId ProgramId
+  | InsufficientBalance ResourceId Integer Integer  -- ^ ResourceId, required, actual
+  | TimeMapInconsistency T.Text
+  | ExternalFactChanged T.Text
+  | InvalidPrecondition T.Text
+  deriving (Eq, Show, Generic)
 
--- | The PreconditionEvaluator centralizes all guard condition checks
-data PreconditionEvaluator = PreconditionEvaluator
-  { -- | Current time map for time-based conditions
-    timeMap :: TimeMap
-    -- | Current program state for memory-based conditions
-  , programState :: ProgramState
-    -- | Resource ledger for ownership verification
-  , resourceLedger :: ResourceLedger
+-- | A proposed effect with its observed time map
+data ProposedEffect = ProposedEffect
+  { effect :: Effect
+  , observedTimeMap :: TimeMap
+  , readSet :: [ResourceId]
+  , writeSet :: [ResourceId]
   }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+  deriving (Eq, Show, Generic)
+
+-- | PreconditionEvaluator evaluates effect preconditions
+data PreconditionEvaluator = PreconditionEvaluator
+  { timelineAdapters :: Map.Map T.Text TimelineAdapter  -- ^ Adapters for external timelines
+  }
+  deriving (Show, Generic)
+
+-- | Placeholder for timeline adapter
+data TimelineAdapter = TimelineAdapter
+  { timelineId :: T.Text
+  , queryBalance :: ProgramId -> ResourceId -> IO Integer
+  , verifyProof :: BS.ByteString -> IO Bool
+  }
+  deriving (Show, Generic)
 
 -- | Create a new precondition evaluator
-createEvaluator :: 
-  (Member (Error AppError) r) => 
-  TimeMap -> 
-  ProgramState -> 
-  ResourceLedger -> 
-  Sem r PreconditionEvaluator
-createEvaluator timeMap programState resourceLedger = do
-  pure $ PreconditionEvaluator
-    { timeMap = timeMap
-    , programState = programState
-    , resourceLedger = resourceLedger
+createEvaluator :: [TimelineAdapter] -> PreconditionEvaluator
+createEvaluator adapters =
+  let adapterMap = Map.fromList [(timelineId adapter, adapter) | adapter <- adapters]
+  in PreconditionEvaluator
+    { timelineAdapters = adapterMap
     }
 
--- | Evaluate a precondition
-evaluatePrecondition :: 
-  (Member (Error AppError) r) => 
+-- | Evaluate all preconditions for a proposed effect
+evaluatePreconditions :: 
+  (MonadIO m) => 
   PreconditionEvaluator -> 
-  Guard -> 
-  Sem r PreconditionResult
-evaluatePrecondition evaluator = \case
-  -- Balance conditions
-  BalanceAtLeast tokenId address requiredAmount ->
-    checkBalanceGuard evaluator tokenId address requiredAmount
+  ProposedEffect -> 
+  ResourceLedger -> 
+  TimeMap ->  -- ^ Current time map
+  m PreconditionResult
+evaluatePreconditions evaluator proposedEffect ledger currentTimeMap = do
+  -- Check resource ownership
+  ownershipResult <- checkResourceOwnership evaluator proposedEffect ledger
   
-  -- Escrow conditions
-  EscrowExists escrowId ->
-    checkEscrowGuard evaluator escrowId
+  -- Check resource balances
+  balanceResult <- checkResourceBalance evaluator proposedEffect ledger
   
-  -- Contract state conditions
-  ContractInState contractId expectedState ->
-    checkContractStateGuard evaluator contractId expectedState
+  -- Check time map consistency
+  timeMapResult <- checkTimeMapConsistency evaluator proposedEffect currentTimeMap
   
-  -- Authorization conditions
-  ActorAuthorized address capability ->
-    checkAuthorizationGuard evaluator address capability
+  -- Check external facts
+  externalFactsResult <- checkExternalFacts evaluator proposedEffect currentTimeMap
   
-  -- Time conditions
-  TimeAfter requiredTime ->
-    checkTimeGuard evaluator requiredTime
+  -- Combine all results
+  let errors = concat
+        [ case ownershipResult of
+            PreconditionsSatisfied -> []
+            PreconditionsNotSatisfied errs -> errs
+        , case balanceResult of
+            PreconditionsSatisfied -> []
+            PreconditionsNotSatisfied errs -> errs
+        , case timeMapResult of
+            PreconditionsSatisfied -> []
+            PreconditionsNotSatisfied errs -> errs
+        , case externalFactsResult of
+            PreconditionsSatisfied -> []
+            PreconditionsNotSatisfied errs -> errs
+        ]
   
-  -- Ownership conditions
-  OwnershipVerified resource address ->
-    checkOwnershipGuard evaluator resource address
-  
-  -- Program ownership conditions
-  ProgramOwnershipVerified programId address ->
-    checkProgramOwnershipGuard evaluator programId address
-  
-  -- Memory slot conditions
-  ResourceInSlot slot resource ->
-    checkResourceInSlotGuard evaluator slot resource
-  
-  -- Empty slot conditions
-  SlotEmpty slot ->
-    checkSlotEmptyGuard evaluator slot
-  
-  -- Escrow claimable conditions
-  EscrowClaimable escrowId address ->
-    checkEscrowClaimableGuard evaluator escrowId address
-  
-  -- Always condition (always true)
-  Always ->
-    pure PreconditionSatisfied
+  -- Return combined result
+  pure $ if null errors
+    then PreconditionsSatisfied
+    else PreconditionsNotSatisfied errors
 
--- | Evaluate a guard condition
-evaluateGuard :: 
-  (Member (Error AppError) r) => 
+-- | Check a specific precondition
+checkPrecondition :: 
+  (MonadIO m) => 
   PreconditionEvaluator -> 
-  Guard -> 
-  Sem r Bool
-evaluateGuard evaluator guard = do
-  result <- evaluatePrecondition evaluator guard
-  case result of
-    PreconditionSatisfied -> pure True
-    PreconditionFailed err -> pure False
+  ProposedEffect -> 
+  ResourceLedger -> 
+  TimeMap -> 
+  T.Text ->  -- ^ Precondition type
+  m PreconditionResult
+checkPrecondition evaluator proposedEffect ledger currentTimeMap preconditionType =
+  case preconditionType of
+    "ownership" -> checkResourceOwnership evaluator proposedEffect ledger
+    "balance" -> checkResourceBalance evaluator proposedEffect ledger
+    "timeMap" -> checkTimeMapConsistency evaluator proposedEffect currentTimeMap
+    "externalFacts" -> checkExternalFacts evaluator proposedEffect currentTimeMap
+    _ -> pure $ PreconditionsNotSatisfied [InvalidPrecondition $ "Unknown precondition type: " <> preconditionType]
 
--- | Evaluate a guarded effect
-evaluateGuardedEffect :: 
-  (Member (Error AppError) r) => 
+-- | Check that the program owns all resources in the write set
+checkResourceOwnership :: 
+  (MonadIO m) => 
   PreconditionEvaluator -> 
-  GuardedEffect -> 
-  Sem r Bool
-evaluateGuardedEffect evaluator (GuardedEffect guard _) = do
-  evaluateGuard evaluator guard
+  ProposedEffect -> 
+  ResourceLedger -> 
+  m PreconditionResult
+checkResourceOwnership _ proposedEffect ledger = do
+  -- In a real implementation, this would check that the program owns all resources
+  -- in the write set
+  pure PreconditionsSatisfied
 
--- | Check if a balance is sufficient
-checkBalanceGuard :: 
-  (Member (Error AppError) r) => 
+-- | Check that the program has sufficient balance for all resources
+checkResourceBalance :: 
+  (MonadIO m) => 
   PreconditionEvaluator -> 
-  TokenId -> 
-  Address -> 
-  Amount -> 
-  Sem r PreconditionResult
-checkBalanceGuard evaluator tokenId address requiredAmount = do
-  -- In a real implementation, this would query the token balance
-  -- For now, we'll simulate with a fixed balance
-  let actualBalance = 1000  -- Simulated balance
-  
-  if actualBalance >= requiredAmount
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ 
-         BalanceInsufficient tokenId address requiredAmount actualBalance
+  ProposedEffect -> 
+  ResourceLedger -> 
+  m PreconditionResult
+checkResourceBalance _ proposedEffect ledger = do
+  -- In a real implementation, this would check that the program has sufficient
+  -- balance for all resources
+  pure PreconditionsSatisfied
 
--- | Check if an escrow exists
-checkEscrowGuard :: 
-  (Member (Error AppError) r) => 
+-- | Check that the observed time map is consistent with the current time map
+checkTimeMapConsistency :: 
+  (MonadIO m) => 
   PreconditionEvaluator -> 
-  EscrowId -> 
-  Sem r PreconditionResult
-checkEscrowGuard evaluator escrowId = do
-  -- In a real implementation, this would check if the escrow exists
-  -- For now, we'll simulate with a fixed result
-  let escrowExists = True  -- Simulated result
-  
-  if escrowExists
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ EscrowNotFound escrowId
+  ProposedEffect -> 
+  TimeMap -> 
+  m PreconditionResult
+checkTimeMapConsistency _ proposedEffect currentTimeMap = do
+  -- In a real implementation, this would check that the observed time map is
+  -- consistent with the current time map
+  pure PreconditionsSatisfied
 
--- | Check if a contract is in the expected state
-checkContractStateGuard :: 
-  (Member (Error AppError) r) => 
+-- | Check that external facts (balances, proofs) are still valid
+checkExternalFacts :: 
+  (MonadIO m) => 
   PreconditionEvaluator -> 
-  ContractId -> 
-  ByteString -> 
-  Sem r PreconditionResult
-checkContractStateGuard evaluator contractId expectedState = do
-  -- In a real implementation, this would query the contract state
-  -- For now, we'll simulate with a fixed state
-  let actualState = expectedState  -- Simulated state (matching for simplicity)
-  
-  if actualState == expectedState
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ 
-         ContractStateInvalid contractId expectedState actualState
-
--- | Check if an actor is authorized for a capability
-checkAuthorizationGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  Address -> 
-  Text -> 
-  Sem r PreconditionResult
-checkAuthorizationGuard evaluator address capability = do
-  -- In a real implementation, this would check authorization
-  -- For now, we'll simulate with a fixed result
-  let isAuthorized = True  -- Simulated result
-  
-  if isAuthorized
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ ActorNotAuthorized address
-
--- | Check if the current time is after a required time
-checkTimeGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  LamportTime -> 
-  Sem r PreconditionResult
-checkTimeGuard evaluator requiredTime = do
-  -- Get the minimum Lamport time across all timelines
-  -- In a real implementation, this would check the time map
-  -- For now, we'll simulate with a fixed current time
-  let currentTime = LamportTime 100  -- Simulated current time
-  
-  if currentTime >= requiredTime
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ 
-         TimeConditionNotMet requiredTime currentTime
-
--- | Check if a resource is owned by an address
-checkOwnershipGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  Resource -> 
-  Address -> 
-  Sem r PreconditionResult
-checkOwnershipGuard evaluator resource address = do
-  -- In a real implementation, this would check the resource ledger
-  -- For now, we'll simulate with a fixed result
-  let isOwner = True  -- Simulated result
-  
-  if isOwner
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ 
-         OwnershipVerificationFailed (getResourceHash resource) address
-
--- | Get the resource hash from a resource
-getResourceHash :: Resource -> ResourceHash
-getResourceHash resource = case resource of
-  TokenBalanceResource tokenId _ _ -> EntityHash $ Hash $ "token-" <> tokenId
-  EscrowReceiptResource escrowId -> EntityHash $ Hash $ "escrow-" <> escrowId
-  ContractWitnessResource contractId _ -> EntityHash $ Hash $ "contract-" <> contractId
-  SyntheticInternalMarker text -> EntityHash $ Hash $ "synthetic-" <> Data.ByteString.pack (show text)
-
--- | Check if a program is owned by an address
-checkProgramOwnershipGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  ProgramId -> 
-  Address -> 
-  Sem r PreconditionResult
-checkProgramOwnershipGuard evaluator programId address = do
-  -- In a real implementation, this would check program ownership
-  -- For now, we'll simulate with a fixed result
-  let isOwner = True  -- Simulated result
-  
-  if isOwner
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ 
-         ProgramOwnershipVerificationFailed programId address
-
--- | Check if a resource is in a memory slot
-checkResourceInSlotGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  MemorySlot -> 
-  Resource -> 
-  Sem r PreconditionResult
-checkResourceInSlotGuard evaluator slot resource = do
-  -- Get the program memory
-  let memory = programMemory (programState evaluator)
-  
-  -- Check if the resource is in the slot
-  case lookupMemorySlot memory slot of
-    Just slotResource -> 
-      if slotResource == resource
-        then pure PreconditionSatisfied
-        else pure $ PreconditionFailed $ ResourceNotInSlot slot
-    Nothing -> 
-      pure $ PreconditionFailed $ ResourceNotInSlot slot
-
--- | Check if a memory slot is empty
-checkSlotEmptyGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  MemorySlot -> 
-  Sem r PreconditionResult
-checkSlotEmptyGuard evaluator slot = do
-  -- Get the program memory
-  let memory = programMemory (programState evaluator)
-  
-  -- Check if the slot is empty
-  case lookupMemorySlot memory slot of
-    Just _ -> pure $ PreconditionFailed $ SlotNotEmpty slot
-    Nothing -> pure PreconditionSatisfied
-
--- | Check if an escrow is claimable by an address
-checkEscrowClaimableGuard :: 
-  (Member (Error AppError) r) => 
-  PreconditionEvaluator -> 
-  EscrowId -> 
-  Address -> 
-  Sem r PreconditionResult
-checkEscrowClaimableGuard evaluator escrowId address = do
-  -- In a real implementation, this would check if the escrow is claimable
-  -- For now, we'll simulate with a fixed result
-  let isClaimable = True  -- Simulated result
-  
-  if isClaimable
-    then pure PreconditionSatisfied
-    else pure $ PreconditionFailed $ 
-         EscrowNotClaimable escrowId address 
+  ProposedEffect -> 
+  TimeMap -> 
+  m PreconditionResult
+checkExternalFacts _ proposedEffect currentTimeMap = do
+  -- In a real implementation, this would check that external facts (balances, proofs)
+  -- are still valid
+  pure PreconditionsSatisfied 
