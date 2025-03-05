@@ -2,8 +2,11 @@
 let
   pkgs = import <nixpkgs> { };
 
-  # Use GHC 9.6.4 specifically for polysemy compatibility
-  hsPkgs = pkgs.haskell.packages.ghc964;
+  # Use GHC 9.6.3 specifically for polysemy compatibility
+  hsPkgs = pkgs.haskell.packages.ghc963;
+
+  # Import test dependencies
+  testDeps = import ./test-deps.nix { inherit pkgs; };
 
   # Create a Haskell environment with the packages we need
   ghc = hsPkgs.ghcWithPackages (ps: with ps; [
@@ -21,6 +24,12 @@ let
     time
     transformers
     with-utf8
+    # Test dependencies
+    hspec
+    hspec-discover
+    hspec-core
+    QuickCheck
+    async
   ]);
 
 in
@@ -37,7 +46,7 @@ pkgs.mkShell {
     # Set up GHC environment
     export PATH="${ghc}/bin:${hsPkgs.cabal-install}/bin:$PATH"
     export GHC="${ghc}/bin/ghc"
-    export GHC_PACKAGE_PATH="${ghc}/lib/ghc-9.6.4/package.conf.d"
+    export GHC_PACKAGE_PATH="${ghc}/lib/ghc-9.6.3/package.conf.d"
     export HIE_BIOS_GHC="${ghc}/bin/ghc"
   '';
 }

@@ -1,15 +1,22 @@
-import qualified Test.Tasty as Tasty
-import qualified SimpleNetworkConfig
-import qualified TimelineScenarioTest
-import qualified ControllerTest
-import qualified TimelineDescriptorTest
-import qualified DistributedLogTest
+module Main where
+
+import Test.Hspec
+import qualified ResourceOwnershipSpec
+import qualified AccountProgramSpec
+import qualified ConcurrentEffectsSpec
+import qualified CrossChainScenarioSpec
+import qualified TimeMapCausalitySpec
+import qualified EffectReplayabilitySpec
+import qualified MessagePropagationSpec
+import qualified BasicFunctionalitySpec
 
 main :: IO ()
-main = Tasty.defaultMain $ Tasty.testGroup "Time Bandits Tests"
-  [ SimpleNetworkConfig.tests
-  , TimelineScenarioTest.tests
-  , ControllerTest.tests
-  , TimelineDescriptorTest.timelineDescriptorTests
-  , DistributedLogTest.tests
-  ] 
+main = hspec $ do
+  describe "ResourceOwnership" ResourceOwnershipSpec.spec
+  describe "AccountProgram" AccountProgramSpec.spec
+  describe "ConcurrentEffects" ConcurrentEffectsSpec.spec
+  describe "CrossChainScenario" CrossChainScenarioSpec.spec
+  describe "TimeMapCausality" TimeMapCausalitySpec.spec
+  describe "EffectReplayability" EffectReplayabilitySpec.spec
+  describe "MessagePropagation" MessagePropagationSpec.spec
+  describe "BasicFunctionality" BasicFunctionalitySpec.spec 

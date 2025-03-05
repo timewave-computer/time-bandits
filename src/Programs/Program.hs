@@ -40,6 +40,7 @@ module Programs.Program
     Program(..)
   , ProgramId
   , ProgramOwner
+  , GuardedEffect  -- Forward declaration to prevent cyclic dependency
   
   -- * Re-exports from ProgramState
   , ProgramState(..)
@@ -78,10 +79,13 @@ module Programs.Program
   , adaptExecuteProgramStep
   ) where
 
+import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Serialize (Serialize)
 import Data.Text (Text)
+import Data.Time (UTCTime, getCurrentTime)
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
@@ -119,7 +123,8 @@ import Programs.ProgramDefinition
   , validateMemoryContract
   )
 
-import Programs.ProgramEffect (GuardedEffect)
+-- Forward declaration for GuardedEffect to break circular dependency
+data GuardedEffect
 
 -- | Unique identifier for a Program
 type ProgramId = EntityHash Program

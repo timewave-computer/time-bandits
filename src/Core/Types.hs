@@ -72,7 +72,7 @@ module TimeBandits.Core.Types (
   Actor (..),
 
   -- * Lamport Clock Types
-  LamportTime (..),
+  LamportTime,
 
   -- * Transient Datastore Types
   TransientDatastore (..),
@@ -97,6 +97,7 @@ module TimeBandits.Core.Types (
 ) where
 
 import Data.ByteString ()
+import Data.Word (Word64)
 
 -- For instances
 import Crypto.Error (CryptoFailable (..))
@@ -139,11 +140,8 @@ type TimelineHash = EntityHash Timeline
 -- | Phantom type for Timeline entity
 data Timeline
 
--- | Represents a logical timestamp in a distributed system
-newtype LamportTime = LamportTime Int
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
+-- | LamportTime is a logical clock value used for causal ordering
+type LamportTime = Word64
 
 -- | Represents a public key, which uniquely identifies actors.
 newtype PubKey = PubKey ByteString

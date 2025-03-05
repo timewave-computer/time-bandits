@@ -32,6 +32,13 @@ module Core.Common
   -- * Basic Utilities
   , computeHash
   , computeSha256
+  
+  -- * Entity identification
+  , EntityHash
+  , generateEntityHash
+  
+  -- * Actor identification
+  , ActorId
   ) where
 
 import Crypto.Hash.SHA256 qualified as SHA256
@@ -43,6 +50,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
+import Data.Word (Word8)
 
 -- | Cryptographic hash for content-addressable data
 newtype Hash = Hash { unHash :: ByteString }
@@ -122,3 +130,24 @@ computeHash = Hash . SHA256.hash
 -- | Compute a SHA-256 hash directly returning ByteString
 computeSha256 :: ByteString -> ByteString
 computeSha256 = SHA256.hash
+
+-- | Type alias for entity hashes (used for program IDs, resource IDs, etc.)
+type EntityHash a = Text
+
+-- | Type alias for actor identifiers
+type ActorId = Text
+
+-- | Generate an entity hash from a ByteString
+generateEntityHash :: ByteString -> EntityHash a
+generateEntityHash bs = T.pack $ BS.unpack $ bytesToHex $ SHA256.hash bs
+
+-- | Helper function to convert ByteString to hexadecimal representation
+bytesToHex :: ByteString -> ByteString
+bytesToHex = BS.pack . concatMap wordToHex . BS.unpack
+  where
+    wordToHex :: Word8 -> String
+    wordToHex w = [hexDigit (fromIntegral w `div` 16), hexDigit (fromIntegral w `mod` 16)]
+    hexDigit :: Int -> Char
+    hexDigit i
+      | i < 10    = toEnum (i + fromEnum '0')
+      | otherwise = toEnum (i - 10 + fromEnum 'a')

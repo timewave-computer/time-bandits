@@ -69,6 +69,8 @@ import Data.Time.Clock (UTCTime)
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
+import Data.Text (Text)
+import Data.Word (Word64)
 
 -- Import from TimeBandits modules
 import TimeBandits.Core.Core (Hash(..), EntityHash(..), Message(..))
@@ -105,25 +107,28 @@ class Event e where
   -- | Verify event validity
   verifyEvent :: e -> Bool
 
--- | Block header contains metadata about a block in a timeline
-data BlockHeader = BlockHeader
-  { bhTimeline :: TimelineId
-  , bhHeight :: Int
-  , bhPrevBlockHash :: Maybe Hash
-  , bhMerkleRoot :: Hash
-  , bhTimestamp :: LamportTime
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+-- | Timeline hash uniquely identifies a timeline
+type TimelineHash = Text
 
--- | Timeline is a causally ordered event log
+-- | A timeline represents a blockchain or ledger
 data Timeline = Timeline
-  { timelineId :: TimelineId
+  { timelineHash :: TimelineHash
+  , timelineName :: Text
+  , timelineType :: Text
+  , timelineId :: TimelineId
   , eventLog :: [ByteString]  -- Store serialized events
   , clock :: TimelineClock
   }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+  deriving (Show, Eq, Generic, Serialize)
+
+-- | Block header contains information about a block in a timeline
+data BlockHeader = BlockHeader
+  { blockHeight :: Word64
+  , blockHash :: ByteString
+  , blockTimestamp :: Word64
+  , prevBlockHash :: ByteString
+  }
+  deriving (Show, Eq, Generic, Serialize)
 
 -- | Create a new timeline with a specified clock type
 createTimeline :: 
@@ -137,7 +142,10 @@ createTimeline name initialClock = do
   
   -- Create a new timeline with empty event log
   pure $ Timeline
-    { timelineId = timelineId
+    { timelineHash = ""
+    , timelineName = name
+    , timelineType = ""
+    , timelineId = timelineId
     , eventLog = []
     , clock = initialClock
     }
@@ -174,15 +182,10 @@ getTimelineHead timeline = do
   -- In a real implementation, this would return the latest block header
   -- For now, create a dummy block header
   pure $ BlockHeader
-    { bhTimeline = timelineId timeline
-    , bhHeight = 0
-    , bhPrevBlockHash = Nothing
-    , bhMerkleRoot = Hash "dummy-merkle-root"
-    , bhTimestamp = case clock timeline of
-        LamportClock t -> t
-        BlockHeightClock h -> LamportTime h
-        SlotNumberClock s -> LamportTime s
-        TimestampClock _ -> LamportTime 0
+    { blockHeight = 0
+    , blockHash = "dummy-block-hash"
+    , blockTimestamp = 0
+    , prevBlockHash = "dummy-prev-block-hash"
     }
 
 -- | Verify the consistency of a timeline

@@ -56,6 +56,9 @@ module Core.Resource
   , adaptTransferResource
   , adaptConsumeResource
   , adaptVerifyResource
+
+  -- * Address types
+  , Address
   ) where
 
 import Data.ByteString (ByteString)
@@ -85,19 +88,19 @@ import Core.Types
 import Core.Serialize ()  -- Import Serialize instances
 
 -- | Unique identifier for a Resource
-type ResourceId = EntityHash Resource
+type ResourceId = Text
 
 -- | Token identifier
 type TokenId = ByteString
 
 -- | Address on a timeline (e.g., wallet address)
-type Address = ByteString
+type Address = Text
 
 -- | Token amount
 type Amount = Integer
 
 -- | Escrow identifier
-type EscrowId = ByteString
+type EscrowId = Text
 
 -- | Contract identifier
 type ContractId = ByteString

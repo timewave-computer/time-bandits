@@ -252,8 +252,6 @@ From this **one global truth**, the system generates **per-actor handlers**, ens
 | **Replayability and formal verification.** | Logs + protocol give a full proof of execution. |
 | **Visualization is trivial.** | Every program can render directly into a flowchart. |
 
----
-
 ## What a Time Bandits Choreographic Language (TBCL) Might Look Like
 
 ### **1. Choreography as a Global Protocol**
@@ -296,8 +294,6 @@ onMessage (Receive USDC) =
 
 This ensures each participant **only sees the logic relevant to them**.
 
----
-
 ## **How This Enhances Program Execution & Visualization**
 
 A Time Bandits program must be:
@@ -314,8 +310,6 @@ Choreographic programming **directly enables** all four:
 | **Visualizable** | The protocol can be rendered **directly** into a graph. |
 | **Execution Traceable** | Each participant follows a script derived from the same protocol. |
 | **Replayable** | Logs reconstruct the exact execution history. |
-
----
 
 ## **Correctness & Safety Guarantees**
 
@@ -339,8 +333,6 @@ protocol:
     - Swap is triggered -> ❌ Invalid if deposit missing (compile error)
 ```
 
----
-
 ## **Handling Failures Gracefully**
 Since all message flows are **declared explicitly**, failures are **first-class citizens**.
 
@@ -363,8 +355,6 @@ protocol:
 ✅ **No undefined failure states.**  
 ✅ **Programs are guaranteed to handle failures correctly.**  
 
----
-
 ## **Replayability & Verification**
 Because all Time Bandits programs are **immutable effect logs**, choreographic programming **fits perfectly**:
 - Every execution step is **linked to its causal parent**.
@@ -374,3 +364,223 @@ Because all Time Bandits programs are **immutable effect logs**, choreographic p
 ### **Example: Verifying Execution Logs**
 Imagine a **log of program execution**:
 
+1. Traveler deposited 100 USDC ✅
+2. EthereumAccountProgram transferred USDC to SwapProgram ✅
+3. CelestiaAccountProgram did not receive TIA ❌
+4. Refund triggered ✅
+
+This **matches exactly** the protocol:
+```yaml
+protocol:
+    - Traveler deposits 100 USDC.
+    - If deposit fails, refund.
+    - Swap executes.
+```
+
+✅ **If logs don’t match the protocol, something is wrong.**  
+✅ **If logs match, the execution is provably correct.**  
+
+## **Comparison to Other Approaches**
+
+| Approach | Correctness | Replayability | Composition | Ease of Use | Debuggability |
+|---|---|---|---|---|---|
+| **Imperative (Solidity, Rust, etc.)** | ❌ Prone to mistakes | ❌ Hard to reconstruct | ❌ Hard to compose | ✅ Familiar | ❌ Hard to debug multi-party flows |
+| **Message-Passing (Erlang, Actor Model)** | ✅ Safe | ✅ Replayable | ❌ Hard to enforce global correctness | ❌ Requires deep knowledge | ❌ Debugging is complex |
+| **Choreographic (TBCL)** | ✅ Correct-by-construction | ✅ 1:1 replayable | ✅ Composable by default | ✅ Declarative | ✅ Debugging is trivial |
+
+## **Final Takeaways: Why TBCL?**
+A **Time Bandits Choreographic Language (TBCL)** ensures:
+- ✅ **Global correctness** (no missing steps).
+- ✅ **Causal order enforced** at compile time.
+- ✅ **Automatic message validation**.
+- ✅ **No protocol drift** between actors.
+- ✅ **Easy failure recovery**.
+- ✅ **Replayability is trivial**.
+- ✅ **Visual flow = execution flow**.
+
+---
+
+## Addendum II: Combinator Languages for Time Bandits Temporal Effect Language (TBCL)
+
+### Overview
+
+This addendum evaluates the option of building **TBCL** as a **combinator language**, either on its own or **in combination with a choreographic language**.
+
+A **combinator language** builds programs entirely through **composable building blocks** (combinators), each representing a **single effect, control flow primitive, or structural operator**. This fits well with Time Bandits' **temporal effect pipeline**, where each effect applies to resources, contributes to causal order, and produces audit logs.
+
+### Why Combinator Languages Fit Well
+
+#### Core Strengths (Benefits)
+
+| Benefit | Explanation |
+|---|---|
+| **Composable** | Programs are just trees of combinators — smaller patterns naturally form larger workflows. |
+| **Correct-by-Construction** | Invalid sequences (like withdraw before deposit) are **structurally impossible** in a typed combinator system. |
+| **Replay Maps to Source** | The executed program is literally **a traversal of the combinator tree**. This is perfect for causal consistency and replayability. |
+| **Explicit Pre/Postconditions** | Every combinator defines what it **requires to run** (preconditions) and what it **produces** (postconditions). |
+| **Visualizable** | The combinator tree can be rendered **directly into a graph** without guessing intent. |
+| **Typed Resources** | Resources are **first-class** in the combinator types (no implicit resource handling). |
+| **First-Class Time** | Time controls (`timeout`, `wait`, `retry`) are **normal combinators** like any other. |
+
+### Combinator Language Trade-offs
+
+| Concern | Explanation | Mitigation |
+|---|---|---|
+| **Verbosity** | Deep nesting can be harder to read than declarative protocols. | Provide good **syntax sugar**. |
+| **Higher Learning Curve** | Functional composition is unfamiliar to some devs. | Good **examples & templates**. |
+| **Visualization Gap** | Developers expect to see flows visually first, code second. | Combine with **choreographic diagrams**. |
+
+### Option: Combinator Alone vs. Combinator + Choreography
+
+| Approach | Pros | Cons |
+|---|---|---|
+| **Combinator Only** | Flexible, composable, powerful for expert users. | Harder to see global flow at a glance. |
+| **Choreography Only** | Easy to grasp, global-first. | Less composable, often brittle at scale. |
+| **Choreography + Combinator** | Best of both — global overview + strong local composition. | More complex tooling needed. |
+
+**Recommendation:**  
+- Use **Choreography for top-level flows** (who talks to who, in what order).
+- Use **Combinators for per-program logic** (how programs process effects internally).
+
+### Example Combinator Grammar (Draft)
+
+This grammar defines combinators that can describe **any temporal effect flow** at the program level.
+
+#### Core Effects
+
+| Effect | Meaning |
+|---|---|
+| `deposit` | Move resource into a program account. |
+| `transfer` | Move resource between accounts. |
+| `call` | Invoke another program. |
+| `watch` | Observe an external state change. |
+| `timeout` | Abort if event doesn’t occur within time. |
+| `barrier` | Wait for multiple conditions to be satisfied. |
+| `race` | Proceed with the first available outcome. |
+| `retry` | Retry a failed effect. |
+
+#### Control Flow Combinators
+
+| Combinator | Example | Meaning |
+|---|---|---|
+| `then` | `A then B` | Run B after A. |
+| `after` | `A after 10 minutes` | Delay A. |
+| `parallel` | `A and B` | Run both concurrently. |
+| `condition` | `if X then A else B` | Conditional branch. |
+| `onTimeout` | `A onTimeout B` | B if A times out. |
+
+#### Example Program (Cross-Chain Swap)
+
+This defines the **internal logic** of a Swap Program using combinators.
+
+```yaml
+program: SwapProgram
+
+flow:
+    await deposit ETH from Traveler
+    await deposit USDC from Counterparty
+    then
+        transfer ETH to Counterparty
+        and
+        transfer USDC to Traveler
+    or
+        onTimeout 15m
+        then
+            refund ETH to Traveler
+            refund USDC to Counterparty
+```
+
+### Example in Haskell-like EDSL Form
+
+This is the same program, but shown as Haskell combinators.
+
+```haskell
+crossChainSwap :: EffectFlow
+crossChainSwap =
+    await (deposit ETH Traveler)
+    `then` await (deposit USDC Counterparty)
+    `then` ( transfer ETH Counterparty
+           `parallel` transfer USDC Traveler )
+    `orElse` ( onTimeout (15 * minutes)
+             `then` ( refund ETH Traveler
+                    `and` refund USDC Counterparty )
+             )
+```
+
+### Example Choreographic Layer (Global Protocol)
+
+Above the combinators sits the **choreographic protocol** that defines how programs interact across timelines.
+
+```yaml
+choreography: CrossChainSwap
+
+participants:
+    - Traveler
+    - EthereumAccount
+    - CelestiaAccount
+    - SwapProgram
+
+protocol:
+    - Traveler deposits into EthereumAccount
+    - EthereumAccount transfers to SwapProgram
+    - Traveler deposits into CelestiaAccount
+    - CelestiaAccount transfers to SwapProgram
+    - SwapProgram finalizes
+```
+
+Each **participant's local handler** is generated by compiling this global view into a set of **per-participant combinator programs**.
+
+### Combining Choreography & Combinators
+
+| Layer | What It Defines |
+|---|---|
+| **Choreography** | Inter-program message flows across timelines (global causality). |
+| **Combinators** | Intra-program effect handling (per-resource logic, timeouts, retries). |
+
+### Example: Full Stack for Time Bandits
+
+```
+Global Choreography (Who talks to who)
+                  ↓
+Per-Program Combinator Flow (How each handles its effects)
+                  ↓
+Generated Per-Participant Handlers (Traveler, Keeper, Bandit)
+                  ↓
+Effect Interpreter (Applies each effect, updates logs)
+                  ↓
+Per-Resource Logs (Proof of execution per timeline/resource)
+```
+
+### Why This is a good option for Time Bandits
+
+✅ Programs are composable.  
+✅ Each program is correct-by-construction.  
+✅ The **causal graph** matches the **combinator tree** directly.  
+✅ Timeouts, retries, and fallbacks are **first-class citizens**.  
+✅ The global protocol is **separate from program internals**, so you can evolve message flow separately from effect logic.
+
+### Trade-off Summary
+
+| Approach | Pros | Cons |
+|---|---|---|
+| **Imperative per-program logic** | Familiar | Easy to introduce errors |
+| **Pure choreography (no combinators)** | Simple global view | No composability within programs |
+| **Combinators only** | Maximum flexibility | Global visibility is lost |
+| **Choreography + Combinators** | Best of both | Requires more tooling (protocol compiler + per-program compiler) |
+
+### Recommended Approach
+✅ Use **choreography to describe global protocol (who talks to who)**.  
+✅ Use **combinators to describe per-program flows (how each program handles effects)**.  
+✅ Ensure **each effect handler** is auto-generated from the choreography+combinator pair.  
+✅ Visualize:
+- **Choreography as message graph**.
+- **Combinator flow as DAG per-program**.
+- **Execution trace as overlay on both**.
+
+### Final Example Visualization (Generated)
+
+```yaml
++-------------+ +------------------+ +------------+ | Traveler | --> | Ethereum Account | --> | SwapProgram | +-------------+ +------------------+ +------------+
+
+SwapProgram Internal Flow (combinator tree): [Deposit ETH] --then--> [Deposit USDC] --then--> [Transfer ETH & USDC] ----------------onTimeout--> [Refund ETH & USDC]
+```

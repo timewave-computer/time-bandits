@@ -134,6 +134,26 @@
               pkgs.haskell.packages.ghc963.polysemy-plugin
             )
           );
+          hspec = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.hspec
+            )
+          );
+          hspec-discover = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.hspec-discover
+            )
+          );
+          hspec-core = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.hspec-core
+            )
+          );
+          QuickCheck = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.QuickCheck
+            )
+          );
         };
 
         # Add a check to run the test
