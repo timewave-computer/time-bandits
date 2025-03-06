@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 {- |
-Module: TimeBandits.Core.Core
+Module: Core.Core
 Description: Core functionality and primitives for the Time-Bandits system.
 
 This module provides the fundamental primitives and abstractions for the Time-Bandits system,
@@ -29,7 +29,7 @@ providing the essential building blocks used by all other components of the syst
 All timeline operations, actor communications, resource management, and program execution
 depend on the primitives defined here.
 -}
-module TimeBandits.Core.Core (
+module Core.Core (
   -- * Re-exports from Types
   ActorEvent(..),
   ActorEventType(..),

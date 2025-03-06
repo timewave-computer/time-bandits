@@ -63,9 +63,11 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import GHC.Generics (Generic)
 
-import Core.Timeline (TimelineHash, Timeline, timelineHash)
+import Core.Timeline (Timeline, timelineId)
+import Core.Types (TimelineHash, EntityHash(..), Hash(..))
 
 -- | A branch in the time map, representing a chain of connected timelines
 newtype TimeBranch = TimeBranch
@@ -114,16 +116,16 @@ empty = TimeMap
 -- | Create a time map with a single timeline
 singleton :: Timeline -> TimeMap
 singleton timeline = 
-  let hash = timelineHash timeline
+  let id = timelineId timeline
       node = TimeNode
-        { nodeHash = hash
+        { nodeHash = id
         , nodeTimeline = timeline
         , nodeInEdges = Set.empty
         , nodeOutEdges = Set.empty
         }
   in TimeMap
-    { timeNodes = Map.singleton hash node
-    , timeBranches = [TimeBranch [hash]]
+    { timeNodes = Map.singleton id node
+    , timeBranches = [TimeBranch [id]]
     }
 
 -- | Create a time map from a list of timelines
@@ -133,16 +135,16 @@ fromList timelines = foldr addTimeline empty timelines
 -- | Add a timeline to the time map
 addTimeline :: Timeline -> TimeMap -> TimeMap
 addTimeline timeline timeMap =
-  let hash = timelineHash timeline
+  let id = timelineId timeline
       node = TimeNode
-        { nodeHash = hash
+        { nodeHash = id
         , nodeTimeline = timeline
         , nodeInEdges = Set.empty
         , nodeOutEdges = Set.empty
         }
   in timeMap
-    { timeNodes = Map.insert hash node (timeNodes timeMap)
-    , timeBranches = TimeBranch [hash] : timeBranches timeMap
+    { timeNodes = Map.insert id node (timeNodes timeMap)
+    , timeBranches = TimeBranch [id] : timeBranches timeMap
     }
 
 -- | Merge two timelines, creating a new timeline

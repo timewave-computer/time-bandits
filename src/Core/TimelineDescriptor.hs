@@ -17,7 +17,7 @@ to appropriate handlers for each timeline.
 TimelineDescriptors are loaded from TOML configuration files and provide a standardized
 way to interact with different timelines across the system.
 -}
-module TimeBandits.Core.TimelineDescriptor
+module Core.TimelineDescriptor
   ( -- * Core Types
     TimelineDescriptor(..)
   , VMType(..)

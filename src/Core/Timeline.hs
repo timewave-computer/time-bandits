@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
-Module: TimeBandits.Core.Timeline
+Module: Core.Timeline
 Description: Timeline abstraction and operations for the Time-Bandits system.
 
 This module provides the Timeline abstraction and related functionality.
@@ -33,7 +33,7 @@ The Timeline module connects with Adapters for interacting with specific timelin
 implementations, and provides core primitives used by Programs and Actors to 
 interact with timeline state and events.
 -}
-module TimeBandits.Core.Timeline 
+module Core.Timeline 
   ( -- * Core Types
     Timeline(..)
   , TimelineClock(..)
@@ -70,9 +70,9 @@ import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
--- Import from TimeBandits modules
-import TimeBandits.Core.Core (Hash(..), EntityHash(..), Message(..))
-import TimeBandits.Core.Types
+-- Import from Core modules
+import Core.Common (Hash(..), EntityHash(..))
+import Core.Types
   ( TimelineHash
   , TimelineEvent(..)
   , TimelineEventType(..)
@@ -220,8 +220,8 @@ adaptVerifyProof proofHash sourceHash = do
 
 -- | Adapter for sending a message (compatibility with old TimelineMessage interface)
 adaptSendMessage :: 
-  (Member (Error AppError) r, Message msg) => 
-  msg -> 
+  (Member (Error AppError) r) => 
+  ByteString -> 
   Sem r ()
 adaptSendMessage msg = do
   -- In a real implementation, this would send the message
@@ -230,8 +230,8 @@ adaptSendMessage msg = do
 
 -- | Adapter for broadcasting a message (compatibility with old TimelineMessage interface)
 adaptBroadcastMessage :: 
-  (Member (Error AppError) r, Message msg) => 
-  msg -> 
+  (Member (Error AppError) r) => 
+  ByteString -> 
   Sem r ()
 adaptBroadcastMessage msg = do
   -- In a real implementation, this would broadcast the message

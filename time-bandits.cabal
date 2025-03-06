@@ -85,20 +85,28 @@ common shared
 -- Core library with shared types and fundamental abstractions
 library time-bandits-core
   import:          shared
-  hs-source-dirs:  core/src
+  hs-source-dirs:  src
   exposed-modules:
-    TimeBandits.Core
-    TimeBandits.Core.Core
-    TimeBandits.Types
-    TimeBandits.Core.Types
-    TimeBandits.Core.Effects
-    TimeBandits.Core.Resource
-    TimeBandits.Core.ResourceLedger
-    TimeBandits.Core.Serialize
-    TimeBandits.Core.Timeline
-    TimeBandits.Core.TimelineDescriptor
-    TimeBandits.Core.TimeMap
-    TimeBandits.Core.Utils
+    Core
+    Core.Core
+    Core.Types
+    Core.Effects
+    Core.Resource
+    Core.ResourceLedger
+    Core.Serialize
+    Core.Timeline
+    Core.TimelineDescriptor
+    Core.TimeMap
+    Core.Utils
+    Core.Common
+    Core.Effect
+    Core.ActorId
+    Core.ProgramId
+    Core.ResourceId
+    Core.TimelineId
+    Core.AccountProgram
+    Core.Error
+    Core.ExecutionLog
 
 -- Programs library with program-specific logic
 library time-bandits-programs
