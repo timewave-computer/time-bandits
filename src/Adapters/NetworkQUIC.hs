@@ -83,7 +83,7 @@ import System.FilePath ((</>))
 import System.Process (callCommand)
 
 import TimeBandits.Core qualified as Core
-import TimeBandits.Types
+import Core.Types
 import TimeBandits.Network (P2PNode(..), P2PCapability(..))
 
 -- | QUIC peer representation

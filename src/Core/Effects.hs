@@ -20,14 +20,11 @@
 
 {- |
 Module: Core.Effects
-Description: Defines the core effect types that form the Time Bandits effect system
+Description: Core effect types for the Time-Bandits effect system.
 
-This module provides the definitions of all effect types used in the Time Bandits system.
-It defines only the data types and type classes representing effects, not their interpretation,
-which is handled by the Execution.EffectInterpreter module.
-
-The effect system is based on the Polysemy library for effect handling, allowing for
-modular, composable, and testable effect definitions.
+This module defines core effect types for the Time-Bandits effect system.
+The effect system is based on the Polysemy library, which allows for modular
+and composable effect definitions.
 -}
 module Core.Effects (
     -- * Resource Operations
@@ -70,39 +67,39 @@ module Core.Effects (
     -- * Application Effects Type
     AppEffects,
     
-    -- * Type Exports
-    Resource(..),
-    ResourceCapability(..),
-    Actor(..),
-    ActorType(..),
-    LamportTime(..),
-    ContentAddressedMessage(..),
-    AuthenticatedMessage(..),
+    -- * Type Exports from Core.Types
+    Types.Resource,
+    Types.ResourceCapability,
+    Types.Actor,
+    Types.ActorType,
+    Types.LamportTime,
+    Types.ContentAddressedMessage,
+    Types.AuthenticatedMessage,
     UnifiedResourceTransaction(..)
 ) where
 
+import Control.Monad (void)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
-import Data.ByteString.Char8 qualified as BS
-import Data.Map.Strict qualified as Map
+import qualified Data.ByteString.Char8 as BS
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Maybe (isNothing)
 import Data.Serialize (encode)
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import GHC.Generics (Generic)
 import Polysemy (Member, Members, Sem, makeSem)
+import Polysemy.Error
+import Polysemy.State
 
--- Core module imports
-import Core.Common (Hash(..), Signature(..))
-import Core.ResourceId (ResourceId)
-import Core.TimelineId (TimelineId)
-import Core.ProgramId (ProgramId)
-import Core.Types
-    ( ActorHash
-    , ActorType(..)
-    , AppError(..)
-    , ResourceErrorType(..)
-    , TransactionValidationResult(..)
-    , LamportTime(..)
-    )
+-- Internal imports
+import qualified Core.Common as Common
+import qualified Core.Types as Types
+import Core.ResourceId
+import Core.TimelineId
+import Core.ProgramId
+import Core.Common (Hash(..))
 
 -- | Type for P2P node identifiers
 type P2PNodeId = ByteString
@@ -111,164 +108,73 @@ type P2PNodeId = ByteString
 data P2PNode = P2PNode
     { nodeId :: P2PNodeId
     , nodeAddress :: ByteString
-    , nodeType :: ActorType
+    , nodeType :: Types.ActorType
     }
-    deriving (Show, Eq, Generic)
+    deriving stock (Show, Eq, Generic)
 
--- | Data structure for a resource
-data Resource = Resource
-    { resourceId :: ResourceId
-    , resourceOrigin :: TimelineId
-    , resourceOwner :: ActorHash
-    , resourceCapabilities :: [ResourceCapability]
-    , resourceMeta :: ByteString
-    , resourceSpentBy :: Maybe Hash
-    , resourceParents :: [ResourceId]
-    , resourceTimestamp :: LamportTime
-    , resourceProvenanceChain :: [TimelineId]
-    }
-    deriving (Show, Eq, Generic)
-
--- | Capabilities that can be assigned to resources
-data ResourceCapability
-    = TransferCapability  -- ^ Can be transferred to another actor
-    | UpdateCapability    -- ^ Can be updated
-    | ConsumeCapability   -- ^ Can be consumed
-    | DelegateCapability  -- ^ Can delegate capabilities to other actors
-    deriving (Show, Eq, Generic)
-
--- | Actor in the system
-data Actor = Actor
-    { actorId :: ActorHash
-    , actorType :: ActorType
-    }
-    deriving (Show, Eq, Generic)
-
--- | Content-addressed message with a hash derived from its content
-data ContentAddressedMessage a = ContentAddressedMessage
-    { camHash :: Hash
-    , camContent :: a
-    }
-    deriving (Show, Eq, Generic)
-
--- | Authenticated message with cryptographic signature
-data AuthenticatedMessage a = AuthenticatedMessage
-    { amHash :: Hash
-    , amSender :: Actor
-    , amTimestamp :: Maybe LamportTime
-    , amPayload :: ContentAddressedMessage a
-    , amSignature :: Signature
-    }
-    deriving (Show, Eq, Generic)
-
--- | Unified transaction representation for resource transfers
+-- | Transaction for moving resources across timelines
 data UnifiedResourceTransaction = UnifiedResourceTransaction
-    { urtInputs :: [AuthenticatedMessage Resource]
-    , urtOutputs :: [ContentAddressedMessage Resource]
+    { urtInputs :: [ResourceId]
+    , urtOutputs :: [ResourceId]
     , urtMetadata :: ByteString
-    , urtTimestamp :: LamportTime
-    , urtSigner :: Actor
-    , urtSignature :: Signature
-    , urtProvenanceChain :: [TimelineId]
+    , urtSignature :: Types.Signature
     }
-    deriving (Show, Eq, Generic)
+    deriving stock (Show, Eq, Generic)
 
--- | Logical clock for tracking causal ordering in timelines
--- Uses Lamport timestamps to establish a partial ordering of events
--- across distributed nodes, maintaining causal consistency even without
--- perfect clock synchronization.
+-- | Operations on resources
+data ResourceOps m a where
+    CreateResource :: ResourceId -> TimelineId -> Types.ActorHash -> [Types.ResourceCapability] -> ByteString -> ResourceOps m Types.Resource
+    GetResource :: ResourceId -> ResourceOps m (Maybe Types.Resource)
+    TransferResource :: ResourceId -> Types.ActorHash -> ResourceOps m Bool
+    ConsumeResource :: ResourceId -> ResourceOps m Bool
+    GetResourceHistory :: ResourceId -> ResourceOps m [Types.LogEntry ResourceOperationEffect]
+
+-- | Resource operations that can be performed
+data ResourceOperationEffect
+    = CreateEffect
+    | TransferEffect
+    | ConsumeEffect
+    | DelegateEffect
+    deriving stock (Show, Eq, Generic)
+
+-- | Logical clock for maintaining causal ordering
 data LogicalClock m a where
-    GetLamportTime :: LogicalClock m LamportTime
-    IncrementTime :: LogicalClock m LamportTime
-    UpdateTime :: LamportTime -> LogicalClock m LamportTime
+    GetLamportTime :: LogicalClock m Types.LamportTime
+    IncrementTime :: LogicalClock m Types.LamportTime
+    UpdateTime :: Types.LamportTime -> LogicalClock m Types.LamportTime
 
 makeSem ''LogicalClock
 
--- | Resource operations typeclass defining core resource manipulation capabilities
-class ResourceOps r where
-    createResource :: ByteString -> ActorHash -> TimelineId -> Sem r (Either AppError Resource)
-    transferResource :: Resource -> ActorHash -> TimelineId -> Sem r (Either AppError Resource)
-    consumeResource :: Resource -> Sem r (Either AppError Resource)
-    verifyResource :: Resource -> Sem r (Either AppError Bool)
-    getResource :: Hash -> Sem r (Either AppError Resource)
-    getResourcesByOwner :: ActorHash -> Sem r (Either AppError [Resource])
-    getResourcesByTimeline :: TimelineId -> Sem r (Either AppError [Resource])
-    createTransaction :: [Resource] -> [Resource] -> ActorHash -> TimelineId -> Sem r (Either AppError UnifiedResourceTransaction)
-    validateTransaction :: UnifiedResourceTransaction -> Sem r (Either AppError TransactionValidationResult)
-    executeTransaction :: UnifiedResourceTransaction -> Sem r (Either AppError [Resource])
-    transactionHistory :: Hash -> Sem r (Either AppError [UnifiedResourceTransaction])
-
--- | Effect for resource operations
-data ResourceOperationEffect m a where
-    OpCreateResource :: ByteString -> ActorHash -> TimelineId -> ResourceOperationEffect m (Either AppError Resource)
-    OpTransferResource :: Resource -> ActorHash -> TimelineId -> ResourceOperationEffect m (Either AppError Resource)
-    OpConsumeResource :: Resource -> ResourceOperationEffect m (Either AppError Resource)
-    OpVerifyResource :: Resource -> ResourceOperationEffect m (Either AppError Bool)
-    OpGetResource :: Hash -> ResourceOperationEffect m (Either AppError Resource)
-    OpGetResourcesByOwner :: ActorHash -> ResourceOperationEffect m (Either AppError [Resource])
-    OpGetResourcesByTimeline :: TimelineId -> ResourceOperationEffect m (Either AppError [Resource])
-    OpCreateTransaction :: [Resource] -> [Resource] -> ActorHash -> TimelineId -> ResourceOperationEffect m (Either AppError UnifiedResourceTransaction)
-    OpValidateTransaction :: UnifiedResourceTransaction -> ResourceOperationEffect m (Either AppError TransactionValidationResult)
-    OpExecuteTransaction :: UnifiedResourceTransaction -> ResourceOperationEffect m (Either AppError [Resource])
-    OpTransactionHistory :: Hash -> ResourceOperationEffect m (Either AppError [UnifiedResourceTransaction])
-
-makeSem ''ResourceOperationEffect
-
--- | Instance of ResourceOps for the ResourceOperationEffect
--- Maps the typeclass operations to their effect constructors, allowing
--- any code using the ResourceOps typeclass to work with the effect system.
-instance (Member ResourceOperationEffect r) => ResourceOps r where
-    createResource metadata owner timeline = opCreateResource metadata owner timeline
-    transferResource resource actor timeline = opTransferResource resource actor timeline
-    consumeResource resource = opConsumeResource resource
-    verifyResource resource = opVerifyResource resource
-    getResource hash = opGetResource hash
-    getResourcesByOwner owner = opGetResourcesByOwner owner
-    getResourcesByTimeline timeline = opGetResourcesByTimeline timeline
-    createTransaction inputs outputs actor timeline = opCreateTransaction inputs outputs actor timeline
-    validateTransaction transaction = opValidateTransaction transaction
-    executeTransaction transaction = opExecuteTransaction transaction
-    transactionHistory hash = opTransactionHistory hash
-
--- | Key management for cryptographic operations
+-- | Key management operations
 data KeyManagement m a where
-    GenerateKeyPair :: KeyManagement m (ByteString, ByteString)  -- (private key, public key)
-    RegisterPublicKey :: ActorHash -> ByteString -> KeyManagement m ()
-    LookupPublicKey :: ActorHash -> KeyManagement m (Maybe ByteString)
-    SignData :: ByteString -> ByteString -> KeyManagement m (Maybe Signature)
-    VerifyWithPublicKey :: ByteString -> ByteString -> Signature -> KeyManagement m Bool
-    RegisterActorType :: ActorHash -> ActorType -> KeyManagement m ()
-    LookupActorType :: ActorHash -> KeyManagement m (Maybe ActorType)
+    GenerateKeyPair :: KeyManagement m (Types.PubKey, Types.PrivKey)
+    RegisterPublicKey :: Types.PubKey -> Types.ActorType -> KeyManagement m Types.Actor
+    LookupPublicKey :: Types.ActorHash -> KeyManagement m (Maybe Types.PubKey)
+    SignData :: Types.PrivKey -> ByteString -> KeyManagement m (Maybe Types.Signature)
+    VerifyWithPublicKey :: Types.PubKey -> ByteString -> Types.Signature -> KeyManagement m Bool
+    RegisterActorType :: Types.ActorHash -> Types.ActorType -> KeyManagement m ()
+    LookupActorType :: Types.ActorHash -> KeyManagement m (Maybe Types.ActorType)
 
 makeSem ''KeyManagement
 
--- | Peer-to-peer network communication capabilities
+-- | P2P network operations
 data P2PNetwork m a where
     DiscoverNodes :: P2PNetwork m [P2PNode]
     ConnectToNode :: P2PNode -> P2PNetwork m Bool
-    DisconnectFromNode :: P2PNodeId -> P2PNetwork m ()
-    SendMessage :: P2PNodeId -> ByteString -> P2PNetwork m Bool
-    BroadcastMessage :: ByteString -> P2PNetwork m Int  -- Returns count of nodes message sent to
-    ReceiveMessage :: P2PNetwork m (Maybe (P2PNodeId, ByteString))
+    DisconnectFromNode :: P2PNode -> P2PNetwork m Bool
+    SendMessage :: P2PNode -> ByteString -> P2PNetwork m Bool
+    BroadcastMessage :: ByteString -> P2PNetwork m Int
+    ReceiveMessage :: P2PNetwork m (Maybe (P2PNode, ByteString))
 
 makeSem ''P2PNetwork
 
--- | ACID transaction management for consistent state updates
+-- | Transaction management
 data TransactionEffect m a where
-    BeginTransaction :: TransactionEffect m ByteString  -- Transaction ID
-    CommitTransaction :: ByteString -> TransactionEffect m Bool
-    RollbackTransaction :: ByteString -> TransactionEffect m ()
+    BeginTransaction :: TransactionEffect m Types.Hash
+    CommitTransaction :: Types.Hash -> TransactionEffect m Bool
+    RollbackTransaction :: Types.Hash -> TransactionEffect m Bool
 
 makeSem ''TransactionEffect
 
--- | Core application effects stack
--- Defines the standard set of effects used throughout the application.
--- This stack combines resource management, networking, state tracking,
--- cryptography, logging, and error handling into a unified effect system.
-type AppEffects r =
-    '[ ResourceOperationEffect
-     , P2PNetwork
-     , KeyManagement
-     , LogicalClock
-     , TransactionEffect
-     ]
+-- | Combined application effects
+type AppEffects = '[ResourceOps, LogicalClock, KeyManagement, P2PNetwork, TransactionEffect]

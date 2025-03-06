@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- |
@@ -23,7 +24,7 @@ module Core.ResourceId
   , fromHash
   
   -- * Conversion
-  , toText
+  , resourceIdToText
   , toByteString
   , toHash
   ) where
@@ -39,10 +40,8 @@ import GHC.Generics (Generic)
 
 -- | Unique identifier for resources in the Time Bandits system
 newtype ResourceId = ResourceId { unResourceId :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
-
-instance Show ResourceId where
-  show = T.unpack . toText
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
 -- | Allows using string literals for ResourceId
 instance IsString ResourceId where
@@ -71,8 +70,8 @@ fromHash :: ByteString -> ResourceId
 fromHash = ResourceId
 
 -- | Convert a ResourceId to Text
-toText :: ResourceId -> Text
-toText = TE.decodeUtf8 . unResourceId
+resourceIdToText :: ResourceId -> Text
+resourceIdToText = TE.decodeUtf8 . unResourceId
 
 -- | Convert a ResourceId to ByteString
 toByteString :: ResourceId -> ByteString

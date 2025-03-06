@@ -76,7 +76,7 @@ import Polysemy.Error (runError)
 
 -- Import from TimeBandits modules
 import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )

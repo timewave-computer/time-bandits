@@ -55,7 +55,7 @@ data ResourceState = ResourceState
   , metadata :: Map.Map String String  -- ^ Additional metadata about the resource
   , lastUpdated :: UTCTime  -- ^ When the resource was last updated
   }
-  deriving (Show, Generic)
+  deriving stock (Show, Generic)
 
 -- | Type alias for the map of resource ownership
 type ResourceOwnership = Map.Map ResourceId ProgramId
@@ -66,7 +66,7 @@ data OwnershipRecord = OwnershipRecord
   , currentOwner :: ProgramId
   , ownershipHistory :: [OwnershipChange]
   }
-  deriving (Show, Generic)
+  deriving stock (Show, Generic)
 
 -- | OwnershipChange records a single transfer of ownership
 data OwnershipChange = OwnershipChange
@@ -75,7 +75,7 @@ data OwnershipChange = OwnershipChange
   , timestamp :: UTCTime
   , effectId :: EffectId
   }
-  deriving (Show, Generic)
+  deriving stock (Show, Generic)
 
 -- | OwnershipError represents errors that can occur during ownership operations
 data OwnershipError =
@@ -84,7 +84,7 @@ data OwnershipError =
   | AlreadyOwned ProgramId ResourceId
   | ResourceLocked ResourceId LockStatus
   | InvalidTransfer ResourceId ProgramId ProgramId
-  deriving (Show, Generic)
+  deriving stock (Show, Generic)
 
 -- | LockTable tracks which resources are currently locked
 type LockTable = Map.Map ResourceId LockStatus
@@ -93,4 +93,4 @@ type LockTable = Map.Map ResourceId LockStatus
 data LockStatus =
     Unlocked
   | LockedBy EffectId
-  deriving (Eq, Show, Generic) 
+  deriving stock (Eq, Show, Generic) 

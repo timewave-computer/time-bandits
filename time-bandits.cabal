@@ -55,6 +55,7 @@ common shared
     , data-default
     , directory
     , filepath
+    , hashable
     , memory
     , mtl
     , optics-core
@@ -85,30 +86,38 @@ common shared
 -- Core library with shared types and fundamental abstractions
 library time-bandits-core
   import:          shared
-  hs-source-dirs:  src/Core
+  hs-source-dirs:  src
   exposed-modules:
-    TimeBandits.Core
-    TimeBandits.Core.Core
-    TimeBandits.Types
-    TimeBandits.Core.Types
-    TimeBandits.Core.Effects
-    TimeBandits.Core.Resource
-    TimeBandits.Core.ResourceLedger
-    TimeBandits.Core.Serialize
-    TimeBandits.Core.Timeline
-    TimeBandits.Core.TimelineDescriptor
-    TimeBandits.Core.TimeMap
-    TimeBandits.Core.Utils
+    Core
+    Core.Core
+    Core.Types
+    Core.Effects
+    Core.Resource
+    Core.ResourceLedger
+    Core.Serialize
+    Core.Timeline
+    Core.TimelineDescriptor
+    Core.TimeMap
+    Core.Utils
+    Core.Message
+  other-modules:
+    Core.AccountProgram
+    Core.ActorId
+    Core.Common
+    Core.Effect
+    Core.ProgramId
+    Core.ResourceId
+    Core.TimelineId
 
 -- Programs library with program-specific logic
 library time-bandits-programs
   import:          shared
   hs-source-dirs:  src/Programs
   exposed-modules:
-    TimeBandits.Programs.Program
-    TimeBandits.Programs.ProgramEffect
-    TimeBandits.Programs.PreconditionEvaluator
-    TimeBandits.Programs.Scenario
+    Programs.Program
+    Programs.ProgramEffect
+    Programs.PreconditionEvaluator
+    Programs.Scenario
   build-depends:
     time-bandits-core
 
@@ -117,13 +126,13 @@ library time-bandits-actors
   import:          shared
   hs-source-dirs:  src/Actors
   exposed-modules:
-    TimeBandits.Actors.Actor
-    TimeBandits.Actors.ActorCommunication
-    TimeBandits.Actors.ActorCoordination
-    TimeBandits.Actors.TimeBandit
-    TimeBandits.Actors.TimeKeeper
-    TimeBandits.Actors.TimeTraveler
-    TimeBandits.Actors.TransitionMessage
+    Actors.Actor
+    Actors.ActorCommunication
+    Actors.ActorCoordination
+    Actors.TimeBandit
+    Actors.TimeKeeper
+    Actors.TimeTraveler
+    Actors.TransitionMessage
   build-depends:
     time-bandits-core
 
@@ -132,13 +141,14 @@ library time-bandits-execution
   import:          shared
   hs-source-dirs:  src/Execution
   exposed-modules:
-    TimeBandits.Execution.DistributedLog
-    TimeBandits.Execution.EffectAdapterGenerator
-    TimeBandits.Execution.EffectExecutor
-    TimeBandits.Execution.EffectInterpreter
-    TimeBandits.Execution.Events
-    TimeBandits.Execution.ExecutionLog
-    TimeBandits.Execution.LocalMultiProcess
+    Execution.DistributedLog
+    Execution.EffectAdapterGenerator
+    Execution.EffectExecutor
+    Execution.EffectInterpreter
+    Execution.Events
+    Execution.ExecutionLog
+    Execution.LocalMultiProcess
+    Execution.ResourceLedger
   build-depends:
     time-bandits-core,
     time-bandits-programs
@@ -148,10 +158,10 @@ library time-bandits-adapters
   import:          shared
   hs-source-dirs:  src/Adapters
   exposed-modules:
-    TimeBandits.Adapters.Network
-    TimeBandits.Adapters.NetworkAdapter
-    TimeBandits.Adapters.NetworkQUIC
-    TimeBandits.Adapters.TimelineAdapter
+    Adapters.Network
+    Adapters.NetworkAdapter
+    Adapters.NetworkQUIC
+    Adapters.TimelineAdapter
   build-depends:
     time-bandits-core
 
@@ -160,9 +170,9 @@ library time-bandits-proofs
   import:          shared
   hs-source-dirs:  src/Proofs
   exposed-modules:
-    TimeBandits.Proofs.SecurityVerifier
-    TimeBandits.Proofs.TimelineProof
-    TimeBandits.Proofs.ZKProof
+    Proofs.SecurityVerifier
+    Proofs.TimelineProof
+    Proofs.ZKProof
   build-depends:
     time-bandits-core
 
@@ -171,9 +181,9 @@ library time-bandits-cli
   import:          shared
   hs-source-dirs:  src/CLI
   exposed-modules:
-    TimeBandits.CLI.Controller
-    TimeBandits.CLI.Deployment
-    TimeBandits.CLI.Main
+    CLI.Controller
+    CLI.Deployment
+    CLI.Main
   build-depends:
     time-bandits-core,
     time-bandits-programs,
@@ -228,5 +238,9 @@ test-suite time-bandits-test
                       , hspec >= 2.8.0
                       , hspec-discover >= 2.8.0
                       , QuickCheck >= 2.14.0
+                      , time-bandits
+                      , time-bandits-core
   ghc-options:          -threaded -rtsopts -with-rtsopts=-N
   default-language:     Haskell2010
+  default-extensions:   OverloadedStrings
+                      , ScopedTypeVariables

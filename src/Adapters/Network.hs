@@ -92,7 +92,7 @@ import Relude ()
 import Relude.Extra.Tuple (fmapToFst)
 
 import TimeBandits.Core qualified as Core
-import TimeBandits.Types
+import Core.Types
 
 -- | Information about a P2P node in the network
 data P2PNode = P2PNode

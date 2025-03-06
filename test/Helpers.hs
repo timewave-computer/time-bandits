@@ -104,12 +104,12 @@ import Polysemy.Error (Error, fromEither, throw, runError)
 import Polysemy.State (State, evalState, get, put, modify)
 
 -- Import TimeBandits modules
-import TimeBandits.Core.Types (Timeline, TimeMap, Program, ActorSpec, ActorRole(..), 
+import Core.Types (Timeline, TimeMap, Program, ActorSpec, ActorRole(..), 
                              ResourceId, ResourceAmount, PrivKey, PubKey, AppError)
-import TimeBandits.Proofs.ZKProof (ZKProof(..), proofData, proofMetadata)
-import TimeBandits.Actors.Actor (Actor(..), ActorType(..), computePubKeyHash)
-import TimeBandits.Core.Effects (KeyManagement, generateKeyPair, registerPublicKey, registerActorType)
-import TimeBandits.Programs.Scenario (Scenario, ScenarioStep, ScenarioResult)
+import Proofs.ZKProof (ZKProof(..), proofData, proofMetadata)
+import Actors.Actor (Actor(..), ActorType(..), computePubKeyHash)
+import Core.Effects (KeyManagement, generateKeyPair, registerPublicKey, registerActorType)
+import Programs.Scenario (Scenario, ScenarioStep, ScenarioResult)
 
 -- | Set up a test environment
 setupTestEnv :: MonadIO m => m FilePath

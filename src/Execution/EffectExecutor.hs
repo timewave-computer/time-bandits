@@ -78,12 +78,12 @@ import Polysemy.Error (Error, throw, fromEither)
 import qualified Data.ByteString.Char8 as BS
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   , EscrowId
@@ -96,7 +96,7 @@ import TimeBandits.Resource
   , verifyEscrowStatus
   , verifyResourceOwnership
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , MemorySlot
   , ProgramState(..)
@@ -109,19 +109,19 @@ import TimeBandits.Program
   , transferProgramOwnership
   , isAuthorizedCaller
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect(..)
   , FunctionName
   , GuardedEffect(..)
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   , TimeMapId
   , updateTimeMap
   , verifyTimeMapConsistency
   )
 -- New imports for TransitionMessage integration
-import TimeBandits.TransitionMessage
+import Actors.TransitionMessage
   ( TransitionMessage(..)
   , Proof(..)
   , LogEntry(..)
@@ -375,7 +375,7 @@ executeEscrowEffect ::
   Sem r ProgramState
 executeEscrowEffect state resource owner beneficiary claimCondition = do
   -- First verify ownership of the resource
-  ownershipVerified <- verifyResourceOwnership (EntityHash $ Hash "dummy-resource-id") owner
+  ownershipVerified <- verifyResourceOwnership "dummy-resource-id" owner
   unless ownershipVerified $
     throw $ OwnershipVerificationFailed $ "Owner " <> show owner <> " does not own resource"
   

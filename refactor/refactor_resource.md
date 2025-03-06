@@ -1,5 +1,7 @@
 # Refactor: Resource Concurrency and Account Programs
 
+Status: In-progress
+
 This document tracks remaining refactor and cleanup tasks, followed by a **detailed step-by-step plan** for introducing **resource-centric concurrency** and **account program primitives** into the codebase.
 
 ---

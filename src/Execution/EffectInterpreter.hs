@@ -97,7 +97,8 @@ import Control.Concurrent.STM.TVar (newTVar)
 import Control.Monad (forM_, when)
 
 -- Import from Core modules
-import Core.Common (Hash(..), Signature(..), computeHash, computeSha256)
+import Core.Common (Hash(..), Signature(..))
+import Core.Utils (computeContentHash, computeSha256)
 import Core.Effect (Effect(..), EffectResult(..), EffectStatus(..), EffectId)
 import Core.Effects
     ( ResourceOps(..)

@@ -64,14 +64,18 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Generics (Generic)
+import qualified Data.Text.Encoding as TE
+import Data.ByteString (ByteString)
+import Prelude hiding (empty, fromList)
 
-import Core.Timeline (TimelineHash, Timeline, timelineHash)
+import Core.Timeline (Timeline, timelineHash)
+import Core.Types (TimelineHash, EntityHash(..), Hash(..))
 
 -- | A branch in the time map, representing a chain of connected timelines
 newtype TimeBranch = TimeBranch
   { getBranchTimelines :: [TimelineHash]
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | A node in the time map, representing a single timeline
 data TimeNode = TimeNode
@@ -80,7 +84,7 @@ data TimeNode = TimeNode
   , nodeInEdges :: Set TimeEdge  -- ^ Incoming edges from ancestor timelines
   , nodeOutEdges :: Set TimeEdge  -- ^ Outgoing edges to descendant timelines
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | An edge in the time map, representing a transition between timelines
 data TimeEdge = TimeEdge
@@ -88,21 +92,29 @@ data TimeEdge = TimeEdge
   , edgeTo :: TimelineHash    -- ^ Destination timeline
   , edgeType :: EdgeType      -- ^ Type of transition
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+
+-- | Manually define Ord instance for TimeEdge
+instance Ord TimeEdge where
+  compare a b = case compare (edgeFrom a) (edgeFrom b) of
+    EQ -> case compare (edgeTo a) (edgeTo b) of
+      EQ -> compare (edgeType a) (edgeType b)
+      other -> other
+    other -> other
 
 -- | The type of transition between timelines
 data EdgeType
   = ForkEdge     -- ^ A timeline split/fork
   | ContinueEdge -- ^ A linear continuation
   | MergeEdge    -- ^ A timeline merge
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic, Ord)
 
 -- | The core time map data structure
 data TimeMap = TimeMap
   { timeNodes :: Map TimelineHash TimeNode
   , timeBranches :: [TimeBranch]
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
 
 -- | Create an empty time map
 empty :: TimeMap
@@ -115,34 +127,38 @@ empty = TimeMap
 singleton :: Timeline -> TimeMap
 singleton timeline = 
   let hash = timelineHash timeline
+      -- Convert Text to TimelineHash
+      timelineHashValue = EntityHash (Hash (TE.encodeUtf8 hash))
       node = TimeNode
-        { nodeHash = hash
+        { nodeHash = timelineHashValue
         , nodeTimeline = timeline
         , nodeInEdges = Set.empty
         , nodeOutEdges = Set.empty
         }
   in TimeMap
-    { timeNodes = Map.singleton hash node
-    , timeBranches = [TimeBranch [hash]]
+    { timeNodes = Map.singleton timelineHashValue node
+    , timeBranches = [TimeBranch [timelineHashValue]]
     }
 
 -- | Create a time map from a list of timelines
 fromList :: [Timeline] -> TimeMap
-fromList timelines = foldr addTimeline empty timelines
+fromList timelines = foldr addTimeline Core.TimeMap.empty timelines
 
 -- | Add a timeline to the time map
 addTimeline :: Timeline -> TimeMap -> TimeMap
 addTimeline timeline timeMap =
   let hash = timelineHash timeline
+      -- Convert Text to TimelineHash
+      timelineHashValue = EntityHash (Hash (TE.encodeUtf8 hash))
       node = TimeNode
-        { nodeHash = hash
+        { nodeHash = timelineHashValue
         , nodeTimeline = timeline
         , nodeInEdges = Set.empty
         , nodeOutEdges = Set.empty
         }
   in timeMap
-    { timeNodes = Map.insert hash node (timeNodes timeMap)
-    , timeBranches = TimeBranch [hash] : timeBranches timeMap
+    { timeNodes = Map.insert timelineHashValue node (timeNodes timeMap)
+    , timeBranches = TimeBranch [timelineHashValue] : timeBranches timeMap
     }
 
 -- | Merge two timelines, creating a new timeline

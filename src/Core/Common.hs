@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- |
@@ -29,58 +30,56 @@ module Core.Common
   , Address(..)
   , AddressType(..)
   
-  -- * Basic Utilities
-  , computeHash
-  , computeSha256
+  -- * Entity Identifiers
+  , EntityHash(..)
+  , EntityId
   
-  -- * Entity identification
-  , EntityHash
+  -- * Key Types
+  , PubKey(..)
+  , PrivKey(..)
+  
+  -- * Utility Functions
   , generateEntityHash
-  
-  -- * Actor identification
-  , ActorId
   ) where
 
-import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS
 import Data.Serialize (Serialize)
 import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import Data.Word (Word8)
+import qualified Crypto.Hash.SHA256 as SHA256
 
 -- | Cryptographic hash for content-addressable data
 newtype Hash = Hash { unHash :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
-
-instance Show Hash where
-  show (Hash h) = "Hash:" ++ show (BS.take 8 h) ++ "..."
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
 instance IsString Hash where
   fromString = Hash . TE.encodeUtf8 . T.pack
 
 -- | Digital signature for data authentication
 newtype Signature = Signature { unSignature :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
-instance Show Signature where
-  show (Signature s) = "Sig:" ++ show (BS.take 8 s) ++ "..."
+instance IsString Signature where
+  fromString = Signature . TE.encodeUtf8 . T.pack
 
 -- | Types of errors that can occur during signature creation
 data SignatureError
   = InvalidSigningKey Text
   | SigningDataError Text
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | Types of errors that can occur during signature verification
 data VerificationError
   = InvalidVerificationKey Text
   | VerificationDataError Text
   | SignatureMismatch
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | Types of assets in the system
 data AssetType
@@ -88,66 +87,72 @@ data AssetType
   | ERC20Token     -- ^ ERC-20 compatible token
   | NFT            -- ^ Non-fungible token
   | GenericAsset   -- ^ Generic asset type
-  deriving (Show, Eq, Generic, Serialize)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (Serialize)
 
 -- | Amount of an asset
 newtype AssetAmount = AssetAmount { unAssetAmount :: Integer }
-  deriving (Eq, Ord, Generic, Serialize)
-
-instance Show AssetAmount where
-  show (AssetAmount amt) = show amt
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
 -- | Unique identifier for an asset
 type AssetId = ByteString
 
--- | An asset with metadata
+-- | Asset representation
 data Asset = Asset
-  { assetType :: AssetType       -- ^ Type of the asset
-  , assetId :: AssetId           -- ^ Unique identifier
-  , assetAmount :: AssetAmount   -- ^ Amount of the asset
+  { assetId     :: AssetId
+  , assetType   :: AssetType
+  , assetAmount :: AssetAmount
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (Serialize)
 
 -- | Types of addresses in the system
 data AddressType
-  = EOA           -- ^ Externally Owned Account
-  | Contract      -- ^ Smart Contract
-  | Timelock      -- ^ Timelock address
-  | Multisig      -- ^ Multisignature address
-  deriving (Show, Eq, Generic, Serialize)
+  = EthereumAddress
+  | SolanaAddress
+  | GenericAddress
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (Serialize)
 
--- | An address in a timeline
+-- | Address on a timeline
 data Address = Address
-  { addressType :: AddressType        -- ^ Type of address
-  , addressBytes :: ByteString        -- ^ Raw address bytes
+  { addressType  :: AddressType
+  , addressValue :: ByteString
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (Serialize)
 
--- | Compute a hash of a ByteString
-computeHash :: ByteString -> Hash
-computeHash = Hash . SHA256.hash
+-- | Entity hash for content-addressable entities
+newtype EntityHash a = EntityHash { unEntityHash :: Hash }
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass (Serialize)
 
--- | Compute a SHA-256 hash directly returning ByteString
-computeSha256 :: ByteString -> ByteString
-computeSha256 = SHA256.hash
+-- | Unique identifier for an entity
+type EntityId = ByteString
 
--- | Type alias for entity hashes (used for program IDs, resource IDs, etc.)
-type EntityHash a = Text
+-- | Public key for cryptographic operations
+newtype PubKey = PubKey { unPubKey :: ByteString }
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
--- | Type alias for actor identifiers
-type ActorId = Text
+-- | Private key for cryptographic operations
+newtype PrivKey = PrivKey { unPrivKey :: ByteString }
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
 -- | Generate an entity hash from a ByteString
-generateEntityHash :: ByteString -> EntityHash a
-generateEntityHash bs = T.pack $ BS.unpack $ bytesToHex $ SHA256.hash bs
+generateEntityHash :: ByteString -> Text
+generateEntityHash bs = T.pack $ show $ Hash $ SHA256.hash bs
 
--- | Helper function to convert ByteString to hexadecimal representation
-bytesToHex :: ByteString -> ByteString
-bytesToHex = BS.pack . concatMap wordToHex . BS.unpack
+-- | Convert a ByteString to a hexadecimal string
+bytesToHex :: ByteString -> String
+bytesToHex bs = concatMap (\c -> [hexDigit (ord c `div` 16), hexDigit (ord c `mod` 16)]) (BS.unpack bs)
   where
-    wordToHex :: Word8 -> String
-    wordToHex w = [hexDigit (fromIntegral w `div` 16), hexDigit (fromIntegral w `mod` 16)]
+    ord :: Char -> Int
+    ord = fromEnum
+    
     hexDigit :: Int -> Char
     hexDigit i
       | i < 10    = toEnum (i + fromEnum '0')
-      | otherwise = toEnum (i - 10 + fromEnum 'a')
+      | otherwise = toEnum (i - 10 + fromEnum 'a') 

@@ -74,7 +74,7 @@ import System.IO (IOMode(..), hClose, hPutStrLn, withFile)
 import TimeBandits.Core (Hash(..), EntityHash(..), ActorHash)
 import TimeBandits.Crypto (PubKey(..), PrivKey(..), signMessage, verifySignature)
 import TimeBandits.Error (AppError(..))
-import TimeBandits.Types (LamportTime(..))
+import Core.Types (LamportTime(..))
 import qualified TimeBandits.Network as Network
 import qualified TimeBandits.NetworkQUIC as NetworkQUIC
 

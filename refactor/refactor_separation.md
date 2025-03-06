@@ -1,5 +1,7 @@
 # Refactor: Separation of Concerns
 
+Status: Complete
+
 Includes:
 
 - Program-based execution with explicit resource ownership

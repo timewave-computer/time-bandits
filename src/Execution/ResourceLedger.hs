@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
-This module provides the ResourceLedger, which is responsible for tracking
+This module provides the ResourceLedger implementation, which is responsible for tracking
 ownership of resources across the Time Bandits system. It enforces the
 single-owner invariant, ensuring that each resource has exactly one owner
 at any given time.
@@ -21,7 +21,7 @@ The ResourceLedger:
 3. Prevents double-spending of resources
 4. Maintains a history of ownership changes
 -}
-module TimeBandits.Core.ResourceLedger 
+module Execution.ResourceLedger 
   ( -- * Core Types
     ResourceLedger(..)
   , OwnershipRecord(..)
@@ -48,23 +48,29 @@ import Polysemy (Sem, Member, embed)
 import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
 
--- Import from TimeBandits modules
-import TimeBandits.Core.Core (Hash(..), EntityHash(..), computeSha256)
-import TimeBandits.Core.Types
+-- Import from Core modules
+import Core.Common (Hash(..), EntityHash(..))
+import Core.Utils (computeSha256)
+import Core.Types
   ( AppError(..)
   , ResourceErrorType(..)
   , ResourceErrorType(ResourceNotFound)
   )
-import TimeBandits.Core.Resource
+import Core.ProgramId (ProgramId)
+import Core.Resource
   ( Resource
   , ResourceHash
   )
-import TimeBandits.Core.Timeline (TimelineHash)
+import Core.TimelineId (TimelineId)
+import Core.Timeline (TimelineHash)
+import Core.ResourceLedger 
+  ( ResourceState
+  , OwnershipChange
+  , LockStatus(..)
+  , LockTable
+  )
 
--- | Type alias for program identifiers
-type ProgramId = ByteString
-
--- | Error types specific to resource ownership
+-- | Error types specific to resource ownership implementation
 data OwnershipError
   = OwnershipResourceNotFound ResourceHash
   | ResourceAlreadyOwned ResourceHash ProgramId

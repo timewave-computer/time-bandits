@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 {- |
-Module: TimeBandits.Core.Core
+Module: Core.Core
 Description: Core functionality and primitives for the Time-Bandits system.
 
 This module provides the fundamental primitives and abstractions for the Time-Bandits system,
@@ -29,82 +29,56 @@ providing the essential building blocks used by all other components of the syst
 All timeline operations, actor communications, resource management, and program execution
 depend on the primitives defined here.
 -}
-module TimeBandits.Core.Core (
-  -- * Re-exports from Types
-  ActorEvent(..),
-  ActorEventType(..),
-  ResourceEvent(..),
-  ResourceEventType(..),
-  TimelineEvent(..),
-  TimelineEventType(..),
-  EventContent(..),
-  EntityHash(..),
-  Hash(..),
-  ActorHash,
-  ResourceHash,
-  TimelineHash,
-  LamportTime(..),
-  PubKey(..),
-  PrivKey(..),
-  Signature(..),
-  ActorType(..),
-  Actor(..),
-  SystemConfig(..),
-  Resource(..),
-  ResourceCapability(..),
-  LogEntry(..),
-  Log(..),
-  MapOfTime(..),
-  SyncPoint(..),
-  TransientDatastore(..),
-  TransientStoredItem(..),
-  EventMetadata(..),
-  AppError(..),
-  TimelineErrorType(..),
-  ResourceErrorType(..),
-  ActorErrorType(..),
-  CryptoErrorType(..),
-  StorageErrorType(..),
-  ContentAddressedMessage(..),
-  AuthenticatedMessage(..),
-  UnifiedResourceTransaction(..),
-  TransactionValidationResult(..),
-  signMessage,
-  
-  -- * Type Classes
-  Event (..),
-  Message (..),
+module Core.Core 
+  ( -- Re-export Core modules
+    -- * Types from Core.Types
+    module Core.Types
+    
+    -- * Core functionality
+  , Event
+  , computeNodeScore
+  , byteStringToWord64
+  , selectNodesForKey
+  , computePubKeyHash
+  , computeAnchorProof
+  , computeMessageHash
+  , computeAuthMessageHash
+  , computeLogEntryHash
+  , computeStoredItemHash
+  , eitherToError
+  ) where
 
-  -- * Hash Functions
-  computeSha256,
-  computeHash,
-  computeAnchorProof,
-  computePubKeyHash,
-  computeMessageHash,
-  computeAuthMessageHash,
-  computeLogEntryHash,
-  computeStoredItemHash,
-  
-  -- * P2P Helpers
-  computeNodeScore,
-  selectNodesForKey,
-  
-  -- * Error Handling
-  eitherToError,
-) where
+import Core.Types
+import Core.Effects hiding (UnifiedResourceTransaction(..))
+import Core.Resource hiding (Resource(..))
+import Core.ResourceLedger hiding (ResourceNotFound(..))
+import Core.Serialize
+import Core.Timeline hiding (Event(..))
+import Core.TimelineDescriptor
+import Core.TimeMap
+import Core.Utils
+import Core.Message
 
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString ()
 import Data.Serialize (Serialize, encode)
 import Polysemy
 import Polysemy.Error (Error, throw)
-import TimeBandits.Types
+import Core.Types
+import Core.Utils (computeContentHash)
+import qualified Core.Common
 
 -- Add necessary imports for P2P functions
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Relude ()
 import Data.Word ()
+
+import Core.Types
+
+-- | Helper function to convert Core.Common.Hash to Core.Types.Hash
+convertHash :: Core.Common.Hash -> Hash
+convertHash (Core.Common.Hash bs) = Hash bs
 
 -- | Core type class for events in the system
 -- Events represent state changes in the system, tracked in append-only logs.
@@ -119,20 +93,6 @@ class (Serialize e) => Event e where
   previousEventHash :: e -> Maybe Hash
   metadata :: e -> EventMetadata
   verifySignature :: e -> Bool
-
--- | Core type class for messages in the system
--- Messages are used for communication between actors and can contain events.
--- All messages are authenticated (signed) and can be verified against the sender's public key.
--- This enables secure peer-to-peer communication in the decentralized network.
-class (Serialize m) => Message m where
-  messageHash :: m -> Hash
-  messageHash = computeMessageHash
-  messageSender :: m -> Actor
-  messageDestination :: m -> Maybe ActorHash
-  messageSignature :: m -> Signature
-  messageContent :: m -> ByteString
-  toEvent :: m -> Maybe EventContent
-  verifyMessageSignature :: m -> Bool
 
 -- | Compute a score for a node based on its hash and a key.
 -- This is a core building block for rendezvous hashing, allowing
@@ -179,81 +139,54 @@ selectNodesForKey key nodes count =
   in
   take count sortedNodes
 
--- | Computes the SHA-256 hash of a given ByteString.
--- This is the fundamental hashing function used throughout the system.
--- All content addressing and cryptographic verification is built on top
--- of this basic hash function.
-computeSha256 :: ByteString -> Hash
-computeSha256 = Hash . SHA256.hash
-
--- | Computes a hash for any serialized content, with an optional previous hash.
--- Used for creating hash chains where each hash depends on the previous one.
--- This is essential for maintaining the integrity of event sequences.
--- The inclusion of the previous hash creates tamper-evident chains that
--- ensure causal consistency in distributed logs.
-computeHash :: (Serialize a) => a -> Maybe Hash -> Hash
-computeHash content mPrev =
-  let prevBytes = maybe mempty (\(Hash h) -> h) mPrev
-      contentBytes = encode content
-   in computeSha256 (prevBytes <> contentBytes)
-
 -- | Get the content-addressable hash of a public key.
--- This creates a unique identifier for actors in the system based on their public key.
--- Actor identities are derived from their public keys, ensuring that actors can
--- only sign messages and events that will be verifiable by their public identity.
-computePubKeyHash :: PubKey -> ActorHash
-computePubKeyHash (PubKey bytes) = EntityHash $ computeSha256 bytes
+-- This is used in various parts of the system to identify public keys uniquely.
+-- Uses SHA-256 to compute a consistent hash of the serialized public key bytes.
+computePubKeyHash :: PubKey -> EntityHash Actor
+computePubKeyHash (PubKey bytes) = EntityHash $ convertHash $ Core.Utils.computeSha256 bytes
 
--- | Compute a cryptographic receipt anchor proof for provenance tracking.
--- This creates a verifiable proof that links a resource to its timeline history,
--- essential for establishing the provenance chain across timelines.
--- When resources move between timelines, this proof maintains their history.
-computeAnchorProof :: [TimelineHash] -> TimelineHash -> Hash
+-- | Compute a proof for anchoring a timeline to its parent chain.
+-- Used when creating timeline branches to establish causal links between parent and child.
+computeAnchorProof :: [EntityHash Timeline] -> EntityHash Timeline -> EntityHash Timeline
 computeAnchorProof prevChain newTimeline =
-  computeSha256 $ encode (map unEntityHash prevChain, unEntityHash newTimeline)
+  EntityHash $ convertHash $ Core.Utils.computeSha256 $ encode (map unEntityHash prevChain, unEntityHash newTimeline)
 
--- | Helper function to compute a content-addressed message hash.
--- Creates a unique identifier for any serializable content,
--- forming the basis of the content-addressable storage system.
--- This enables efficient lookup and verification of messages by their content.
+-- | Get the hash of a message.
+-- Used for content addressing and verifying message integrity.
 computeMessageHash :: (Serialize a) => a -> Hash
 computeMessageHash content =
-  computeSha256 $ encode content
+  convertHash $ Core.Utils.computeContentHash content Nothing
 
 -- | Helper function to compute an authenticated message hash.
--- Includes sender, destination, payload, and signature in the hash
--- to ensure the entire message context is captured in the identifier.
--- This comprehensive hash enables verification of the full message context.
+-- Creates a unique identifier for an authenticated message by hashing
+-- its sender, recipient, signature, and payload hash.
 computeAuthMessageHash :: (Serialize a) => AuthenticatedMessage a -> Hash
 computeAuthMessageHash msg =
-  computeSha256 $
+  convertHash $ Core.Utils.computeSha256 $
     encode
       ( amSender msg
       , amDestination msg
-      , amPayload msg
       , amSignature msg
+      , amHash msg
       )
 
--- | Helper function to compute a log entry's hash.
--- Combines content, metadata, and previous hash to create a unique identifier
--- for each log entry, maintaining the integrity of the append-only log.
--- Each log entry's hash depends on its previous entry, creating a chain.
+-- | Helper function to compute a log entry hash.
+-- Creates a unique identifier for a log entry by hashing
+-- its content, timestamp, previous entry hash, and metadata.
 computeLogEntryHash :: (Serialize a) => LogEntry a -> Hash
 computeLogEntryHash entry =
-  computeSha256 $
+  convertHash $ Core.Utils.computeSha256 $
     encode
       ( leContent entry
       , leMetadata entry
       , lePrevHash entry
       )
 
--- | Helper function to compute a stored item's hash.
--- Used for content-addressable storage in the transient datastore,
--- ensuring data integrity and enabling efficient retrieval.
--- By hashing all components, we create a unique identifier for verification.
+-- | Helper function to compute a stored item hash.
+-- Used in the distributed data store to compute content-addressed keys.
 computeStoredItemHash :: TransientStoredItem -> Hash
 computeStoredItemHash item =
-  computeSha256 $
+  convertHash $ Core.Utils.computeSha256 $
     encode
       ( siKey item
       , siContent item

@@ -52,23 +52,22 @@ import Polysemy.Error (Error, throw)
 import System.IO (IOMode(..), withFile)
 import qualified Data.ByteString.Char8 as BS
 
--- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core.Common (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   )
-import TimeBandits.Program 
+import Core.Program 
   ( ProgramId
   )
-import TimeBandits.ProgramEffect 
+import Core.ProgramEffect 
   ( Effect
   )
-import TimeBandits.TransitionMessage
+import Core.TransitionMessage
   ( LogEntry(..)
   , TransitionMessage
   , verifyLogEntryChain

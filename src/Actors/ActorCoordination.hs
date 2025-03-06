@@ -58,7 +58,7 @@ import Polysemy.Error (Error, throw)
 
 -- Import from TimeBandits modules
 import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types (AppError(..), PeerId(..))
+import Core.Types (AppError(..), PeerId(..))
 import TimeBandits.Resource (Resource, Address, ResourceId)
 import TimeBandits.Program (ProgramId, ProgramDefinition, ProgramState, Effect)
 import TimeBandits.Timeline (TimelineId)

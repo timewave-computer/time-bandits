@@ -70,19 +70,20 @@ import Data.Text qualified as Text
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
+import Data.Word (Word64)
 
 -- Import from TimeBandits modules
-import Core.Core (Hash(..), EntityHash(..))
+import Core.Common (Hash(..))
 import Core.Types
   ( ResourceHash
   , ResourceEvent(..)
   , ResourceEventType(..)
   , ResourceCapability(..)
-  , LamportTime(..)
   , AppError(..)
   , ResourceErrorType(..)
   , ActorHash
   , TimelineHash
+  , EntityHash(..)
   )
 
 import Core.Serialize ()  -- Import Serialize instances
@@ -126,7 +127,7 @@ data EscrowStatus
 
 -- | Condition that must be met for a claim to succeed
 data ClaimCondition
-  = TimeBasedClaim LamportTime            -- Must be claimed before this time
+  = TimeBasedClaim Word64                 -- Must be claimed before this time
   | SignatureRequiredClaim ByteString     -- Must be signed by this key
   | PredicateBasedClaim Text ByteString   -- Must satisfy a custom predicate
   | AlwaysAllowed                         -- Can be claimed without condition
@@ -141,7 +142,7 @@ data Escrow = Escrow
   , beneficiary :: Address
   , claimCondition :: ClaimCondition
   , escrowStatus :: EscrowStatus
-  , escrowTimestamp :: LamportTime
+  , escrowTimestamp :: Word64
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
@@ -154,7 +155,7 @@ createResource ::
 createResource resource = do
   -- In a real implementation, this would create a resource in the system
   -- For now, just return a dummy resource ID
-  pure $ EntityHash $ Hash "dummy-resource-id"
+  pure "dummy-resource-id"
 
 -- | Transfer a resource to a new owner
 transferResource ::
@@ -198,7 +199,7 @@ escrowResource ::
   Sem r Escrow
 escrowResource resource owner beneficiaryAddr claimCond = do
   -- Generate a unique escrow ID
-  let escrowId = BS.pack $ "escrow-" ++ show (hash resource)
+  let escrowId = Text.pack $ "escrow-" ++ show (hash resource)
       
       -- Create the escrow with Active status
       escrow = Escrow
@@ -208,7 +209,7 @@ escrowResource resource owner beneficiaryAddr claimCond = do
         , beneficiary = beneficiaryAddr
         , claimCondition = claimCond
         , escrowStatus = Active
-        , escrowTimestamp = LamportTime 0  -- Would be current time in real impl
+        , escrowTimestamp = 0  -- Would be current time in real impl
         }
   
   -- In a real implementation, this would store the escrow in a persistent store
@@ -289,9 +290,9 @@ adaptTransferResource ::
   Sem r (Either AppError Resource)
 adaptTransferResource resource newOwner timeline = do
   -- Convert ActorHash to Address (implementation detail)
-  let newOwnerAddr = BS.pack $ show $ unEntityHash newOwner
+  let newOwnerAddr = Text.pack $ show $ unEntityHash newOwner
   -- Transfer the resource
-  rid <- transferResource (EntityHash $ Hash "dummy-resource-id") newOwnerAddr
+  rid <- transferResource "dummy-resource-id" newOwnerAddr
   -- Return the resource with Right
   pure $ Right resource
 
@@ -302,7 +303,7 @@ adaptConsumeResource ::
   Sem r (Either AppError Resource)
 adaptConsumeResource resource = do
   -- Consume the resource
-  consumeResource (EntityHash $ Hash "dummy-resource-id")
+  consumeResource "dummy-resource-id"
   -- Return the resource with Right
   pure $ Right resource
 
@@ -312,7 +313,6 @@ adaptVerifyResource ::
   Resource -> 
   Sem r (Either AppError Bool)
 adaptVerifyResource resource = do
-  -- Verify the resource
-  result <- verifyResourceOwnership (EntityHash $ Hash "dummy-resource-id") BS.empty
-  -- Return the result with Right
+  -- Verify resource ownership
+  result <- verifyResourceOwnership "dummy-resource-id" Text.empty
   pure $ Right result 

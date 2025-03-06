@@ -49,7 +49,7 @@ import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
 import TimeBandits.Core (Hash(..))
-import TimeBandits.Types (LamportTime(..), AppError)
+import Core.Types (LamportTime(..), AppError)
 import TimeBandits.Program (ProgramId)
 import TimeBandits.Resource (ResourceHash, resourceId)
 import TimeBandits.ResourceLedger (ResourceLedger(..), OwnershipRecord(..), getOwnershipHistory)

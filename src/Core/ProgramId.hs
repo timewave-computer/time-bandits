@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- |
@@ -23,7 +24,7 @@ module Core.ProgramId
   , fromHash
   
   -- * Conversion
-  , toText
+  , programIdToText
   , toByteString
   , toHash
   ) where
@@ -39,10 +40,8 @@ import GHC.Generics (Generic)
 
 -- | Unique identifier for programs in the Time Bandits system
 newtype ProgramId = ProgramId { unProgramId :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
-
-instance Show ProgramId where
-  show = T.unpack . toText
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
 -- | Allows using string literals for ProgramId
 instance IsString ProgramId where
@@ -71,8 +70,8 @@ fromHash :: ByteString -> ProgramId
 fromHash = ProgramId
 
 -- | Convert a ProgramId to Text
-toText :: ProgramId -> Text
-toText = TE.decodeUtf8 . unProgramId
+programIdToText :: ProgramId -> Text
+programIdToText = TE.decodeUtf8 . unProgramId
 
 -- | Convert a ProgramId to ByteString
 toByteString :: ProgramId -> ByteString

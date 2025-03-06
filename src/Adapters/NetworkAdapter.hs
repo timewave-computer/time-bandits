@@ -63,7 +63,7 @@ import TimeBandits.NetworkQUIC
   , discoverQuicPeers
   , registerWithBootstrapPeers
   )
-import TimeBandits.Types
+import Core.Types
   ( Actor(..)
   , AppError(..)
   , PubKey(..)

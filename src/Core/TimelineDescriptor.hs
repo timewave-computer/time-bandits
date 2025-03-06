@@ -10,6 +10,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {- |
+Module: Core.TimelineDescriptor
+Description: Timeline descriptor configuration for different timeline types.
+
 This module provides the TimelineDescriptor system, which defines formal configurations
 for various timeline types (blockchains, rollups, event logs) and how effects are mapped
 to appropriate handlers for each timeline.
@@ -17,7 +20,7 @@ to appropriate handlers for each timeline.
 TimelineDescriptors are loaded from TOML configuration files and provide a standardized
 way to interact with different timelines across the system.
 -}
-module TimeBandits.Core.TimelineDescriptor
+module Core.TimelineDescriptor
   ( -- * Core Types
     TimelineDescriptor(..)
   , VMType(..)
@@ -39,10 +42,12 @@ module TimeBandits.Core.TimelineDescriptor
   , defaultEndpointConfig
   ) where
 
+import Control.Monad (void, when)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BS
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import qualified Data.ByteString as BS
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Serialize (Serialize)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -53,11 +58,10 @@ import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
 import qualified Data.Serialize as S
-
--- Import from TimeBandits modules
-import TimeBandits.Core.Core (Hash, EntityHash(..), computeSha256)
-import TimeBandits.Core.Types (AppError(..), TimelineHash, TimelineErrorType(..))
-import TimeBandits.Core.Serialize ()  -- Import Serialize instances
+import Data.Time.Clock (UTCTime)
+import qualified Core.Common as Common
+import qualified Core.Types as Types
+import Core.Serialize
 
 -- | Virtual Machine types supported by timelines
 data VMType
@@ -68,7 +72,26 @@ data VMType
   | Native     -- ^ Native Haskell implementation (off-chain)
   | MockVM     -- ^ Mock VM for testing
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- | Manual Serialize instance for VMType
+instance Serialize VMType where
+  put EVM = S.putWord8 0
+  put CosmWasm = S.putWord8 1
+  put MoveVM = S.putWord8 2
+  put Solana = S.putWord8 3
+  put Native = S.putWord8 4
+  put MockVM = S.putWord8 5
+  
+  get = do
+    tag <- S.getWord8
+    case tag of
+      0 -> return EVM
+      1 -> return CosmWasm
+      2 -> return MoveVM
+      3 -> return Solana
+      4 -> return Native
+      5 -> return MockVM
+      _ -> fail $ "Invalid VMType tag: " ++ show tag
 
 -- | Effect types that can be mapped to handlers
 data EffectType
@@ -107,7 +130,22 @@ data ClockType
   | Timestamp     -- ^ Timestamp based
   | LamportClock  -- ^ Logical Lamport clock
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- | Manual Serialize instance for ClockType
+instance Serialize ClockType where
+  put BlockHeight = S.putWord8 0
+  put SlotNumber = S.putWord8 1
+  put Timestamp = S.putWord8 2
+  put LamportClock = S.putWord8 3
+  
+  get = do
+    tag <- S.getWord8
+    case tag of
+      0 -> return BlockHeight
+      1 -> return SlotNumber
+      2 -> return Timestamp
+      3 -> return LamportClock
+      _ -> fail $ "Invalid ClockType tag: " ++ show tag
 
 -- | Configuration for timeline endpoints
 data EndpointConfig = EndpointConfig
@@ -119,7 +157,24 @@ data EndpointConfig = EndpointConfig
   , ecTimeout :: Int                  -- ^ Timeout in milliseconds
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- | Manual Serialize instance for EndpointConfig
+instance Serialize EndpointConfig where
+  put config = do
+    S.put (ecPrimary config)
+    S.put (ecBackups config)
+    S.put (ecWebhook config)
+    S.put (ecApiKey config)
+    S.put (ecRateLimit config)
+    S.put (ecTimeout config)
+  
+  get = EndpointConfig
+    <$> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
 
 -- | Default endpoint configuration
 defaultEndpointConfig :: EndpointConfig
@@ -142,11 +197,28 @@ data EffectHandlerSpec = EffectHandlerSpec
   , ehsRetries :: Int                 -- ^ Number of retries on failure
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- | Manual Serialize instance for EffectHandlerSpec
+instance Serialize EffectHandlerSpec where
+  put spec = do
+    S.put (ehsName spec)
+    S.put (ehsContract spec)
+    S.put (ehsFunction spec)
+    S.put (ehsAbi spec)
+    S.put (ehsGasLimit spec)
+    S.put (ehsRetries spec)
+  
+  get = EffectHandlerSpec
+    <$> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
 
 -- | Timeline descriptor defining a timeline's properties and effect mappings
 data TimelineDescriptor = TimelineDescriptor
-  { tdId :: TimelineHash              -- ^ Unique timeline identifier
+  { tdId :: Types.TimelineHash              -- ^ Unique timeline identifier
   , tdName :: ByteString              -- ^ Human-readable name
   , tdVmType :: VMType                -- ^ Virtual machine type
   , tdClockType :: ClockType          -- ^ Clock type
@@ -155,69 +227,87 @@ data TimelineDescriptor = TimelineDescriptor
   , tdMetadata :: Map ByteString ByteString  -- ^ Additional metadata
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- | Manual Serialize instance for TimelineDescriptor
+instance Serialize TimelineDescriptor where
+  put descriptor = do
+    S.put (tdId descriptor)
+    S.put (tdName descriptor)
+    S.put (tdVmType descriptor)
+    S.put (tdClockType descriptor)
+    S.put (tdEndpoint descriptor)
+    S.put (tdEffectMappings descriptor)
+    S.put (tdMetadata descriptor)
+  
+  get = TimelineDescriptor
+    <$> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
+    <*> S.get
 
 -- | Load a timeline descriptor from a TOML file
 loadDescriptor :: 
-  (Member (Error AppError) r, Member (Embed IO) r) => 
+  (Member (Error Types.AppError) r, Member (Embed IO) r) => 
   FilePath -> 
   Sem r TimelineDescriptor
 loadDescriptor filePath = do
   -- In a real implementation, this would parse a TOML file
   -- For now, we'll return a mock descriptor based on the file name
   
-  if "ethereum" `BS.isInfixOf` BS.pack filePath
+  if "ethereum" `T.isInfixOf` T.pack filePath
     then pure $ createEthereumDescriptor
-    else if "solana" `BS.isInfixOf` BS.pack filePath
+    else if "solana" `T.isInfixOf` T.pack filePath
       then pure $ createSolanaDescriptor
-      else throw $ TimelineError $ TimelineGenericError $ "Unknown timeline type: " <> T.pack filePath
+      else throw $ Types.TimelineError $ Types.TimelineGenericError $ "Unknown timeline type: " <> T.pack filePath
 
 -- | Parse a timeline descriptor from ByteString (TOML content)
 parseDescriptor :: 
-  (Member (Error AppError) r) => 
+  (Member (Error Types.AppError) r) => 
   ByteString -> 
   Sem r TimelineDescriptor
 parseDescriptor content = do
   -- In a real implementation, this would parse TOML content
-  -- For now, return a mock descriptor based on content
+  -- For now, we'll return a mock descriptor based on the content
   
   if "ethereum" `BS.isInfixOf` content
     then pure $ createEthereumDescriptor
     else if "solana" `BS.isInfixOf` content
       then pure $ createSolanaDescriptor
-      else throw $ TimelineError $ TimelineGenericError "Unknown timeline configuration"
+      else throw $ Types.TimelineError $ Types.TimelineGenericError $ "Unknown timeline type in content"
 
 -- | Validate a timeline descriptor
 validateDescriptor :: 
-  (Member (Error AppError) r) => 
+  (Member (Error Types.AppError) r) => 
   TimelineDescriptor -> 
-  Sem r Bool
+  Sem r ()
 validateDescriptor descriptor = do
-  -- Verify that required effect handlers are mapped
+  -- Check that all required effect handlers are present
   let requiredEffects = [TransferAsset, QueryState, UpdateState]
-      mappedEffects = Map.keysSet (tdEffectMappings descriptor)
-      missingEffects = filter (\e -> not $ Set.member e mappedEffects) requiredEffects
+      missingEffects = filter (\e -> not $ Map.member e (tdEffectMappings descriptor)) requiredEffects
   
   if null missingEffects
-    then pure True
-    else throw $ TimelineError $ TimelineGenericError $ "Missing required effect handlers: " <> T.pack (show missingEffects)
+    then pure ()
+    else throw $ Types.TimelineError $ Types.TimelineGenericError $ "Missing required effect handlers: " <> T.pack (show missingEffects)
 
--- | Resolve an effect handler for a specific effect type
+-- | Get the effect handler for a specific effect type
 resolveEffectHandler :: 
-  (Member (Error AppError) r) => 
+  (Member (Error Types.AppError) r) => 
   TimelineDescriptor -> 
   EffectType -> 
   Sem r EffectHandlerSpec
 resolveEffectHandler descriptor effectType = do
   case Map.lookup effectType (tdEffectMappings descriptor) of
     Just handlerSpec -> pure handlerSpec
-    Nothing -> throw $ TimelineError $ TimelineGenericError $ "No handler found for effect: " <> show effectType
+    Nothing -> throw $ Types.TimelineError $ Types.TimelineGenericError $ "No handler found for effect: " <> T.pack (show effectType)
 
 -- | Create a timeline adapter from a descriptor
 -- This is a factory function that will create the appropriate adapter
 -- implementation based on the timeline type
 createTimelineAdapter :: 
-  (Member (Error AppError) r) => 
+  (Member (Error Types.AppError) r) => 
   TimelineDescriptor -> 
   Sem r ByteString
 createTimelineAdapter descriptor = do
@@ -228,7 +318,7 @@ createTimelineAdapter descriptor = do
 -- | Create a mock Ethereum descriptor
 createEthereumDescriptor :: TimelineDescriptor
 createEthereumDescriptor = TimelineDescriptor
-  { tdId = EntityHash $ computeSha256 "ethereum-mainnet"
+  { tdId = Types.EntityHash $ Types.Hash "ethereum-mainnet"
   , tdName = "Ethereum Mainnet"
   , tdVmType = EVM
   , tdClockType = BlockHeight
@@ -276,7 +366,7 @@ createEthereumDescriptor = TimelineDescriptor
 -- | Create a mock Solana descriptor
 createSolanaDescriptor :: TimelineDescriptor
 createSolanaDescriptor = TimelineDescriptor
-  { tdId = EntityHash $ computeSha256 "solana-mainnet"
+  { tdId = Types.EntityHash $ Types.Hash "solana-mainnet"
   , tdName = "Solana Mainnet"
   , tdVmType = Solana
   , tdClockType = SlotNumber
@@ -318,4 +408,12 @@ createSolanaDescriptor = TimelineDescriptor
       [ ("commitment", "confirmed")
       , ("skipPreflight", "true")
       ]
-  } 
+  }
+
+-- | Get the adapter name for a timeline descriptor
+getAdapterName :: 
+  (Member (Error Types.AppError) r) => 
+  TimelineDescriptor -> 
+  Sem r ByteString
+getAdapterName descriptor = do
+  pure $ "Adapter for " <> tdName descriptor 

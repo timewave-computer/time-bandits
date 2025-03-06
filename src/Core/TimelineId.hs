@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- |
@@ -23,7 +24,7 @@ module Core.TimelineId
   , fromHash
   
   -- * Conversion
-  , toText
+  , timelineIdToText
   , toByteString
   , toHash
   ) where
@@ -39,10 +40,8 @@ import GHC.Generics (Generic)
 
 -- | Unique identifier for timelines in the Time Bandits system
 newtype TimelineId = TimelineId { unTimelineId :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
-
-instance Show TimelineId where
-  show = T.unpack . toText
+  deriving stock (Eq, Ord, Generic, Show)
+  deriving anyclass (Serialize)
 
 -- | Allows using string literals for TimelineId
 instance IsString TimelineId where
@@ -71,8 +70,8 @@ fromHash :: ByteString -> TimelineId
 fromHash = TimelineId
 
 -- | Convert a TimelineId to Text
-toText :: TimelineId -> Text
-toText = TE.decodeUtf8 . unTimelineId
+timelineIdToText :: TimelineId -> Text
+timelineIdToText = TE.decodeUtf8 . unTimelineId
 
 -- | Convert a TimelineId to ByteString
 toByteString :: TimelineId -> ByteString

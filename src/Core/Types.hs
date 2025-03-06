@@ -16,9 +16,13 @@
 {-# LANGUAGE TypeOperators #-}
 
 {- |
-This module provides the core types used throughout the Time Bandits application.
+Module: Core.Types
+Description: Core types for the Time Bandits application.
+
+This module contains core types like Hash, EntityHash, PubKey, and several event types
+used throughout the Time Bandits application.
 -}
-module TimeBandits.Core.Types (
+module Core.Types (
   -- * Core Types
   Hash (..),
   EntityHash (..),

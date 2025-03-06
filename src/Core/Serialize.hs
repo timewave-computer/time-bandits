@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module TimeBandits.Core.Serialize
+module Core.Serialize
   ( -- * Re-exports
     Serialize(..)
     -- * Instances

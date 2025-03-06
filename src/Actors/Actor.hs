@@ -97,38 +97,32 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.IORef as IORef
 import System.Directory (createDirectoryIfMissing)
 import Polysemy.Trace qualified as PT
-import TimeBandits.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
-import TimeBandits.Network (P2PConfig(..))
+import Adapters.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
+import AdaptersNetwork (P2PConfig(..))
 import Data.Time.Clock (UTCTime, getCurrentTime)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (ActorHash, Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (ActorHash, Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   , PubKey(..)
   , Actor(..)
   , ActorType(..)
   )
-import TimeBandits.Resource 
-  ( Resource(..)
-  , ResourceId
-  )
-import TimeBandits.Program 
-  ( ProgramId
-  )
-import TimeBandits.TransitionMessage
-  ( TransitionMessage
-  )
+import Core.Resource
+import Core.ResourceId
+import Core.ProgramId
+import Actors.TransitionMessage
 import TimeBandits.Controller
   ( SimulationMode(..)
   )
 
 -- Import specialized actor role modules (forward references)
-import qualified TimeBandits.TimeTraveler as TimeTraveler
-import qualified TimeBandits.TimeKeeper as TimeKeeper
-import qualified TimeBandits.TimeBandit as TimeBandit
-import qualified TimeBandits.ActorCoordination as ActorCoordination
+import qualified Actors.TimeTraveler as TimeTraveler
+import qualified Actors.TimeKeeper as TimeKeeper
+import qualified Actors.TimeBandit as TimeBandit
+import qualified Actors.ActorCoordination as ActorCoordination
 
 -- | Actor roles define what an actor can do in the system
 data ActorRole
