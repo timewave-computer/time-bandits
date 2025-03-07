@@ -25,10 +25,12 @@ and ensuring that timeline modifications adhere to the system's temporal rules.
 -}
 module Core.TimeMap
   ( -- * Core Types
-    TimeMap
-  , TimeBranch
-  , TimeNode
-  , TimeEdge
+    TimeMap(..)
+  , TimeBranch(..)
+  , TimeNode(..)
+  , TimeEdge(..)
+  , EdgeType(..)
+  , LamportClock(..)
   
   -- * Map Creation
   , empty
@@ -65,19 +67,20 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import GHC.Generics (Generic)
+import Prelude hiding (empty, fromList)
 
-import Core.Timeline (Timeline, timelineId)
+import Core.Timeline (Timeline, timelineId, TimelineId)
 import Core.Types (TimelineHash, EntityHash(..), Hash(..))
 
 -- | A branch in the time map, representing a chain of connected timelines
 newtype TimeBranch = TimeBranch
-  { getBranchTimelines :: [TimelineHash]
+  { getBranchTimelines :: [TimelineId]
   }
   deriving (Show, Eq, Generic)
 
 -- | A node in the time map, representing a single timeline
 data TimeNode = TimeNode
-  { nodeHash :: TimelineHash
+  { nodeHash :: TimelineId
   , nodeTimeline :: Timeline
   , nodeInEdges :: Set TimeEdge  -- ^ Incoming edges from ancestor timelines
   , nodeOutEdges :: Set TimeEdge  -- ^ Outgoing edges to descendant timelines
@@ -86,23 +89,30 @@ data TimeNode = TimeNode
 
 -- | An edge in the time map, representing a transition between timelines
 data TimeEdge = TimeEdge
-  { edgeFrom :: TimelineHash  -- ^ Source timeline
-  , edgeTo :: TimelineHash    -- ^ Destination timeline
+  { edgeFrom :: TimelineId  -- ^ Source timeline
+  , edgeTo :: TimelineId    -- ^ Destination timeline
   , edgeType :: EdgeType      -- ^ Type of transition
   }
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq, Generic, Ord)
 
 -- | The type of transition between timelines
 data EdgeType
   = ForkEdge     -- ^ A timeline split/fork
   | ContinueEdge -- ^ A linear continuation
   | MergeEdge    -- ^ A timeline merge
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq, Generic, Ord)
 
 -- | The core time map data structure
 data TimeMap = TimeMap
-  { timeNodes :: Map TimelineHash TimeNode
+  { timeNodes :: Map TimelineId TimeNode
   , timeBranches :: [TimeBranch]
+  }
+  deriving (Show, Eq, Generic)
+
+-- | Lamport clock for tracking logical time
+data LamportClock = LamportClock
+  { clockValue :: Integer
+  , clockOwner :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -148,14 +158,14 @@ addTimeline timeline timeMap =
     }
 
 -- | Merge two timelines, creating a new timeline
-mergeTimelines :: TimelineHash -> TimelineHash -> TimeMap -> Maybe TimeMap
+mergeTimelines :: TimelineId -> TimelineId -> TimeMap -> Maybe TimeMap
 mergeTimelines src1 src2 timeMap =
   -- Implementation would find the two timelines, create a new merged timeline,
   -- and add it to the time map with appropriate edges
   Nothing -- Placeholder implementation
 
 -- | Link two existing timelines with an edge
-linkTimelines :: TimelineHash -> TimelineHash -> EdgeType -> TimeMap -> Maybe TimeMap
+linkTimelines :: TimelineId -> TimelineId -> EdgeType -> TimeMap -> Maybe TimeMap
 linkTimelines src dest edgeType timeMap = do
   -- Check that both timelines exist
   srcNode <- Map.lookup src (timeNodes timeMap)
@@ -180,24 +190,24 @@ linkTimelines src dest edgeType timeMap = do
   Just timeMap { timeNodes = updatedNodes }
 
 -- | Validate whether a timeline conforms to the rules of the time map
-validateTimeline :: TimelineHash -> TimeMap -> Bool
+validateTimeline :: TimelineId -> TimeMap -> Bool
 validateTimeline hash timeMap =
   -- Implementation would check if the timeline's state is consistent with
   -- its ancestors and the system's temporal rules
   maybe False (const True) (Map.lookup hash (timeNodes timeMap))
 
 -- | Check if a timeline exists in the time map
-timelineExists :: TimelineHash -> TimeMap -> Bool
+timelineExists :: TimelineId -> TimeMap -> Bool
 timelineExists hash timeMap = Map.member hash (timeNodes timeMap)
 
 -- | Get a timeline from the time map
-getTimeline :: TimelineHash -> TimeMap -> Maybe Timeline
+getTimeline :: TimelineId -> TimeMap -> Maybe Timeline
 getTimeline hash timeMap = do
   node <- Map.lookup hash (timeNodes timeMap)
   return (nodeTimeline node)
 
 -- | Get all ancestors of a timeline
-getAncestors :: TimelineHash -> TimeMap -> Set TimelineHash
+getAncestors :: TimelineId -> TimeMap -> Set TimelineId
 getAncestors hash timeMap = case Map.lookup hash (timeNodes timeMap) of
   Nothing -> Set.empty
   Just node -> 
@@ -206,7 +216,7 @@ getAncestors hash timeMap = case Map.lookup hash (timeNodes timeMap) of
     in directAncestors `Set.union` recursiveAncestors
 
 -- | Get all descendants of a timeline
-getDescendants :: TimelineHash -> TimeMap -> Set TimelineHash
+getDescendants :: TimelineId -> TimeMap -> Set TimelineId
 getDescendants hash timeMap = case Map.lookup hash (timeNodes timeMap) of
   Nothing -> Set.empty
   Just node -> 
@@ -215,19 +225,19 @@ getDescendants hash timeMap = case Map.lookup hash (timeNodes timeMap) of
     in directDescendants `Set.union` recursiveDescendants
 
 -- | Get all root timelines (those with no ancestors)
-getRootTimelines :: TimeMap -> [TimelineHash]
+getRootTimelines :: TimeMap -> [TimelineId]
 getRootTimelines timeMap = 
   let isRoot node = Set.null (nodeInEdges node)
   in Map.keys $ Map.filter isRoot (timeNodes timeMap)
 
 -- | Get all leaf timelines (those with no descendants)
-getLatestTimelines :: TimeMap -> [TimelineHash]
+getLatestTimelines :: TimeMap -> [TimelineId]
 getLatestTimelines timeMap = 
   let isLeaf node = Set.null (nodeOutEdges node)
   in Map.keys $ Map.filter isLeaf (timeNodes timeMap)
 
 -- | Find the nearest common ancestor of two timelines
-findCommonAncestor :: TimelineHash -> TimelineHash -> TimeMap -> Maybe TimelineHash
+findCommonAncestor :: TimelineId -> TimelineId -> TimeMap -> Maybe TimelineId
 findCommonAncestor hash1 hash2 timeMap =
   let ancestors1 = getAncestors hash1 timeMap
       ancestors2 = getAncestors hash2 timeMap
@@ -247,7 +257,7 @@ renderTimeMap timeMap =
   in T.unlines nodeStrings
 
 -- | Convert a time map to a graph representation for visualization
-timeMapToGraph :: TimeMap -> [(TimelineHash, TimelineHash, EdgeType)]
+timeMapToGraph :: TimeMap -> [(TimelineId, TimelineId, EdgeType)]
 timeMapToGraph timeMap =
   let makeEdges node = map (\edge -> (edgeFrom edge, edgeTo edge, edgeType edge)) $ 
                          Set.toList $ nodeOutEdges node

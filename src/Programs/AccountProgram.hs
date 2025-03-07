@@ -54,6 +54,7 @@ module Programs.AccountProgram
 
 import Control.Monad (unless, when)
 import Data.ByteString (ByteString)
+import Data.Foldable (foldl)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust, isNothing)
@@ -63,7 +64,8 @@ import Data.Text qualified as T
 import GHC.Generics (Generic)
 
 -- Import from Core modules
-import Core.Common (ActorId, EntityHash)
+import Core.Common (EntityHash, LamportTime(..))
+import Core.ActorId (ActorId)
 import Core.Resource (ResourceId)
 import Core.Types (LamportTime)
 
@@ -119,7 +121,7 @@ createAccountProgram actorId initialBalances = do
     { accountId = actorId
     , resourceLedger = ResourceLedger initialBalances
     , lockTable = LockTable Map.empty
-    , lastOperation = 0
+    , lastOperation = LamportTime 0
     , operationLog = []
     }
 

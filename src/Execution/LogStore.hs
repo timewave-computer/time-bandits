@@ -49,7 +49,8 @@ module Execution.LogStore
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
+import Data.IORef (IORef)
+import qualified Data.IORef as IORef
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
@@ -95,7 +96,7 @@ data LogEntry = LogEntry
   , logTimelineHash :: Maybe TimelineHash
   , logData :: Map Text Text  -- ^ Additional structured data
   }
-  deriving (Show, Eq, Generic, FromJSON, ToJSON)
+  deriving (Show, Eq, Generic)
 
 -- | The log store holding all execution logs
 data LogStore = LogStore
@@ -112,7 +113,7 @@ createLogStore path = liftIO $ do
   createDirectoryIfMissing True path
   
   -- Initialize an empty log store
-  entriesRef <- newIORef []
+  entriesRef <- IORef.newIORef []
   
   return LogStore
     { logEntries = entriesRef
@@ -125,7 +126,7 @@ createLogStore path = liftIO $ do
 appendLog :: (MonadIO m) => LogStore -> LogEntry -> m ()
 appendLog store entry = liftIO $ do
   -- Add the entry to the in-memory store
-  atomicModifyIORef' (logEntries store) $ \entries -> (entry : entries, ())
+  IORef.atomicModifyIORef' (logEntries store) $ \entries -> (entry : entries, ())
   
   -- Write to console if enabled
   when (logToConsole store) $
@@ -155,7 +156,7 @@ formatLogFilename entry =
 
 -- | Get all log entries
 getLogEntries :: (MonadIO m) => LogStore -> m [LogEntry]
-getLogEntries store = liftIO $ readIORef (logEntries store)
+getLogEntries store = liftIO $ IORef.readIORef (logEntries store)
 
 -- | Filter logs by level
 filterLogsByLevel :: LogLevel -> [LogEntry] -> [LogEntry]

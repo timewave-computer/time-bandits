@@ -69,7 +69,7 @@ import GHC.Generics (Generic)
 import Core.Common (EntityHash, LamportTime)
 import Core.Resource (Resource, ResourceId, EscrowId)
 import Core.Timeline (TimelineHash, BlockHeader)
-import Core.TimeMap (TimeMap(..))
+import qualified Core.TimeMap as CoreTimeMap
 
 -- Import from Types modules
 import Types.EffectTypes
@@ -80,14 +80,12 @@ import Types.EffectTypes
 import Types.Effect (Effect)
 
 -- Import from Programs modules
+import qualified Programs.Types as ProgramsTypes
 import Programs.Types
   ( MemorySlot(..)
-  , ProgramMemory(..)
-  , ResourceClaim(..)
-  , TimeMap(..)
   , ProgramId
   )
-import Core.ExecutionLog (ExecutionLog(..))
+import qualified Core.ExecutionLog as CoreExecutionLog
 
 -- | Log entry for program execution
 data LogEntry = LogEntry
@@ -107,19 +105,19 @@ newtype ExecutionLog = ExecutionLog
 
 -- | Program memory model
 data ProgramMemory = ProgramMemory
-  { slots :: Map Text (Maybe Resource)  -- Memory slots that can hold resources
-  , values :: Map Text Text             -- Key-value store for program state
+  { slots :: Map.Map Text (Maybe Resource)  -- Memory slots that can hold resources
+  , values :: Map.Map Text Text             -- Key-value store for program state
   }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
 -- | Resource claim by a program
 data ResourceClaim = ResourceClaim
   { claimId :: Text
-  , claimTimeMap :: TimeMap
+  , claimTimeMap :: ProgramsTypes.TimeMap
   , claimExpiryTime :: UTCTime
   }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
 -- | Program capability
@@ -137,6 +135,15 @@ type Address = Text
 -- | Value type for program memory
 type Value = Text
 
+-- | Checkpoint for program state
+data Checkpoint = Checkpoint
+  { checkpointTimestamp :: UTCTime
+  , checkpointHash :: EntityHash ()  -- Using unit as a placeholder type parameter
+  , checkpointDescription :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (Serialize)
+
 -- | The current state of a program
 data ProgramState = ProgramState
   { -- Basic program information
@@ -147,37 +154,26 @@ data ProgramState = ProgramState
   
   -- Effect DAG structure (new as per refactor)
   , rootEffect :: Maybe EffectId
-  , effects :: Map EffectId Effect
+  , effects :: Map.Map EffectId Effect
   , currentFacts :: FactSnapshot
   
   -- Program memory and resources (compatible with old fields)
   , memory :: ProgramMemory                      -- For backward compatibility
-  , resourceClaims :: Map ResourceId ResourceClaim -- For backward compatibility
-  , programMemory :: Map Text Value               -- New key-value store
-  , programResources :: Map ResourceId Resource   -- New resource tracking
+  , resourceClaims :: Map.Map ResourceId ResourceClaim -- For backward compatibility
+  , programMemory :: Map.Map Text Value               -- New key-value store
+  , programResources :: Map.Map ResourceId Resource   -- New resource tracking
   , programCapabilities :: [ProgramCapability]
   
   -- Execution and security
-  , timeMap :: TimeMap                          -- For backward compatibility
-  , programTimeMap :: TimeMap                   -- New field
+  , timeMap :: ProgramsTypes.TimeMap                          -- For backward compatibility
+  , programTimeMap :: ProgramsTypes.TimeMap                   -- New field
   , programAuthorizedCallers :: [Address]
   , programCheckpoints :: [Checkpoint]
   , executionLog :: ExecutionLog                -- For backward compatibility
   , programLogs :: [ExecutionLog]               -- New field for multiple logs
   , lastUpdated :: UTCTime                      -- For backward compatibility
   }
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | A checkpoint in program execution (for upgrades and replay)
-data Checkpoint = Checkpoint
-  { checkpointId :: Text
-  , checkpointTimestamp :: UTCTime
-  , checkpointEffectId :: EffectId
-  , checkpointMemory :: Map Text Value
-  , checkpointResources :: Map ResourceId Resource
-  }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
 -- | Create a new program state
@@ -195,8 +191,8 @@ createProgramState pid now = ProgramState
   , programMemory = Map.empty
   , programResources = Map.empty
   , programCapabilities = []
-  , timeMap = TimeMap Map.empty Map.empty       -- Backward compatibility
-  , programTimeMap = TimeMap Map.empty Map.empty
+  , timeMap = ProgramsTypes.TimeMap Map.empty Map.empty       -- Backward compatibility
+  , programTimeMap = ProgramsTypes.TimeMap Map.empty Map.empty
   , programAuthorizedCallers = []
   , programCheckpoints = []
   , executionLog = ExecutionLog []              -- Backward compatibility
@@ -236,7 +232,7 @@ clearMemorySlot slot state =
            }
 
 -- | Claim a resource for the program
-claimResource :: Resource -> TimeMap -> UTCTime -> ProgramState -> ProgramState
+claimResource :: Resource -> ProgramsTypes.TimeMap -> UTCTime -> ProgramState -> ProgramState
 claimResource resource tm expiry state =
   let resourceId = error "resourceId not implemented yet" -- Extract ID from resource
       claim = ResourceClaim
@@ -268,45 +264,53 @@ getResourceClaims = Map.elems . resourceClaims
 updateTimeMap :: TimelineHash -> LamportTime -> BlockHeader -> ProgramState -> ProgramState
 updateTimeMap timeline time header state =
   let tm = timeMap state
-      newTimelines = Map.insert timeline time (timelines tm)
-      newHeads = Map.insert timeline header (observedHeads tm)
-      newTimeMap = tm { timelines = newTimelines, observedHeads = newHeads }
+      newTimelines = Map.insert timeline time (ProgramsTypes.timelines tm)
+      newHeads = Map.insert timeline header (ProgramsTypes.observedHeads tm)
+      newTimeMap = tm { ProgramsTypes.timelines = newTimelines, ProgramsTypes.observedHeads = newHeads }
       programTm = programTimeMap state
-      newProgramTimelines = Map.insert timeline time (timelines programTm)
-      newProgramHeads = Map.insert timeline header (observedHeads programTm)
-      newProgramTimeMap = programTm { timelines = newProgramTimelines, observedHeads = newProgramHeads }
+      newProgramTimelines = Map.insert timeline time (ProgramsTypes.timelines programTm)
+      newProgramHeads = Map.insert timeline header (ProgramsTypes.observedHeads programTm)
+      newProgramTimeMap = programTm { ProgramsTypes.timelines = newProgramTimelines, ProgramsTypes.observedHeads = newProgramHeads }
   in state { timeMap = newTimeMap
            , programTimeMap = newProgramTimeMap
            , lastUpdated = error "getCurrentTime not available" -- Update lastUpdated
            }
 
 -- | Get the current time map
-getTimeMap :: ProgramState -> TimeMap
+getTimeMap :: ProgramState -> ProgramsTypes.TimeMap
 getTimeMap = timeMap
 
--- | Log an execution entry
-logExecution :: Text -> UTCTime -> ProgramState -> ProgramState
-logExecution payload timestamp state =
-  let entry = ExecutionLogEntry
+-- | Log an execution action
+logExecution :: ProgramState -> Text -> ByteString -> UTCTime -> ProgramState
+logExecution state action data_ timestamp =
+  let 
+      -- Create a new log entry
+      entry = LogEntry
         { logTimestamp = timestamp
-        , logData = payload
+        , logAction = action
+        , logData = data_
         }
-      log = executionLog state
-      newEntries = logEntries log ++ [entry]
-      newLog = log { logEntries = newEntries }
       
-      -- Also update the new logs field
-      programLog = case programLogs state of
-        [] -> ExecutionLog []
-        (x:xs) -> x
-      newProgramEntries = logEntries programLog ++ [entry]
-      newProgramLog = programLog { logEntries = newProgramEntries }
-      newProgramLogs = newProgramLog : tail (programLogs state ++ [ExecutionLog []])
-  in state { executionLog = newLog
-           , programLogs = newProgramLogs
-           , lastUpdated = timestamp
-           }
+      -- Get the current log and append the new entry
+      currentLog = executionLog state
+      newEntries = entry : logEntries currentLog
+      newLog = currentLog { logEntries = newEntries }
+      
+  in
+  state { executionLog = newLog, lastUpdated = timestamp }
 
 -- | Get the execution log
 getExecutionLog :: ProgramState -> ExecutionLog
-getExecutionLog = executionLog 
+getExecutionLog = executionLog
+
+-- | Update a program state with new values
+updateProgramState :: ProgramState -> Map.Map Text Value -> UTCTime -> ProgramState
+updateProgramState state newValues timestamp =
+  let 
+      -- Update the program memory with new values
+      currentMemory = programMemory state
+      updatedMemory = Map.union newValues currentMemory
+  in
+  state { programMemory = updatedMemory
+        , lastUpdated = timestamp
+        } 

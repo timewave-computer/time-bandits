@@ -1,60 +1,57 @@
-# PRD 002: Program and Protocol Upgrades
+# PRD 002: Program and Protocol Upgrades (Updated - 2025-03-07)
+
 
 ## Context and Motivation
 
-Time Bandits is a system for deploying, executing, and proving the execution of **cross-timeline programs**. These programs interact with diverse blockchains (timelines), depend on external state (prices, balances), and must maintain **causal integrity** across all effects and observations.
+Time Bandits is a system for deploying, executing, and proving the execution of **cross-timeline programs** — programs that operate across multiple independent blockchains (timelines). These programs depend on external state (prices, balances, external messages) and must preserve **causal integrity** across all effects, facts, and observations.
 
-Over time, both **the Time Bandits system itself** (the protocol) and individual **program logic** (time traveler-authored programs) will need to evolve. This document defines the requirements, constraints, and proposed design options for enabling **program and protocol upgrades** in a way that:
+Over time, both the **Time Bandits protocol itself** (the infrastructure operated by Time Bandits nodes) and **individual programs** (authored and owned by time travelers) must evolve to support:
 
-- Preserves causal traceability.
-- Maintains traveler sovereignty — programs **belong to travelers**.
-- Ensures system coherence across versions.
-- Balances flexibility (travelers can refuse upgrades) with practicality (default path should be smooth auto-upgrades).
+- New chains and effect types.
+- New proof formats.
+- New cryptographic primitives.
+- New user-defined program logic.
+
+This document defines the requirements, constraints, and design decisions for enabling safe and secure program and protocol upgrades.
+
 
 ## Requirements
 
 ### R1 - Traveler Sovereignty
-- Travelers must have **full ownership** of their deployed programs.
-- Travelers can **refuse a protocol upgrade**, choosing instead to stay pinned to the version they originally deployed with.
-- This means programs **must declare and persist their intended runtime version**.
+- **Travelers fully own and control their programs.**
+- No upgrade — to either program logic or protocol rules — can be **forced** on a program.
+- Travelers can **opt out** of protocol upgrades and choose to stay pinned to a prior version — as long as they can find Bandits willing to run the legacy version.
 
-### R2 - Safe Upgrade Default
-- The **default experience** should favor automatic upgrades.
-- If a traveler does nothing, their program should:
-    - Migrate to the new version (if safe to do so).
-    - Receive schema migrations automatically (if schema changes are safe).
+### R2 - Safe Upgrade Defaults
+- The **default path** favors **automatic upgrades** to the latest protocol version.
+- If a program is in a **safe state**, upgrades should:
+    - Automatically apply schema migrations (where possible).
+    - Migrate to the new version without traveler intervention.
 
 ### R3 - Explicit Safe States for Migration
-- Not all program states should be upgradeable.
-- Travelers should optionally declare **safe migration points** — states where upgrades can be applied without ambiguity.
-- Examples:
-    - No in-flight cross-program calls.
-    - No pending returns from dependent programs.
+- Travelers should optionally declare **safe state strategies** defining when upgrades are permissible.
+- Safe states can be:
+    - **Always Safe:** Upgrade at any time.
+    - **No Pending Returns:** Only upgrade when no cross-program calls are unresolved.
+    - **Manual Trigger:** Traveler explicitly signals a safe state.
 
-### R4 - Schema Evolution without Traveler Involvement
-- Schema upgrades should be **automatic and transparent** if possible.
-- Travelers should only write explicit migrations if:
-    - The upgrade introduces breaking changes to program state.
-    - The program uses deeply custom logic.
+### R4 - Schema Evolution without Manual Migration
+- Schema changes should, whenever possible, be **automatic**.
+- Only **semantic shifts** (meaning changes, not format changes) should require traveler-authored migration code.
+- Schema evolution rules should cover:
+    - Adding fields.
+    - Removing unused fields.
+    - Adding default fields.
 
-## New Terminology
 
-| Term | Meaning |
-|---|---|
-| Epoch | Discrete protocol version checkpoint (e.g., every N blocks). |
-| Protocol Version | Version of the Time Bandits protocol itself. |
-| Program Version | Version of the traveler-authored program logic. |
-| Safe State | Declared state in which upgrades are allowed. |
-| Migration Function | Pure function mapping old program state to new program state. |
+## Core Concepts
 
-## Key Mechanism: Program Version Pinning
-
-Every program must embed:
-
+### Program Version Pinning
+Every program declares:
 ```toml
 [program]
 name = "CrossChainArb"
-version = "v1.2.0"
+version = "1.2.0"
 protocolVersion = "2.3.0"
 safeStateStrategy = "no-pending-returns"
 
@@ -62,9 +59,11 @@ safeStateStrategy = "no-pending-returns"
 previousVersions = ["sha256-oldversion1", "sha256-oldversion2"]
 ```
 
-## Key Mechanism: Epoch-Based Protocol Upgrades
+This allows Bandits to validate **which runtime version applies** for every effect.
 
-The **execution network itself** (the Bandit network) will upgrade in **epochs**. Every Bandit tracks:
+
+### Epoch-Based Protocol Upgrades
+The Time Bandits **protocol version** evolves in discrete **epochs**. All Bandits agree on:
 
 ```toml
 [current]
@@ -76,44 +75,37 @@ activationEpoch = 180000
 newVersion = "3.0.0"
 ```
 
-At epoch 180000, the Bandits automatically switch to version 3.0.0 of the protocol.
+This ensures coordinated, deterministic network upgrades.
 
-## Compatibility Policy
+
+### Compatibility Policy
 
 | Program Version | Protocol Version | Behavior |
 |---|---|---|
-| Program < Compatible Range | Reject new effects. Traveler must upgrade. |
-| Program ∈ Compatible Range | Normal execution. |
-| Program > Protocol Version | Reject program — Bandits too old. |
+| Older than compatible range | Rejected until upgraded. |
+| Within compatible range | Runs normally. |
+| Newer than Bandit version | Rejected (Bandits must upgrade). |
 
-## Key Mechanism: Safe State Declaration
 
-Each program declares a **safe upgrade strategy**:
+### Safe State Declaration
+Programs declare their safe state policy at deployment:
 
 | Strategy | Meaning |
 |---|---|
-| `always` | Program can be upgraded in any state. |
-| `no-pending-returns` | Upgrade only when no cross-program calls are awaiting response. |
-| `manual` | Traveler must explicitly signal safe upgrade points. |
+| `always` | Safe to upgrade anytime. |
+| `no-pending-returns` | Safe only if no pending cross-program calls. |
+| `manual` | Traveler explicitly signals safe points. |
 
-## Open Problem: Pending Return Hostage Risk
 
-If **Program A** calls **Program B**, and Program B deliberately **refuses to return** (or returns in a way that prevents A from reaching a safe state), it can **block A from upgrading**.
+### Migration Functions
+For **schema changes not covered by automatic evolution rules**, travelers provide:
 
-### Suggested Options to Handle This
+```haskell
+type MigrationFunction = OldProgramState -> Either MigrationError NewProgramState
+```
 
-| Option | Approach | Tradeoffs |
-|---|---|---|
-| Timeout Escalation | If B stalls for too long, A can **abort the call unilaterally** and mark the state degraded. | May break valid protocols if B is slow for valid reasons. |
-| Fallback State | Programs define a **degraded fallback state** they enter if a dependent call is unresolved. | Complex to define for all programs. |
-| Refuse External Calls | Some programs declare they **will not make cross-program calls** (self-contained). | Limits composability. |
+This is a logged effect in the program’s unified log.
 
-## Key Mechanism: Migration Functions
-
-If a program upgrade requires schema changes, Bandits automatically attempt to apply:
-
-1. **Schema Evolution Rules** (default migrator for field additions/removals).
-2. **Traveler-Provided Migration Function** if rules aren’t enough.
 
 ## Example Migration Effect
 
@@ -122,19 +114,48 @@ data EffectType
     = Deposit Resource Amount
     | Withdraw Resource Amount
     | Transfer Resource Amount Recipient
-    | UpgradeProgram { oldHash :: ProgramHash
-                     , newHash :: ProgramHash
-                     , migration :: Maybe MigrationFunction
-                     }
+    | UpgradeProgram
+        { oldHash :: ProgramHash
+        , newHash :: ProgramHash
+        , migration :: Maybe MigrationFunction
+        }
 ```
 
-## Migration Function Format
 
-```haskell
-type MigrationFunction = OldProgramState -> Either MigrationError NewProgramState
+## Autonomous Schema Evolution
+By default, Time Bandits applies **schema evolution rules** when upgrading programs.
+
+Example schema evolution:
+
+```toml
+[schema]
+version = "1.2.0"
+fields = ["balances", "riskTolerance"]
+
+[evolution]
+allowed = ["add-optional-field", "remove-unused-field"]
+
+[defaultValues]
+riskTolerance = 0.05
 ```
 
-## Full Upgrade Process
+This allows Bandits to automatically evolve program states **without traveler action** if the changes are non-breaking.
+
+
+## Pending Return Hostage Risk
+A special risk arises when **Program A** calls **Program B**, but B deliberately **refuses to return** — blocking A’s upgrade. Options to mitigate:
+
+| Option | Description |
+|---|---|
+| Timeout + Degrade | After timeout, auto-abort call and enter degraded state. |
+| Fallback State | Define a fallback state for incomplete calls. |
+| Self-Contained Programs | Programs can opt to avoid cross-program calls entirely. |
+| Safe State Handshake | Programs negotiate return guarantees before calls. |
+
+Default: **Timeout + Degrade**
+
+
+## Migration Flow
 
 | Step | Action |
 |---|---|
@@ -143,283 +164,78 @@ type MigrationFunction = OldProgramState -> Either MigrationError NewProgramStat
 | Epoch N+1 | ProtocolUpgrade to 3.0.0 |
 | Program P | Checks safe state |
 | If safe | Applies auto-migration |
-| If not safe | Stays pinned to 2.3.0 and requires legacy Bandits |
+| If not safe | Stays pinned to 2.3.0 |
 | If schema breaks | Traveler provides migration function |
-| Effect Log | Records `UpgradeProgram` effect |
+| Unified Log | Records `UpgradeProgram` effect |
+
 
 ## Consequences of Staying Pinned
+Travelers who **refuse upgrades** may need to:
+- Incentivize Bandits to run legacy versions.
+- Lose access to newer program capabilities.
+- Manually maintain effect adapters (if external timelines evolve).
+- Handle all cross-program interop manually.
 
-If a program **refuses to upgrade**, the traveler may have to:
+This is intentional — sovereignty > convenience.
 
-- **Incentivize Bandits to run a legacy node.**
-- **Lose compatibility with newer programs.**
-- **Lose access to newer effect types.**
-- **Manually operate cross-chain relays (if relays evolve).**
 
-This is acceptable because sovereignty > convenience in this design.
+## Replay and Audit
+- Every upgrade is an **effect** in the unified log.
+- Effects are tied to time map observations.
+- Replay must:
+    - Re-run migrations.
+    - Reconstruct safe state checks.
+    - Validate schema evolution rules.
 
-## Visualization
+
+## Benefits
+
+- Programs fully own their upgrade path.  
+- Default path favors safe automatic evolution.  
+- Bandits remain compatible across epochs.  
+- Schema evolution is strongly typed and rule-driven.  
+- All upgrades leave a **permanent audit trail**.  
+- External auditors can verify upgrade correctness by replaying logs.
+
+
+## Visual Timeline
+
 
 ```
-Epoch N (2.3.0) ProgramA --Effect--> ProgramB ProgramB calls ProgramC Upgrade announced (3.0.0)
+Epoch N: Bandits v2.3.0
 
-Epoch N+1 (3.0.0 activates) ProgramA checks safeState: ok ProgramB safeState check fails (pending return from ProgramC) ProgramA upgrades ProgramB refuses upgrade ProgramB now requires legacy Bandits
+ProgramA runs with ProgramVersion 1.2.0
+Epoch N+1: Bandits upgrade to v3.0.0
+
+ProgramA checks safe state (no pending returns)
+ProgramA auto-upgrades to 1.3.0
+Unified log records UpgradeProgram effect
+
 ```
 
-## Summary Recommendations
 
-✅ Programs declare pinned versions and safe state strategies.  
-✅ Bandits upgrade by epoch, and signal compatibility windows.  
-✅ Safe states are a **critical feature** — they allow automatic upgrades without traveler action.  
-✅ Travelers only write migration functions if schema changes are non-trivial.  
-✅ Programs that refuse upgrades need explicit **legacy Bandit support**.
+## Open Questions
 
-## Summary Options for Pending Call Hostage
-
-| Option | Recommended? |
+| Question | Current Answer |
 |---|---|
-| Timeout + Degrade | ✅ Default if safeState = `no-pending-returns` |
-| Fallback State | Optional per-program. |
-| Self-Contained Only | Optional for simpler programs. |
-
-## Conclusion
-
-This balances:
-- Full traveler ownership.
-- Practical automatic upgrades.
-- Strong causal traceability (every upgrade is an effect).
-- Clean separation of **program version** and **protocol version**.
-
----
+| How long do Bandits support old protocols? | Configurable — minimum N epochs. |
+| Can travelers pre-sign migration functions? | Yes — pre-approved migrations can run automatically. |
+| Can a program downgrade? | No — effects are forward-only. |
+| Can program and protocol upgrades be decoupled? | Partially — programs choose to accept or reject protocol upgrades. |
 
 
-## Addendum I: Autonomous Schema Evolution
+## Summary
 
-The goal of **autonomous schema evolution** is to allow **program upgrades to happen without requiring traveler-written migrations** — as long as the schema change falls into **a predictable class of non-breaking changes**.
+This upgrade model:
 
-This fits well with the **default safe upgrade path** where programs automatically evolve along with the protocol, provided they are in a **safe state** at the time of the upgrade.
+- Respects traveler sovereignty.  
+- Supports automatic schema evolution.  
+- Preserves causal traceability for all upgrades.  
+- Provides flexible safe state strategies.  
+- Uses time map snapshots to anchor all upgrade effects in causal time.
 
+This strikes a careful balance between:
 
-## What Kinds of Schema Changes Can Be Auto-Evolved?
-
-| Change Type | Example | Automatically Safe? |
-|---|---|---|
-| Add New Field (Optional) | Add `riskTolerance` to program state | ✅ Yes |
-| Add New Field (With Default) | Add `maxSlippage` with default of `0.01` | ✅ Yes |
-| Remove Unused Field | Remove deprecated `legacyCounter` | ✅ Yes |
-| Change Field Type (Coercible) | Change `ethBalance` from `Int` to `Decimal` | ⚠️ Safe if lossless coercion |
-| Rename Field | Rename `price` to `oraclePrice` | ❌ Requires explicit migration |
-| Add New Effect Type | Add `ObserveOracle` | ✅ Yes (if old Bandits ignore) |
-| Modify Effect Payload | Add `timestamp` to `DepositEffect` | ⚠️ Requires careful coordination |
-
-## Recommended Approach: Schema Evolution Rules
-
-Each **program schema version** includes:
-
-```toml
-[schema]
-version = "1.2.0"
-fields = ["balances", "lastPrice", "riskTolerance"]
-
-[schema.evolution]
-allowed = ["add-optional-field", "add-default-field", "remove-unused-field"]
-```
-
-This allows Bandits to:
-- Detect when schema changes are **within allowed rules**.
-- Auto-apply changes to the serialized program state.
-- Validate evolution as part of **effect validation**.
-
-## Evolution Engine Example
-
-```haskell
-applySchemaEvolution :: ProgramState -> NewSchema -> Either EvolutionError ProgramState
-applySchemaEvolution oldState newSchema =
-    if evolutionIsSafe oldSchema newSchema
-    then Right (migrateFields oldState oldSchema newSchema)
-    else Left IncompatibleSchemaChange
-```
-
-## Program Declaration Example
-
-```toml
-[program]
-name = "CrossChainArb"
-version = "1.2.0"
-schemaVersion = "1.2.0"
-safeStateStrategy = "no-pending-returns"
-```
-
-## Example: Add a Field Automatically
-
-Original State (v1.2.0):
-```json
-{
-    "balances": { "ETH": 100 },
-    "lastPrice": { "ETH/USDC": 2900 }
-}
-```
-
-Schema Evolution (v1.3.0 adds `riskTolerance`):
-```toml
-[schema]
-version = "1.3.0"
-fields = ["balances", "lastPrice", "riskTolerance"]
-
-[schema.defaultValues]
-riskTolerance = 0.05
-```
-
-Auto-migrated State:
-```json
-{
-    "balances": { "ETH": 100 },
-    "lastPrice": { "ETH/USDC": 2900 },
-    "riskTolerance": 0.05
-}
-```
-
-## Benefits of This Approach
-
-- Travelers do nothing for common schema changes.  
-- Strong typing and schema evolution rules guarantee compatibility.  
-- Every schema change is **documented in the program history**.  
-- Bandits refuse to apply unsafe changes (renames, type changes).
-
-## When Migration Functions Are Still Required
-
-| Case | Example |
-|---|---|
-| Semantic Changes | Change `riskTolerance` from being per-asset to global. |
-| Field Renames | Rename `price` to `oraclePrice`. |
-| Field Splits | Replace `spread` with `{askPrice, bidPrice}`. |
-| Aggregation Logic | Add a rolling average that needs to bootstrap from history. |
-
-For these, travelers provide a **MigrationFunction** that is:
-- Pure.
-- Content-addressed.
-- Logged in the **UpgradeProgram** effect.
-
----
-
-## Addendum II: Hostage Situation Prevention
-
-### Context
-
-In cross-program workflows, **Program A** may call **Program B**.  
-If Program A can only upgrade when it is in a **safe state**, this creates a risk:  
-- **Program B could intentionally stall the return value**.
-- **Program A becomes stuck — unable to upgrade until B cooperates**.
-
-### Options to Mitigate Hostage Risk
-
-#### Option 1: Strict No Pending Returns (Hard Rule)
-
-- Programs **cannot make cross-program calls** unless they explicitly allow deferring their own upgrade.
-- This means programs either:
-    - Operate **fully standalone**.
-    - Or explicitly handle the risk of depending on others.
-
-✅ Simple and predictable.  
-❌ Severely limits composability.  
-
-#### Option 2: Timeout and Auto-Abort (Graceful Degrade)
-
-- If a call to Program B doesn’t return within a deadline, Program A enters a **degraded state**.
-- This state logs the timeout and:
-    - Either ignores the result permanently.
-    - Or substitutes a default result.
-- This allows upgrades to proceed from the degraded state.
-
-✅ Keeps composability.  
-✅ Avoids permanent deadlock.  
-❌ Some loss of flexibility in program logic.
-
-#### Option 3: Optional Lock Contracts
-
-- Programs could register **lock contracts** with Bandits.
-- A lock contract governs **under what conditions a program can hold another hostage**.
-- Example: A program can only delay another program if both were deployed together (composable pair).
-
-✅ Highly flexible.  
-✅ Explicit opt-in.  
-❌ Complex to implement.
-
-#### Option 4: Explicit Safe State Handshakes
-
-- When Program A calls Program B, it sends a **safe state intent**.
-- This declares:
-    - When Program A expects to upgrade.
-    - What state it expects to be in at that time.
-- Program B either:
-    - Acknowledges this (promising to return before then).
-    - Or refuses the interaction.
-
-✅ Formalizes expectations up front.  
-❌ Adds messaging overhead.
-
-### Recommended Approach
-
-| Component | Approach |
-|---|---|
-| Default | Option 2: Timeout and Auto-Abort |
-| Programs That Never Upgrade Mid-Run | Option 1: Strict No Pending Returns |
-| Highly Coupled Programs | Option 3: Lock Contracts |
-| Programs with High-Value State Transitions | Option 4: Safe State Handshake |
-
-### Example Timeout Rule
-
-```toml
-[safeStateStrategy]
-type = "no-pending-returns"
-timeout = "15 minutes"
-degradedState = { status = "timeout", reason = "awaiting ProgramB" }
-```
-
----
-
-### Example Safe State Handshake
-
-When A calls B:
-```json
-{
-    "call": "doRiskCheck",
-    "args": { "balance": 100 },
-    "safeStateIntent": {
-        "expectedReturnTime": "2025-06-01T12:00:00Z",
-        "expectedSafeState": "no-pending-returns"
-    }
-}
-```
-
-Program B either acknowledges:
-```json
-{
-    "ack": true
-}
-```
-Or refuses:
-```json
-{
-    "ack": false,
-    "reason": "Program B does not support guaranteed return times"
-}
-```
-
-## Key Takeaways
-
-| Mechanism | Goal |
-|---|---|
-| Schema Evolution Rules | Allow no-touch upgrades for travelers. |
-| Migration Functions | Only required for semantic shifts. |
-| Safe State Policies | Define how and when programs can upgrade. |
-| Timeout Handling | Default safeguard against hostage risk. |
-| Safe State Handshake | Optional stricter commitment mechanism. |
-
-## Summary Recommendations
-
-- Standardize **schema evolution rules** in the protocol.  
-- Make **time travelers opt into a safe state policy** at program deploy time.  
-- Use **timeouts by default** for pending return mitigation.  
-- Allow optional safe state handshakes for travelers who want stronger guarantees.  
-- Document all safe state policies and program version history in the effect log.
+- Protecting program sovereignty.
+- Ensuring Bandits can safely upgrade.
+- Preserving seamless replay and auditability.

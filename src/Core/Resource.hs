@@ -110,7 +110,9 @@ data Resource
   | ContractWitnessResource ContractId ByteString 
   | SyntheticInternalMarker Text
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Standalone deriving instance
+deriving instance Serialize Resource
 
 -- | Status of an escrowed resource
 data EscrowStatus
@@ -119,7 +121,9 @@ data EscrowStatus
   | Released      -- Released back to the original owner
   | Expired       -- Claim period expired
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Standalone deriving instance
+deriving instance Serialize EscrowStatus
 
 -- | Condition that must be met for a claim to succeed
 data ClaimCondition
@@ -128,7 +132,9 @@ data ClaimCondition
   | PredicateBasedClaim Text ByteString   -- Must satisfy a custom predicate
   | AlwaysAllowed                         -- Can be claimed without condition
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Standalone deriving instance
+deriving instance Serialize ClaimCondition
 
 -- | Escrow represents a resource held in escrow
 data Escrow = Escrow
@@ -141,7 +147,9 @@ data Escrow = Escrow
   , escrowTimestamp :: LamportTime
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Standalone deriving instance
+deriving instance Serialize Escrow
 
 -- | Create a new resource
 createResource :: 

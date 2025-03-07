@@ -1,102 +1,116 @@
-# ADR-005: Concurrency Model
+# ADR-005: Concurrency Model (Updated)
+
 
 ## Status
 
-Accepted
+**Accepted - Updated 2025-03-07**
+
 
 ## Context
 
-Time Bandits programs are distributed, cross-timeline programs that operate across multiple blockchains and distributed ledgers. These programs must handle asynchronous events from different timelines while maintaining strong causal consistency across the entire system. The concurrency model must enable safe parallelism while preserving the security properties of the system.
+Time Bandits programs are **distributed, cross-timeline programs** that operate across multiple blockchains and distributed ledgers. These programs must handle **asynchronous events** originating from different timelines, while maintaining **strong causal consistency** across all system components.
 
-Time Bandits presents unique challenges for concurrency:
-- Programs must remain causally consistent across independent timelines
-- Each program manages multiple resources with their own causal logs
-- Cross-program effects need safe concurrency without deadlocks
-- Time map observations provide external consistency
+Concurrency in this system is uniquely challenging because:
+
+- Programs operate across **multiple independent timelines**, each with its own clock, ordering rules, and finality guarantees.
+- Each program manages **multiple resources**, each with its own causal log and timeline dependencies.
+- **Cross-program and cross-timeline effects** need safe concurrency and atomicity across network and ledger boundaries.
+- Time Bandits must preserve both **internal causal consistency** (program effects) and **external consistency** (timeline observations).
+
 
 ## Decision
 
-We will implement a resource-scoped concurrency model with the following high-level principles:
+### Core Principle: Resource-Scoped Concurrency
 
-Programs describe concurrent goals. The system resolves actual concurrency based on what’s causally safe.
+The unit of concurrency in Time Bandits is **the resource**, not the program, actor, or timeline.
 
-This mirrors:
+- Each resource maintains its own **per-resource effect log**.
+- Programs apply effects to resources, and these effects are **causally ordered per-resource**.
+- Disjoint resource sets can be acted upon concurrently.
+- All external resource interactions (deposits, withdrawals, transfers) flow through **account programs** — which act as boundary points for safe concurrency.
 
-- STM (software transactional memory) in Haskell.
-- Optimistic concurrency in databases (conflict resolution at commit time).
-- CRDT-like causal graphs where effects can fork and merge.
+This model **closely resembles**:
+- **Software Transactional Memory (STM)** (resources act like transactional cells with versioned histories).
+- **Optimistic Concurrency Control** (conflicts are resolved only when effects actually apply).
+- **CRDT-inspired causal graphs**, where effects may fork and merge in a provable and replayable manner.
+
 
 ### High-Level Principles
 
-1. **Resource-Centric Concurrency**: The unit of concurrency is the resource, not the program or thread. Each resource can be updated independently and concurrently with other resources.
+1. **Resource-Scoped Execution**: Programs apply effects to resources, and each resource processes its effects sequentially. Different resources can advance independently.
 
-2. **Account Programs as Gateways**: All external effects must flow through account programs, which manage the concurrency of external interactions.
+2. **Account Programs as Resource Managers**: External resource ownership resides in **account programs**, which expose:
+    - Deposit/withdrawal interfaces.
+    - Fact observation links (external deposits become observed facts).
+    - Internal transfer interfaces (cross-program resource flows).
 
-3. **Effects as Unit of Execution**: Each effect is an atomic unit of execution that updates a resource. Effects are applied in sequence to each resource but can be applied concurrently to different resources.
+3. **Effects as Atomic Execution Units**: Each effect is an atomic state transition for a specific resource. Effects are the **fundamental units of execution and causality**.
 
-4. **Per-Resource Causal Logs**: Each resource maintains its own causal log, which records the sequence of effects applied to it. These logs provide the foundation for causal consistency.
+4. **Per-Resource Effect Logs**: Each resource maintains a **content-addressed, append-only log** of all effects applied to it.
 
-### System-Level Concurrency
+5. **Per-Resource Locks**: Effects for a given resource apply sequentially under lock. Disjoint resources do not block each other.
 
-At the system level, concurrency is managed through:
+6. **External Consistency via Facts**: All external state (timeline balances, prices, etc.) is observed and proven by keepers. Effects depending on external facts carry **fact snapshots**, linking internal causal chains to external timeline states.
 
-1. **Global Effect Queue**: Proposed effects are placed in a global queue and processed in parallel when possible.
 
-2. **Per-Resource Locks**: When an effect targets a specific resource, the system acquires a lock on that resource.
+## System-Level Concurrency
 
-3. **Per-Resource Logs**: Effects are applied to resources in the order specified by their causal logs.
+At the **system level**, concurrency is managed through:
 
-4. **Time Map Observations**: Effects include the time map they observed, ensuring causal consistency with external timelines.
+1. **Global Effect Pipeline**: Proposed effects from all programs enter a global queue.
+2. **Per-Resource Scheduling**: Each effect declares the resource(s) it reads/writes. These declarations inform the scheduler.
+3. **Resource Locks**: When an effect applies to a resource, the system acquires an exclusive lock on that resource.
+4. **Per-Resource Logs**: Applied effects are appended to each resource’s effect log.
+5. **Time Map Observations**: Effects carry **time map snapshots**, proving which external facts were observed at the time of application.
+6. **Parallel Account Programs**: Each account program processes requests for its traveler independently, allowing external actor requests to scale.
 
-5. **Account Program Isolation**: Each account program operates independently, allowing concurrent processing of actor requests.
 
-### Program-Level Concurrency Primitives
+## Program-Level Concurrency Primitives
 
-Programs can express concurrency through several primitives:
+Within a program, developers express concurrent workflows using **temporal combinators**, including:
 
-1. **watch**: Observe a resource or timeline until a condition is met.
-2. **barrier**: Wait for multiple watches or forks to complete.
-3. **race**: Execute multiple branches concurrently, returning when any completes.
-4. **fork**: Start a concurrent execution path without waiting.
-5. **invoke**: Call another program, potentially triggering concurrent execution.
-6. **callback**: Register a function to be called when an event occurs.
+1. **watch** - Observe a resource or timeline until a condition is satisfied.
+2. **barrier** - Wait until multiple conditions are satisfied.
+3. **race** - Execute multiple branches concurrently; return when any completes.
+4. **fork** - Spawn a concurrent child program or concurrent internal branch.
+5. **invoke** - Call another program asynchronously.
+6. **callback** - Register a response handler for an async invocation.
 
-### Logical Time and Causality
 
-Time Bandits programs operate without a global clock, instead relying on:
+## Logical Time and Causality
 
-1. **Causal Logs**: Each resource's log defines a partial ordering of effects.
-2. **Time Map Snapshots**: Effects are linked to external timeline observations.
-3. **Lamport Timestamps**: Internal logical clocks maintain causal order.
+Time Bandits does not rely on global clocks. Instead, it establishes ordering through:
 
-## Consequences
+1. **Per-Resource Effect Logs** - Define causal order within each resource.
+2. **Fact Snapshots** - Link effects to the external facts they observed.
+3. **Program Lamport Clocks** - Track internal causal order within each program.
 
-### Summary of Concurrency Model Invariants
 
-The concurrency model ensures:
+## Safe Concurrency Invariants
 
-1. Per-resource locking prevents concurrent updates to the same resource.
-2. Disjoint effects (affecting different resources) can apply concurrently.
-3. The history of each resource is totally ordered and replayable.
-4. Cross-program effects maintain causal consistency through account programs.
-5. Time map observations provide external consistency with independent timelines.
+The concurrency model guarantees:
 
-### Advantages
+- **Per-resource sequential consistency:** Each resource sees a totally ordered sequence of effects.
+- **Cross-resource causal safety:** Effects across resources only depend on each other via explicit causal links.
+- **External consistency:** Each program’s external dependencies are explicitly proven via observed facts in its effect log.
+- **Replayability:** Full replay of any program’s execution requires only:
+    - Its own effect log.
+    - The referenced fact logs.
+- **No direct resource ownership:** Programs do not own resources directly. All external resources are mediated via account programs.
 
-- Enables high throughput for programs with disjoint resource sets
-- Preserves causal consistency across the entire system
-- Allows safe parallel execution without complex locking schemes
-- Creates a predictable and replayable execution model
 
-### Limitations
+## Advantages
 
-- Resource-level granularity may limit parallelism for some workloads
-- Requires careful resource design to avoid contention
-- Complex cross-resource dependencies can reduce concurrency
+- Enables safe parallelism for disjoint resources.  
+- Preserves causal consistency across programs, resources, and timelines.  
+- Scales naturally with resource set size (horizontal parallelism).  
+- Ensures programs remain replayable, auditable, and independently verifiable.  
+- Allows external actor requests (deposits, withdrawals) to parallelize cleanly through account programs.
 
-## Implementation
 
-### Example: Cross-Chain Swap with Parallel Escrows
+## Example: Cross-Chain Swap
+
+### Program Flow
 
 ```yaml
 program:
@@ -106,8 +120,7 @@ program:
     - sol_escrow
   
   effects:
-    - # Parallel escrow creation
-      fork:
+    - fork:
         - create_escrow:
             timeline: "ethereum"
             amount: 1.5
@@ -117,15 +130,12 @@ program:
             amount: 35
             resource: sol_escrow
     
-    - # Barrier waits for both escrows
-      barrier:
+    - barrier:
         watch: [eth_escrow, sol_escrow]
         condition: "created"
     
-    - # Race condition for timeout or completion
-      race:
-        - # Happy path - both claim
-          sequence:
+    - race:
+        - sequence:
             - claim:
                 resource: eth_escrow
                 to: "sol_user"
@@ -133,28 +143,60 @@ program:
                 resource: sol_escrow
                 to: "eth_user"
         
-        - # Timeout path - refund both
-          sequence:
+        - sequence:
             - watch:
                 time: "+1 hour"
             - refund:
                 resource: [eth_escrow, sol_escrow]
 ```
 
-In this example:
-- Two escrows are created in parallel (fork)
-- A barrier ensures both must be created before proceeding
-- A race allows either successful completion or timeout handling
 
-### Architecture Integration
+### How This Executes
 
-The concurrency model integrates with the broader Time Bandits architecture:
+1. Both escrows create concurrently (disjoint resources).
+2. Barrier blocks further progress until both are created.
+3. Race triggers either:
+    - Both escrows claimed (success).
+    - One-hour timeout leading to refunds (failure).
 
-1. **Effect System**: Each effect declares its resource read/write set
-2. **Resource Ledger**: Maintains per-resource logs and locks
-3. **Time Map**: Provides external timeline consistency
-4. **Account Programs**: Act as concurrency boundaries for external actors
+This expresses **resource-scoped concurrency directly in the DSL**, aligning program logic with system-level scheduling.
 
-### Summary
 
-The resource-scoped concurrency model enables safe parallelism while maintaining causal consistency. By focusing on resources as the unit of concurrency, Time Bandits programs can achieve high throughput while preserving their security properties.
+## Architectural Integration
+
+| Component | Role |
+|---|---|
+| Effect System | Effects declare resource read/write sets. |
+| Resource Ledger | Tracks per-resource logs and locks. |
+| Account Programs | External resource gateway, isolates traveler from direct resource ownership. |
+| Time Map | Links internal effects to external facts, preserving cross-timeline consistency. |
+| Temporal Effect Language | Exposes concurrency combinators (fork, watch, barrier, etc). |
+
+
+## Simulation and Replay
+
+- In **simulations**, in-memory locks simulate resource-level concurrency.
+- In **local/multi-process mode**, each actor maintains independent process-local logs.
+- In **geo-distributed mode**, locks translate into distributed lease/acquire operations.
+- Replay uses only the effect logs (per-resource) and fact logs (per-timeline), meaning replay requires no live RPC queries.
+
+
+## Example: Resource Ledger API
+
+```haskell
+data ResourceLedger = ResourceLedger
+    { acquireLock :: ResourceID -> IO ()
+    , releaseLock :: ResourceID -> IO ()
+    , appendEffect :: ResourceID -> Effect -> IO ()
+    , readEffectLog :: ResourceID -> IO [Effect]
+    }
+```
+
+
+## Summary
+
+- Time Bandits programs describe **concurrent goals** declaratively.  
+- The system schedules actual concurrency based on **resource safety**.  
+- Programs remain replayable and auditable at all times.  
+- No program can violate causal consistency or race against external facts.  
+- Resource-scoped concurrency fits the **account program model** directly.

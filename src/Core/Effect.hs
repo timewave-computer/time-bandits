@@ -48,11 +48,11 @@ module Core.Effect
   
   -- * Effect Creation
   , createEffect
-  , effectId
+  , getEffectId
   
   -- * Effect Validation
   , validateEffect
-  , effectPreconditions
+  , getEffectPreconditions
   , effectPostconditions
   
   -- * Effect Serialization
@@ -73,16 +73,16 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
+import Data.Foldable (foldl)
 import GHC.Generics (Generic)
 
 -- Import from Core modules only
-import Core.Common (Hash, computeHash)
+import Core.Common (Hash, computeHash, TimeMap)
 import Core.ProgramId (ProgramId)
 import Core.ResourceId (ResourceId)
 import Core.TimelineId (TimelineId)
 import Core.ActorId (ActorId)
 import Core.AccountProgram (AccountMessage)
-import Core.TimeMap (TimeMap)
 
 -- | Unique identifier for effects
 type EffectId = Hash
@@ -113,7 +113,7 @@ data PreconditionType
   | TimelineState TimelineId ByteString     -- ^ Timeline must be in specific state
   | TimeCondition UTCTime                   -- ^ Time-based condition
   | LogicalCondition Text                   -- ^ Logical condition expressed as code
-  | EffectApplied EffectId                  -- ^ Another effect must be applied first
+  | PriorEffectApplied EffectId             -- ^ Another effect must be applied first
   | FactObserved FactSnapshot               -- ^ A specific fact must have been observed
   deriving (Show, Eq, Generic, Serialize)
 
@@ -252,8 +252,8 @@ createEffect programId preconditions observations parentIds effect = do
   pure (effect, metadata)
 
 -- | Get the unique identifier for an effect
-effectId :: Effect -> EffectId
-effectId = computeHash . encode
+getEffectId :: Effect -> EffectId
+getEffectId = computeHash . encode
 
 -- | Validate that an effect can be applied
 validateEffect :: Effect -> [Precondition] -> Bool
@@ -261,13 +261,13 @@ validateEffect _ [] = True  -- No preconditions means it's always valid
 validateEffect _ _ = True   -- Actual validation is performed by the interpreter
 
 -- | Get all preconditions required for an effect
-effectPreconditions :: Effect -> [Precondition]
-effectPreconditions (ResourceEffect _ _) = []  -- Placeholder, actual implementation depends on effect
-effectPreconditions (TimelineEffect _ _) = []  -- Placeholder, actual implementation depends on effect
-effectPreconditions (ProgramEffect _ _) = []   -- Placeholder, actual implementation depends on effect
-effectPreconditions (CompositeEffect effects) = 
-  concatMap effectPreconditions effects        -- Combine preconditions from all sub-effects
-effectPreconditions _ = []  -- Placeholder for other effect types
+getEffectPreconditions :: Effect -> [Precondition]
+getEffectPreconditions (ResourceEffect _ _) = []  -- Placeholder, actual implementation depends on effect
+getEffectPreconditions (TimelineEffect _ _) = []  -- Placeholder, actual implementation depends on effect
+getEffectPreconditions (ProgramEffect _ _) = []   -- Placeholder, actual implementation depends on effect
+getEffectPreconditions (CompositeEffect effects) = 
+  concatMap getEffectPreconditions effects        -- Combine preconditions from all sub-effects
+getEffectPreconditions _ = []  -- Placeholder for other effect types
 
 -- | Get all postconditions guaranteed by an effect
 effectPostconditions :: Effect -> [Precondition]
@@ -290,7 +290,7 @@ deserializeEffect = decode
 addEffectToDAG :: EffectDAG -> Effect -> EffectMetadata -> EffectDAG
 addEffectToDAG dag effect metadata = 
   let effectId = nodeEffectId
-      nodeEffectId = effectId effect
+      nodeEffectId = getEffectId effect
       parentIds = effectParentIds metadata
       
       -- Create the new node
@@ -320,7 +320,7 @@ addEffectToDAG dag effect metadata =
     updateParentNode nodes parentId =
       Map.adjust addChild parentId nodes
       where
-        addChild node = node { nodeChildren = Set.insert (effectId effect) (nodeChildren node) }
+        addChild node = node { nodeChildren = Set.insert (getEffectId effect) (nodeChildren node) }
 
 -- | Get all ancestor effects of a given effect
 getEffectAncestors :: EffectDAG -> EffectId -> Set EffectId

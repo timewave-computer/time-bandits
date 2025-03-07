@@ -64,6 +64,7 @@ module Core.Common
   -- * Basic Utilities
   , computeHash
   , computeSha256
+  , generateEntityHash
   ) where
 
 import Crypto.Hash.SHA256 qualified as SHA256
@@ -80,11 +81,7 @@ import Data.Time (Day (..), DiffTime, UTCTime (..))
 import Prelude hiding (lookup)
 import qualified Data.Map.Strict as Map
 import Control.Monad (when)
-
--- | Instance for serializing Text
-instance Serialize Text where
-  put t = S.put (TE.encodeUtf8 t)
-  get = TE.decodeUtf8 <$> S.get
+import Core.Serialize () -- Import Serialize instances
 
 -- | Instance for serializing UTCTime
 instance Serialize UTCTime where
@@ -219,6 +216,10 @@ computeHash = Hash . SHA256.hash
 -- | Compute a SHA-256 hash directly returning ByteString
 computeSha256 :: ByteString -> ByteString
 computeSha256 = SHA256.hash
+
+-- | Generate an entity hash for a serializable value
+generateEntityHash :: Serialize a => a -> EntityHash b
+generateEntityHash = EntityHash . computeHash . S.encode
 
 -- | Represents a time map entry
 data TimeMapEntry = TimeMapEntry

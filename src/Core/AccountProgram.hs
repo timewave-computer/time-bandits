@@ -103,17 +103,17 @@ data OutboxMessage = OutboxMessage
 -- | Message types that can be sent through an account program
 data AccountMessage
   = Deposit 
-      { depositResource :: ResourceId
+      { depositResourceId :: ResourceId
       , depositAmount :: Integer
       , depositTarget :: ProgramId
       }
   | Withdraw
-      { withdrawResource :: ResourceId
+      { withdrawResourceId :: ResourceId
       , withdrawAmount :: Integer
       , withdrawSource :: ProgramId
       }
   | Transfer
-      { transferResource :: ResourceId
+      { transferResourceId :: ResourceId
       , transferAmount :: Integer
       , transferTarget :: ActorId
       }
@@ -192,7 +192,7 @@ createAccountProgram actorId programId timestamp = AccountProgram
 depositResource :: AccountProgram -> ResourceId -> Integer -> ProgramId -> (AccountProgram, Effect)
 depositResource account resource amount target =
   -- Create the deposit effect
-  let payload = TransferResourcePayload resource (toAddress target)
+  let payload = TransferResourcePayload (showT resource) (toAddress target)
       effectParents = maybe [] (\root -> [root]) (accountRootEffect account)
       effect = error "depositResource not fully implemented" -- Would create effect with proper ID
       

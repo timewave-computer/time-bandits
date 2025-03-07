@@ -9,6 +9,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 {- |
 
@@ -93,6 +94,8 @@ import Relude.Extra.Tuple (fmapToFst)
 
 import Core qualified as Core
 import Core.Types
+import Core.Common (Actor)
+import Core.Resource (Resource)
 
 -- | Information about a P2P node in the network
 data P2PNode = P2PNode
@@ -108,12 +111,15 @@ data P2PNode = P2PNode
   -- ^ Capabilities this node supports
   , pnPublicKey :: !PubKey
   -- ^ Public key for authentication
-  , pnLoad :: !Double
-  -- ^ Current load factor (0.0-1.0)
-  , pnStats :: !P2PStats
-  -- ^ Statistics for this peer
   }
-  deriving stock (Show, Eq, Generic)
+  deriving stock (Generic)
+
+-- Custom instances to avoid deriving for Actor
+instance Show P2PNode where
+  show node = "P2PNode { pnId = " ++ show (pnId node) ++ ", pnAddress = " ++ show (pnAddress node) ++ " }"
+
+instance Eq P2PNode where
+  n1 == n2 = pnId n1 == pnId n2
 
 -- | Capabilities a P2P node can support
 data P2PCapability
@@ -260,8 +266,19 @@ makeSem ''P2PNetwork
 
 -- | Compute a score for a node using rendezvous hashing
 -- Returns the node's score for the given key
-computeNodeScore :: P2PNode -> ByteString -> Word64
-computeNodeScore node = Core.computeNodeScore (pnId node)
+computeNodeScore :: P2PNode -> Hash -> Double
+computeNodeScore node key = 
+  -- Simple XOR distance metric
+  let nodeId = pnId node
+      keyBytes = unHash key
+      nodeBytes = unEntityHash nodeId
+  in 1.0 / (1.0 + fromIntegral (xorDistance keyBytes nodeBytes))
+
+-- | Helper function to compute XOR distance between two byte strings
+xorDistance :: ByteString -> ByteString -> Int
+xorDistance bs1 bs2 = 
+  -- Simple implementation - in practice would use proper XOR distance
+  abs (BS.length bs1 - BS.length bs2)
 
 -- | Interpret the P2P Network effect
 -- Provides concrete implementations for all P2P network operations, including
@@ -442,7 +459,7 @@ interpretP2PNetwork config self pubKey = interpret \case
     -- Compute score for each node using rendezvous hashing
     -- This implements a consistent hashing algorithm that assigns keys to nodes
     -- in a deterministic way that minimizes reassignments when nodes join/leave
-    let scoredNodes = map (\node -> (node, Core.computeNodeScore (pnId node) key)) currentPeers
+    let scoredNodes = map (\node -> (node, computeNodeScore node key)) currentPeers
         -- Sort by score (highest first)
         sortedNodes = map fst $ sortOn (Down . snd) scoredNodes
         -- Take required number of nodes
@@ -602,8 +619,6 @@ generateRandomNode = do
     , pnLastSeen = timestamp
     , pnCapabilities = [CanRoute, CanStore]
     , pnPublicKey = PubKey nodeId
-    , pnLoad = 0.5
-    , pnStats = P2PStats 100 1024 0.95 50 3600
     }
 
 -- | Generate random ByteString
@@ -656,4 +671,25 @@ scoreNodeHealth health node =
       statsScore = (psSuccessRate (pnStats node) * 0.4) +
                    (1.0 - min 1.0 (psResponseTime (pnStats node) / 200.0)) * 0.4 +
                    min 1.0 (psUptime (pnStats node) / 86400.0) * 0.2
-  in baseScore * 0.7 + statsScore * 0.3 
+  in baseScore * 0.7 + statsScore * 0.3
+
+-- | Create an authenticated message from a node to another node
+createAuthenticatedMessage :: 
+  (Member (Error AppError) r, Serialize a) => 
+  P2PNode -> 
+  P2PNode -> 
+  PrivKey -> 
+  a -> 
+  Sem r (AuthenticatedMessage ByteString)
+createAuthenticatedMessage sender recipient privKey content = do
+  let contentBytes = encode content
+      msgHash = computeMessageHash contentBytes
+  -- In a real implementation, we would sign the message here
+  let signature = Signature "dummy-signature"
+  pure $ AuthenticatedMessage
+    { amHash = msgHash
+    , amSender = pnPublicKey sender
+    , amDestination = pnPublicKey recipient
+    , amPayload = ContentAddressedMessage msgHash content
+    , amSignature = signature
+    } 

@@ -1,174 +1,290 @@
-System Contract for Time Bandits
-Version: 1.2
-Date: 2025-03-05
+# Time Bandits System Contract
 
-# System Contract
+---
+
+## Version
+
+**Current Revision:** 2025-03-07
+
+---
 
 ## Purpose
 
-This document defines the **invariants, ownership rules, causal consistency guarantees, and actor/program boundary rules** for Time Bandits. It acts as a formal contract that Time Bandits actors (Travelers, Keepers, Bandits) must uphold, and that all program execution must respect.
+This document defines the **system contract** for Time Bandits, establishing the fundamental invariants, roles, ownership rules, and guarantees that underpin the system. It serves as both a specification and a **social/legal contract** between participants — travelers, keepers, bandits, and the broader execution network.
+
+This document reflects the **latest design**, incorporating:
+- Account programs for resource ownership.
+- Unified log for facts, effects, and events.
+- Fact observation pipeline.
+- Safe state and schema evolution rules.
+- Updated concurrency and invocation models.
+- Role separation between actors.
 
 ---
 
-## Core Ownership Rule
+# Core Invariants
 
-All resources in Time Bandits are **owned exclusively by programs**. No actor directly owns resources. This ensures:
-- There is always an explicit log of how a resource’s ownership changed.
-- Every ownership change is accompanied by an effect and proof.
-- Resource ownership is tied directly to programs, making ownership history fully replayable.
+The following invariants **must always hold**, across all modes of execution (in-memory, multi-process, geo-distributed), across all simulation and production deployments:
 
----
+1. **Programs do not own resources directly.**
+    - All external resources (tokens, balances, positions) are owned by **account programs**, not by individual programs.
 
-## Actor-Program Separation
+2. **Every effect has a complete causal chain.**
+    - Every effect must reference the exact prior facts and effects it depended on.
+    - The full causal graph is append-only and content-addressed.
 
-Actors (time travelers) do not directly own or interact with resources within Time Bandits. Instead, each actor has exactly **one Account Program**. This Account Program acts as the actor’s **sole point of entry into the system**. It is responsible for:
-- Holding all resources owned by the actor.
-- Sending deposits to external programs.
-- Receiving withdrawals and refunds from external programs.
-- Receiving callbacks from programs after requested work completes.
-- Maintaining a structured **inbox and outbox**, recording all communication the actor has with the system.
+3. **Fact observations are first-class.**
+    - Programs cannot act on external state unless that state has been observed and proven by a Time Keeper.
+    - Facts are **immutable, content-addressed, and independently provable**.
 
-**Invariants:**
-- An actor may only propose effects via their Account Program.
-- No external program may send a message directly to an actor — all responses flow through the Account Program.
-- All assets held by an actor exist within the Account Program’s state.
+4. **Programs cannot be forcibly upgraded.**
+    - Time Travelers (program owners) must explicitly approve schema and logic upgrades.
+    - Programs can only evolve schemas while in **safe states**.
 
----
+5. **Replay is complete and deterministic.**
+    - All program state, resource flows, facts, and effects must be fully reconstructible from logs alone — no external state should be required.
 
-## Resource Ledger
-
-Resource ownership is tracked globally in a **Resource Ledger**, which maps each resource to its current owner (a program ID). This ledger enforces:
-- Each resource has exactly **one owner** at all times.
-- Ownership changes only via applied, proven effects.
-- The owner can be either a regular program or an account program.
-- Ownership history is auditable by walking the **per-resource execution log**.
+6. **Programs remain timeline-agnostic.**
+    - Programs do not need timeline-specific logic. All cross-timeline interaction is mediated via account programs and fact observations.
 
 ---
 
-## Effect Application and Causal Consistency
+# Core Actors
 
-Effects are the **only mechanism for changing program state, resource ownership, and timeline observations**.  
-Each effect:
-- Declares a **read set** (resources and facts it observes).
-- Declares a **write set** (resources it wants to modify).
-- References a **specific time map snapshot** that it observed at the time the effect was proposed.
+## Time Travelers
 
-Effects apply only if:
-- The observed time map is still valid (no unexpected external changes occurred).
-- All preconditions hold (balances, capabilities, external facts).
-- All resources in the effect’s write set are **locked by the effect** at the time of application.
+- Own programs.
+- Deploy new programs.
+- Propose schema and logic upgrades.
+- Maintain full sovereignty over programs — no forced upgrades.
+- Submit external deposits into account programs.
+- Own account programs that hold and transfer assets.
 
-**Concurrency Rule:**  
-Effects that touch **disjoint resources** may apply concurrently, even within the same program.
+## Time Keepers
 
----
+- One per timeline.
+- Observe external facts (balances, prices, inclusion proofs).
+- Sign observation proofs.
+- Append facts to **FactLog**.
+- Validate external messages before accepting into a timeline.
+- Respond to fact queries from programs and bandits.
+- Manage per-timeline clocks.
 
-## Per-Resource Logs and Replayability
+## Time Bandits
 
-Each resource maintains its own **per-resource execution log**, recording:
-- Every effect that modified the resource.
-- The time map snapshot the effect observed.
-- The resulting resource state hash.
-- A zero-knowledge proof (if applicable) demonstrating valid application.
-
-A program’s complete history is the **union of its resource logs** plus any internal state changes applied to program memory.
-
-**Invariant:**  
-Replaying all per-resource logs, in causal order, must reconstruct the program’s state and memory exactly.
-
----
-
-## Programs as Effects and Memory
-
-A program itself is:
-- A static list of possible **effects** (its "code").
-- Mutable **program memory**, which can only be changed by internal state effects.
-- A set of **owned resources**, tracked in the resource ledger.
-- A set of **per-resource logs**, forming a causal graph of applied effects.
-
-**Invariant:**  
-A program’s memory and resources may only change via applied effects.  
-Effects that modify different resources within the same program may apply concurrently.
+- Operate the **execution network**.
+- Execute program logic and generate **zero-knowledge proofs** of execution.
+- Gossip facts and effects across the network.
+- Maintain a content-addressed, append-only log of all:
+    - Effects.
+    - Facts.
+    - Events.
+- Enforce **safe state rules** before accepting upgrades.
+- Enforce **schema compatibility** before running programs.
+- Synchronize across timelines to enforce cross-timeline invariants.
 
 ---
 
-## Time Map and Observed Facts
+# Core Programs
 
-Every applied effect records the **time map snapshot** it observed.  
-This is the **causal anchor** that guarantees every effect was applied in the correct context (e.g., with the correct external balances and proofs).
+## Program (Logic Program)
 
-**Invariant:**  
-An effect’s time map must match the latest known time map at the time of application — if not, preconditions must be re-evaluated before applying.
+- Defines **causal effect pipeline** (business logic).
+- Declares:
+    - Schema (state structure).
+    - Protocol compatibility version.
+    - Evolution rules (what schema changes are allowed).
+- Does **not own resources directly** — interacts with resources via account programs.
+- Includes:
+    - Effect DAG (causal history).
+    - FactSnapshots (external dependencies).
+    - Current schema version.
+    - Declared safe state policy.
+
+## Account Program
+
+- Each traveler has one account program per deployment context.
+- Holds all traveler’s cross-timeline balances.
+- Exposes:
+    - Deposit API (timeline-specific).
+    - Withdraw API (timeline-specific).
+    - Transfer API (to programs).
+    - Query API (balance reporting).
+- Maintains its own **Effect DAG** (resource history).
+- Separately replayable from logic programs.
+- Schema is **stable and standard** across all account programs.
 
 ---
 
-## Program-Program and Program-Account Communication
+# Core Data Structures
 
-All cross-program communication flows via effects.  
-Programs may:
-- Send messages to other programs.
-- Send callbacks to account programs.
-- Deposit/withdraw funds to/from account programs.
+## Effect
 
-Programs may **not**:
-- Directly interact with external actors.
-- Directly interact with external wallets.
+```haskell
+data Effect
+    = Deposit { timeline :: TimelineID, asset :: Asset, amount :: Amount }
+    | Withdraw { timeline :: TimelineID, asset :: Asset, amount :: Amount }
+    | Transfer { fromProgram :: ProgramID, toProgram :: ProgramID, asset :: Asset, amount :: Amount }
+    | ObserveFact { factID :: FactID }
+    | Invoke { targetProgram :: ProgramID, invocation :: Invocation }
+    | EvolveSchema { oldSchema :: Schema, newSchema :: Schema, evolutionResult :: EvolutionResult }
+    | CustomEffect Text Value
+```
 
 ---
 
-## Account Program Interface
+## Fact
 
-The Account Program exposes the following standard effects:
+```haskell
+data Fact = Fact
+    { factID :: FactID
+    , timeline :: TimelineID
+    , factType :: FactType
+    , factValue :: FactValue
+    , observedAt :: LamportTime
+    , observationProof :: ObservationProof
+    }
+```
 
-| Effect | Description |
+---
+
+## Program
+
+```haskell
+data Program = Program
+    { programID :: ProgramID
+    , travelerID :: TravelerID
+    , schema :: Schema
+    , safeStatePolicy :: SafeStatePolicy
+    , effectDAG :: EffectDAG
+    }
+```
+
+---
+
+## AccountProgram
+
+```haskell
+data AccountProgram = AccountProgram
+    { accountID :: AccountID
+    , owner :: TravelerID
+    , balances :: Map (TimelineID, Asset) Amount
+    , effectDAG :: EffectDAG
+    }
+```
+
+---
+
+# Concurrency Model
+
+## System-Level Concurrency
+
+- Time Bandits executes **multiple programs concurrently**.
+- Each account program acts as a **synchronization point** for resources.
+- Programs interacting with the **same account** contend for resource access.
+- Programs can operate concurrently if they do not depend on the same facts/resources.
+
+## Program-Level Concurrency
+
+- Programs can spawn **child programs** and wait for their results.
+- Programs can split into independent concurrent branches, provided:
+    - Each branch works on a **disjoint fact/resource set**.
+- Programs receive **fact and effect streams** in causal order.
+
+---
+
+# Invocation Model
+
+- Programs **invoke** other programs using an **invocation effect**.
+- Invocations:
+    - Reference **fact snapshots** (what was known at invocation time).
+    - Include proof of **current state** of the caller.
+- Cross-program calls are **asynchronous** — programs receive results via observed facts.
+
+---
+
+# Schema Evolution Rules
+
+| Change | Allowed by Default? |
 |---|---|
-| `Deposit` | Moves resources into a target program. |
-| `Withdraw` | Withdraws resources from a program back to the account. |
-| `Transfer` | Transfers resources to another account program. |
-| `Watch` | Watches for an external deposit into the account program (cross-chain ingress). |
-| `Invoke` | Sends a cross-program call, capturing the response into the account’s inbox. |
-| `ReceiveCallback` | Accepts a callback from a program, appending it to the inbox. |
-| `CustomMessage` | Allows arbitrary structured messages to flow through the account, providing extensibility for higher-level workflows. |
+| Add optional field | - |
+| Add field with default | - |
+| Remove unused field | - |
+| Rename field | ❌ |
+| Change field type | ❌ |
 
-**Invariant:**  
-Actors only communicate by proposing effects that target their own Account Program.  
-All messages to/from programs pass through the Account Program’s **inbox and outbox**.
+Programs can override these defaults via their declared **evolution rules**.
 
 ---
 
-## Simulation Consistency Rule
+# Safe State Definition
 
-All of these rules — causal effect application, resource ownership, account programs as gateways — must hold **in every simulation mode**:
-- In-memory (single process)
-- Multi-process local simulation
-- Geo-distributed simulation
-
-This ensures that causal consistency, replayability, and cross-program interaction behave identically across development, testing, and production deployment.
-
----
-
-## Security and Proof Invariant
-
-Every applied effect, once committed to the log, must:
-- Be accompanied by a proof demonstrating that preconditions held, time map was valid, and the effect was correctly applied.
-- Be verifiable from first principles using only the program’s static code, observed time map, and resource ledger.
-- Be **immutable and content-addressed**, meaning the applied effect’s hash is its permanent identity.
+A program is in a **safe state** if:
+- No pending cross-program calls.
+- No pending resource withdrawals.
+- All external facts referenced in the current effect are fully observed.
+- All concurrent branches have terminated.
 
 ---
 
-## Summary of Key System Invariants
+# Time Model
 
-| Invariant | Description |
-|---|---|
-| Resource Ownership | Every resource has exactly one program owner at all times. |
-| Actor-Program Separation | Actors only interact via account programs. Programs only talk to other programs. |
-| Effect-Only State Changes | All changes (memory, resources, logs) must flow through proven effects. |
-| Per-Resource Logs | Every resource tracks its own causal history, forming a causal DAG. |
-| Causal Consistency | Every effect observes a specific time map; preconditions are rechecked if the time map changes. |
-| Replayability | Replaying all logs reconstructs state exactly. |
-| Proof Completeness | Every applied effect has a proof that can be independently verified. |
-| Simulation Parity | These invariants hold across all simulation modes (in-memory, multi-process, geo-distributed). |
+- Every timeline has its own **Lamport Clock**.
+- Program facts and effects are timestamped using:
+    - Timeline clock (external facts).
+    - Program-local Lamport clock (internal effects).
+- Programs can only advance **after observing facts with non-decreasing timestamps**.
+- Time Bandits ensures that cross-timeline events respect:
+    - External timeline ordering (via fact observation).
+    - Internal causal ordering (via effect DAG).
 
 ---
 
-This system contract reflects the **latest design shift to resource-centric concurrency, account programs, and effect-based messaging**, and supersedes previous assumptions that programs were strictly single-threaded.
+# Replay Model
+
+- Replay reconstructs:
+    - All programs.
+    - All account programs.
+    - All facts.
+    - All effects.
+- Replay requires:
+    - Unified logs for all programs and accounts.
+    - FactLogs from all keepers.
+    - Full effect DAGs for all programs.
+- Replay is **deterministic** — given the same logs, replay always produces the same state.
+
+---
+
+# Sovereignty and Upgrade Control
+
+- Time Travelers fully control:
+    - Whether their programs upgrade schemas.
+    - Whether their programs upgrade logic.
+- Programs can only upgrade if:
+    - They are in a safe state.
+    - The traveler explicitly allows the upgrade.
+- Bandits enforce schema compatibility when accepting new programs.
+
+---
+
+# Simulation Environment
+
+- Time Bandits supports:
+    - In-memory simulations.
+    - Local multi-process simulations.
+    - Geo-distributed simulations.
+- All 3 modes run the exact same program logic, using the same logs and effect pipeline.
+
+---
+
+# Summary
+
+This **system contract** codifies the guarantees that make Time Bandits a reliable foundation for cross-timeline, effect-driven programs:
+
+- Programs are causally consistent.  
+- External facts are provable and logged.  
+- Resources are safely managed via account programs.  
+- Programs remain timeline-agnostic.  
+- Replay is always complete and deterministic.  
+- Programs evolve safely and only with owner consent.  
+- Execution can be verified independently using public logs.

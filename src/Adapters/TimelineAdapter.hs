@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE InstanceSigs #-}
 
 {- |
 Module: Adapters.TimelineAdapter
@@ -82,7 +83,9 @@ import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
 import Core.Common (Hash, EntityHash(..))
-import Core.Types (AppError(..), ProgramErrorType(..))
+import Core.Types (AppError(..))
+import Types.Core (ProgramErrorType(..))
+import Types.EffectTypes (EffectType(..))
 import Core.Timeline (TimelineHash, BlockHeader(..))
 import Core.Effect (Effect(..))
 import Core.Resource (Resource(..))
@@ -107,14 +110,20 @@ data AdapterError
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
--- | Configuration for a timeline adapter
+-- | Configuration for timeline adapters
 data AdapterConfig = AdapterConfig
-  { acDescriptor :: TimelineDescriptor    -- ^ The timeline descriptor
-  , acHttpManager :: Maybe Manager        -- ^ Optional HTTP connection manager
-  , acMaxRetries :: Int                   -- ^ Maximum retries for operations
-  , acRetryDelay :: Int                   -- ^ Delay between retries (milliseconds)
+  { acEndpoints :: [Text]
+  , acManager :: Maybe Manager
+  , acTimeout :: Int
+  , acMaxRetries :: Int
+  , acRetryDelay :: Int
   }
-  deriving stock (Show, Generic)
+  deriving stock (Generic)
+
+-- Custom Show instance to avoid showing Manager
+instance Show AdapterConfig where
+  showsPrec :: Int -> AdapterConfig -> ShowS
+  showsPrec _ config = showString "AdapterConfig { endpoints = " . shows (acEndpoints config) . showString ", ... }"
 
 -- | State for a timeline adapter
 data AdapterState = AdapterState
@@ -133,6 +142,14 @@ data TimelineAdapter = TimelineAdapter
   , taQueryState :: ByteString -> IO (Either AdapterError ByteString)  -- ^ Function to query state
   , taGetLatestHead :: IO (Either AdapterError BlockHeader)  -- ^ Function to get latest head
   }
+
+-- | TimeMap data structure for tracking timeline states
+data TimeMapState = TimeMapState
+  { tmObservedHeads :: Map TimelineHash BlockHeader
+  , tmObservedTimestamps :: Map TimelineHash UTCTime
+  , tmLamportClocks :: Map TimelineHash LamportClock
+  }
+  deriving stock (Show, Eq, Generic)
 
 -- | Create a timeline adapter from a descriptor
 createAdapter :: 
@@ -153,8 +170,9 @@ createAdapter descriptor maybeManager = do
   
   -- Create the adapter configuration
   let config = AdapterConfig
-        { acDescriptor = descriptor
-        , acHttpManager = maybeManager
+        { acEndpoints = []
+        , acManager = maybeManager
+        , acTimeout = 1000
         , acMaxRetries = 3
         , acRetryDelay = 1000
         }
@@ -162,11 +180,10 @@ createAdapter descriptor maybeManager = do
   -- Create the appropriate adapter based on VM type
   case tdVmType descriptor of
     EVM -> createEVMAdapter config initialState
-    Solana -> createSolanaAdapter config initialState
     CosmWasm -> createCosmWasmAdapter config initialState
-    MoveVM -> createMoveAdapter config initialState
-    Native -> createNativeAdapter config initialState
-    MockVM -> createMockAdapter config initialState
+    Move -> createMoveAdapter config initialState
+    WASM -> createNativeAdapter config initialState
+    CustomVM _ -> createMockAdapter config initialState
 
 -- | Create a timeline adapter from a descriptor file
 createAdapterFromFile :: 
@@ -268,14 +285,18 @@ encodeParameters vmType params = case vmType of
     , "params" .= params
     , "id" .= (1 :: Int)
     ]
-  Solana -> pure $ Aeson.encode $ object
+  CustomVM "Solana" -> pure $ Aeson.encode $ object
     [ "jsonrpc" .= ("2.0" :: Text)
-    , "method" .= ("callProgram" :: Text)
+    , "method" .= ("getAccountInfo" :: Text)
     , "params" .= params
     , "id" .= (1 :: Int)
     ]
-  _ -> throw $ ProgramError $ InvalidConfiguration $
-       "Parameter encoding not implemented for VM type: " <> show vmType
+  _ -> pure $ Aeson.encode $ object
+    [ "jsonrpc" .= ("2.0" :: Text)
+    , "method" .= ("generic_call" :: Text)
+    , "params" .= params
+    , "id" .= (1 :: Int)
+    ]
 
 -- | Helper function to decode RPC results
 decodeResult :: 
@@ -419,9 +440,32 @@ mockGetLatestHead config vmType = do
   -- In a real implementation, this would make RPC calls to the blockchain
   -- For now, return a mock block header
   currentTime <- getCurrentTime
+  let timelineId = EntityHash $ Hash $ BS.pack $ vmType ++ "-timeline-id"
   pure $ Right $ BlockHeader
-    { blockHeight = 12345
-    , blockHash = EntityHash $ Hash $ BS.pack $ vmType ++ "-mock-hash"
-    , blockTimestamp = currentTime
-    , blockParentHash = EntityHash $ Hash $ BS.pack $ vmType ++ "-parent-hash"
+    { bhTimeline = timelineId
+    , bhHeight = 12345
+    , bhPrevBlockHash = Nothing
+    , bhMerkleRoot = Hash $ BS.pack $ vmType ++ "-mock-hash"
+    , bhTimestamp = LamportTime 12345
+    }
+
+-- | Helper function to update a TimeMap with a new block header
+updateTimeMap ::
+  (Member (Embed IO) r) =>
+  TimelineHash ->
+  BlockHeader ->
+  TimeMapState ->
+  Sem r TimeMapState
+updateTimeMap timelineId header currentTimeMap = do
+  now <- embed getCurrentTime
+  
+  -- Update the Lamport clock for this timeline
+  let currentClock = Map.findWithDefault (LamportClock 0) timelineId (tmLamportClocks currentTimeMap)
+      newClock = LamportClock (unLamportClock currentClock + 1)
+  
+  -- Create the updated TimeMap
+  pure $ currentTimeMap
+    { tmObservedHeads = Map.insert timelineId header (tmObservedHeads currentTimeMap)
+    , tmObservedTimestamps = Map.insert timelineId now (tmObservedTimestamps currentTimeMap)
+    , tmLamportClocks = Map.insert timelineId newClock (tmLamportClocks currentTimeMap)
     } 

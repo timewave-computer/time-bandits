@@ -1,45 +1,69 @@
 -- | Core module that re-exports all Core submodules in an organized way
 module Core 
-  ( -- * Fundamental Types
-    -- | Common primitive types used throughout the codebase
-    module Core.Common
+  ( -- * Fundamental Types from Core.Common
+    EntityHash(..)
+  , Hash(..)
+  , ActorHash
+  , ResourceHash
+  , TimelineHash
+  , LamportTime(..)
+  , PubKey(..)
+  , PrivKey(..)
+  , Signature(..)
+  , SignatureError(..)
+  , VerificationError(..)
+  , AssetType(..)
+  , AssetAmount(..)
+  , Asset(..)
+  , AddressType(..)
+  , Core.Common.Address(..)
+  , SimulationMode(..)
+  , computeHash
+  , computeSha256
+  , generateEntityHash
+  , Core.Common.Actor
     
-    -- * Resource Management
-  , module Core.Resource
-  , module Core.ResourceId
-  , module Core.ResourceLedger
+    -- * Resource Management from Core.Resource and Core.ResourceId
+  , Core.Resource.Resource(..)
+  , Core.ResourceId.ResourceId
+  , ResourceInfo(..)
+  , ResourceCapability(..)
+  , createResource
     
-    -- * Effect System
-    -- | The unified effect model for all operations
-  , module Core.Effect
-    
-    -- * Polysemy Effects
-    -- | Polysemy-based effect interfaces for composable operations
-  , module Core.Effects
-    
-    -- * Timeline Management
-  , module Core.Timeline
-  , module Core.TimelineId
-  , module Core.TimelineDescriptor
-  , module Core.TimeMap
+    -- * Effect System from Core.Effect
+  , Core.Effect.Effect(..)
+  , Core.Effect.EffectId
+  , EffectStatus(..)
+  , EffectResult(..)
+  , EffectDAG(..)
+  , EffectNode(..)
+  , EffectMetadata(..)
+  , Precondition(..)
+  , PreconditionType(..)
+  , Core.Effect.FactSnapshot(..)
+  , FactSource(..)
+  , ObservationMethod(..)
+  , createEffect
+  , Core.Effect.getEffectId
+  , validateEffect
+  , getEffectPreconditions
+  
+    -- * Timeline Management from Core.Timeline and Core.TimelineId
+  , Core.Timeline.Timeline(..)
+  , Core.TimelineId.TimelineId
+  , BlockHeader(..)
+  , createTimeline
+  
+  -- * Execution Log from Core.ExecutionLog
+  , Core.ExecutionLog.LogEntry(..)
     
     -- * Actor and Program Identity
-  , module Core.ActorId
-  , module Core.ProgramId
-  , module Core.AccountProgram
-    
-    -- * Core Types
-    -- | Additional type definitions from Core.Types
-    -- (primitives are from Core.Common)
-  , module Core.Types
-    
-    -- * Utilities
-  , module Core.Serialize
-  , module Core.Error
-  , module Core.ExecutionLog
+  , ActorId
+  , ProgramId
+  , AccountProgram(..)
   ) where
 
--- Re-export all Core submodules
+-- Import all Core submodules
 import Core.AccountProgram
 import Core.ActorId
 import Core.Common

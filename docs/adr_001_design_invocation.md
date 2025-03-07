@@ -1,202 +1,217 @@
-# ADR-001: Invocation Model
+# ADR-001: Invocation Model (Updated)
+
 
 ## Status
 
-Accepted
+**Accepted - Updated 2025-03-07**
+
 
 ## Context
 
-The Time Bandits system needs a clear model for how actors trigger program execution, how programs communicate with each other, and how external facts (like cross-chain deposits) enter the system. We need to establish a unified, causal, auditable invocation flow.
+The Time Bandits system requires a **formal invocation model** to describe:
+
+- How actors (time travelers) trigger program execution.
+- How programs communicate with each other.
+- How external facts (like cross-chain deposits) enter the system.
+- How responses flow back to actors after a program completes an action.
+
+This invocation model must:
+- Maintain **strong causal traceability**.
+- Be fully **auditable and replayable**.
+- Be **timeline-agnostic** (work across heterogeneous chains).
+- Enforce **separation between actors and programs** — programs should never directly trust or communicate with off-chain actors.
+- Integrate with the **account program** model, where each actor owns a **single gateway program** that intermediates all asset and message flows.
+
 
 ## Decision
 
-We will implement an invocation model based on account programs as message gateways with the following core principle:
+### Core Principle: Account Programs as Invocation Gateways
 
-**Actors (time travelers) never send messages directly to programs.**  
-Instead, each actor owns exactly one account program, which acts as:
+- **Actors (time travelers) do not directly communicate with programs.**
+- Each traveler owns exactly **one account program**, which:
+    - Holds all assets for that traveler across timelines.
+    - Mediates all **actor-initiated messages**.
+    - Receives all **program responses** intended for the traveler.
+    - Records all inbound and outbound messages in a **per-resource effect log**.
+- Programs only trust messages from **other programs** (never directly from actors), and rely on **account programs** for actor-to-program and program-to-actor communication.
 
-- The only gateway for actor-initiated actions.
-- The recipient of all responses intended for the actor.
-- The holder of all the actor's assets within the system.
 
-### Invocation Flow Overview
+## Invocation Flow Overview
 
-#### Actor Initiates
+### 1. Actor Initiates Action
 
-1. Actor signs a message describing the desired action (deposit, call, etc.).
-2. Message is submitted to the Time Bandits network.
-3. The actor's account program applies this message as an effect to itself.
+- Traveler signs a message proposing an action (deposit, withdrawal, invocation, observation).
+- The message is submitted to the Time Bandits network.
+- The message is applied as an **effect** to the actor's **account program**.
+- The account program records the message in its **outbox**, causally linking it to prior effects.
 
-#### Account Program Handles Message
 
-- If the message is a deposit, the account program:
-    - Transfers assets to the target program.
-    - Records the transfer in the per-resource log.
+### 2. Account Program Dispatches Message
 
-- If the message is an invocation, the account program:
-    - Packages the call into a message sent to the target program.
-    - Records the outgoing call in its outbox.
+- The account program evaluates the message type:
+    - **Deposit:** Transfers assets to the target program.
+    - **Withdrawal:** Pulls assets back from a program.
+    - **Invocation:** Sends a cross-program invocation message.
+- Each action is recorded in the account program’s **per-resource effect log**.
 
-- If the message is a withdrawal, the account program:
-    - Pulls assets back from the target program (if allowed).
-    - Records the withdrawal in the per-resource log.
 
-#### Program Applies Incoming Message
+### 3. Target Program Receives Invocation
 
-Programs receive incoming messages as proposed effects.
-These effects:
-- Reference the calling account program.
-- Specify the desired function call and arguments.
-- Optionally declare a callback — indicating where to return the result.
+- The target program receives the invocation as a proposed **effect**.
+- The effect includes:
+    - The calling account program’s ID.
+    - The target function (entrypoint).
+    - Arguments.
+    - Time map snapshot (what facts were known at invocation time).
 
-If the program chooses to process the message, it:
-- Applies the effect to its state.
-- Records the effect in the per-resource logs.
-- Optionally generates a response message to the caller's account program.
+- The program applies the effect and logs it into its **own effect log**, causally linking it to prior effects.
 
-#### Program Sends Callback
 
-Programs never send callbacks directly to actors.
-Instead, callbacks are effects applied to the caller's account program.
+### 4. Program Generates Optional Response
 
-- Each callback is recorded in the receiving account program's inbox.
-- This inbox is part of the account program's causal log.
-- The traveler can query their account program to check for responses.
+- If the program produces a result for the traveler, it sends a **SendCallback** effect to the originating account program.
+- This callback is applied to the account program’s **inbox**, causally linking it to the prior invocation.
 
-### Message Types
+
+### 5. Traveler Retrieves Response
+
+- Travelers poll their account program to read their **inbox**, retrieving all received callbacks in causal order.
+- This completes the invocation lifecycle.
+
+
+## Message Types
 
 | Message Type | Origin | Destination | Purpose |
-|-------------|--------|-------------|---------|
-| Deposit | Traveler | Account Program | Move assets into a program. |
-| Withdraw | Traveler | Account Program | Retrieve assets back into account. |
-| Invoke | Traveler | Account Program | Call a program function. |
-| Transfer | Account Program | Program | Move assets to a program. |
-| SendCallback | Program | Account Program | Return result to actor. |
-| ReceiveCallback | Account Program | Traveler (via query) | Actor retrieves program responses. |
-| Watch | Account Program | Timeline | Watch for external deposit. |
+|---|---|---|---|
+| Deposit | Traveler | Account Program | Transfer assets into a program |
+| Withdraw | Traveler | Account Program | Retrieve assets from a program |
+| Invoke | Traveler | Account Program | Call a program function |
+| Transfer | Account Program | Program | Transfer assets to a program |
+| SendCallback | Program | Account Program | Return results to traveler |
+| ReceiveCallback | Account Program | Traveler (via inbox query) | Retrieve program responses |
+| Watch | Account Program | Timeline Keeper | Observe external deposit or event |
 
-### Inbox/Outbox Structure
 
-Each account program maintains:
+## Account Program State
+
+Each account program tracks:
 
 ```haskell
-data AccountState = AccountState
-    { balances :: Map ResourceId Integer
-    , inbox    :: [ReceivedMessage]
-    , outbox   :: [SentMessage]
+data AccountProgramState = AccountProgramState
+    { balances :: Map (TimelineID, Asset) Amount
+    , inbox :: [ReceivedMessage]
+    , outbox :: [SentMessage]
+    , effectDAG :: EffectDAG
     }
 ```
 
+- **Balances:** Current asset holdings across all timelines.
 - **Inbox:** Messages received from programs (e.g., callbacks).
-- **Outbox:** Messages sent to programs (e.g., deposits, calls).
+- **Outbox:** Messages sent to programs.
+- **EffectDAG:** Full causal history of all applied effects.
 
-Both are part of the account program's causal log, meaning they are auditable, replayable, and tied to specific effects.
 
-## Consequences
+## Security and Provenance Guarantees
 
-### Security Model
+This invocation model guarantees:
 
-This invocation flow enforces:
+- Programs only talk to programs — programs never need to trust off-chain travelers directly.  
+- All actor actions are signed and logged via account program effects.  
+- Programs can verify the **full provenance** of any incoming message by querying the sender’s account program log.  
+- All communication produces permanent, auditable log entries.
 
-- Programs only talk to programs (never actors directly).
-- All actor actions are signed and applied as account program effects.
-- Account programs can enforce additional policy (multi-sig, rate limits, etc.) if desired.
-- Every message is causally linked and replayable.
-- Programs can verify the provenance of any incoming message by inspecting the account program's log.
 
-### Actor-Program Separation Invariant
+## Actor-Program Separation Invariant
 
-No program ever interacts with an actor directly.
-All program-to-actor and actor-to-program communication flows through the account program. This ensures:
+| Communication Type | Mediated By |
+|---|---|
+| Actor to Program | Account Program Outbox |
+| Program to Actor | Account Program Inbox |
+| Program to Program | Direct (via invocation effects) |
 
-- Complete causal traceability.
-- Simplified security model (programs only authenticate other programs, never off-chain keys).
-- Unified audit log (the account program's log is a complete record of all actor actions).
 
-### Effect-Only Guarantee
+## External Consistency via Time Map Snapshots
 
-All communication (deposits, calls, callbacks) is mediated by applied effects. This means:
+- Each cross-program message references a **time map snapshot**, proving which external facts were known at the time the message was generated.
+- If external facts change before an effect applies, the preconditions are re-validated before the effect is accepted.
 
-- Each communication produces a log entry.
-- Each entry is provably linked to its causal predecessor.
-- Each entry is accompanied by a proof of correct application.
 
-### Time Map Consistency
+## Examples
 
-Each cross-program message references a specific time map snapshot. This ensures:
+### Deposit Flow
 
-- External facts (like balances or external proofs) were observed at a known point in time.
-- If external facts change before the effect applies, the preconditions are re-validated.
-
-## Implementation
-
-### Example Message Lifecycle
-
-#### Deposit Flow
-
-`Traveler -> AccountProgram -> TargetProgram`
+**Traveler -> AccountProgram -> TargetProgram**
 
 1. Traveler submits:
 
-```yaml
-message:
-    type: deposit
-    resource: USDC
-    amount: 100
-    to: TradeProgram
+```toml
+type = "deposit"
+resource = "USDC"
+amount = 100
+destination = "TradeProgram"
 ```
 
 2. Account program creates a `Transfer` effect, moving USDC to TradeProgram.
-3. TradeProgram applies the effect and updates its internal balances.
+3. TradeProgram applies the effect, updating its internal balances.
 
-#### Cross-Program Call Flow
 
-`Traveler -> AccountProgram -> TargetProgram -> AccountProgram -> Traveler`
+### Cross-Program Invocation
+
+**Traveler -> AccountProgram -> TargetProgram -> AccountProgram -> Traveler**
 
 1. Traveler submits:
 
-```yaml
-message:
-    type: invoke
-    targetProgram: SettlementProgram
-    entrypoint: finalizeTrade
-    arguments: ["order123"]
+```toml
+type = "invoke"
+target = "SettlementProgram"
+entrypoint = "finalizeTrade"
+arguments = ["order123"]
 ```
 
 2. Account program packages this into:
-```yaml
-effect:
-    type: Invoke
-    targetProgram: SettlementProgram
-    entrypoint: finalizeTrade
-    arguments: ["order123"]
+
+```haskell
+Effect.Invoke
+    { targetProgram = "SettlementProgram"
+    , entrypoint = "finalizeTrade"
+    , arguments = ["order123"]
+    , observedFacts = [...]
+    }
 ```
 
-3. SettlementProgram applies the effect and performs some work.
-4. SettlementProgram sends:
+3. SettlementProgram applies the effect.
+4. SettlementProgram generates a result:
 
-```yaml
-effect:
-    type: SendCallback
-    to: account::actor123
-    payload: { result: "Trade Settled" }
+```toml
+type = "callback"
+target = "actor123"
+payload = { result = "Trade Settled" }
 ```
 
-5. Account program appends the callback to its inbox.
+5. Account program logs the callback in its inbox.
 
-#### Querying Inbox (Traveler View)
 
-To retrieve program responses, the traveler queries:
+### Traveler Polling Inbox
 
-```bash
-GET /account/{actor}/inbox
+Traveler queries:
+
+```http
+GET /account/{travelerID}/inbox
 ```
 
-This returns all received callbacks, in causal order.
+Response:
 
-### Summary Flow Diagram
-
+```json
+[
+    { "source": "SettlementProgram", "payload": { "result": "Trade Settled" } }
+]
 ```
+
+
+## Summary Flow Diagram
+
+## Summary Flow Diagram
+
 +-----------------+
 | Time Traveler   |
 | (proposes)      |
@@ -224,10 +239,36 @@ This returns all received callbacks, in causal order.
 | Time Traveler   |
 | (polls inbox)   |
 +-----------------+
-```
 
-This invocation model guarantees:
 
-- Full causal traceability — every message has a clear predecessor and time map reference.
-- Tamper resistance — messages are part of the immutable effect log.
-- Flexible policy enforcement — account programs can apply arbitrary rules (multi-sig, delegation, etc.) on outbound messages.
+
+## Replay and Auditability
+
+- Every message and response is recorded as a **causal effect** in an **append-only log**.
+- Each effect has:
+    - Full causal ancestry.
+    - Cryptographic signature (proving origin).
+    - Content hash (proving integrity).
+- Replay re-applies effects in order, guaranteeing deterministic reconstruction of program state.
+
+
+## Relationship to Other Parts of the System
+
+| Component | Role in Invocation Model |
+|---|---|
+| Account Program | Gatekeeper and message queue for each traveler |
+| Effect Pipeline | Processes all proposed effects |
+| Resource Logs | Record every effect per resource |
+| Time Map | Provides external consistency for observed facts |
+| Fact Logs | Track external events that trigger actor messages (e.g., deposits) |
+| Unified Log | Combined view of all applied effects, facts, and events |
+
+
+## Benefits
+
+- Fully auditable and replayable.  
+- No direct actor-program trust.  
+- Clear separation of concerns (actors only control account programs).  
+- Built-in support for external consistency (time map snapshots).  
+- Actor policies (rate limits, multi-sig) enforced at account level.  
+

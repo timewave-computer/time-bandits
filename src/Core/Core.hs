@@ -48,9 +48,9 @@ module Core.Core (
   PrivKey(..),
   Signature(..),
   ActorType(..),
-  Actor(..),
+  ActorInfo(..),
   SystemConfig(..),
-  Resource(..),
+  ResourceInfo(..),
   ResourceCapability(..),
   LogEntry(..),
   Log(..),
@@ -69,7 +69,6 @@ module Core.Core (
   AuthenticatedMessage(..),
   UnifiedResourceTransaction(..),
   TransactionValidationResult(..),
-  signMessage,
   
   -- * Type Classes
   Event (..),
@@ -127,7 +126,7 @@ class (Serialize e) => Event e where
 class (Serialize m) => Message m where
   messageHash :: m -> Hash
   messageHash = computeMessageHash
-  messageSender :: m -> Actor
+  messageSender :: m -> ActorInfo
   messageDestination :: m -> Maybe ActorHash
   messageSignature :: m -> Signature
   messageContent :: m -> ByteString

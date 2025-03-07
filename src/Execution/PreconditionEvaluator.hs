@@ -8,6 +8,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 
 {- |
 Module: Execution.PreconditionEvaluator
@@ -91,7 +93,12 @@ data TimelineAdapter = TimelineAdapter
   , queryBalance :: ProgramId -> ResourceId -> IO Integer
   , verifyProof :: BS.ByteString -> IO Bool
   }
-  deriving (Show, Generic)
+  deriving (Generic)
+
+-- Custom Show instance using a proper instance declaration
+instance Show TimelineAdapter where
+  showsPrec :: Int -> TimelineAdapter -> ShowS
+  showsPrec _ adapter = showString "TimelineAdapter { timelineId = " . shows (timelineId adapter) . showString " }"
 
 -- | Create a new precondition evaluator
 createEvaluator :: [TimelineAdapter] -> PreconditionEvaluator

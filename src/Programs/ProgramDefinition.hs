@@ -162,7 +162,7 @@ validateMemoryContract contract = do
   -- Check step requirements refer to valid slots
   let slotSet = Map.fromList $ zip slotNames [0..]
   let allReqs = concatMap snd $ Map.toList $ stepRequirements contract
-  forM_ allReqs $ \req -> 
+  programForM_ allReqs $ \req -> 
     unless (isJust $ Map.lookup (requiredSlot req) slotSet)
       (Left $ InvalidDefinition $ "Step requirement refers to undefined slot: " <> show (requiredSlot req))
   
@@ -222,5 +222,5 @@ getFunctionRequirements :: Text -> ProgramDefinition -> Result [ResourceRequirem
 getFunctionRequirements _ _ = pure []
 
 -- Helper function for validation loops
-forM_ :: Monad m => [a] -> (a -> m ()) -> m ()
-forM_ xs f = sequence_ (map f xs) 
+programForM_ :: Monad m => [a] -> (a -> m ()) -> m ()
+programForM_ xs f = sequence_ (map f xs) 

@@ -1,206 +1,250 @@
-# ADR-002: Time Model
+# ADR-002: Time Model (Updated)
+
 
 ## Status
 
-Accepted
+**Accepted - Updated 2025-03-07**
+
 
 ## Context
 
-Time Bandits programs operate across multiple independent timelines, each of which corresponds to a blockchain, rollup, or distributed ledger. These timelines advance asynchronously and independently, which introduces the core challenge: how to define a single, causally consistent view of time across all timelines involved in a program's execution.
+Time Bandits programs operate across **multiple independent timelines** — each corresponding to a blockchain, rollup, or distributed ledger. Each timeline advances **independently and asynchronously**, with its own:
+
+- Consensus process.
+- Block height and timestamps.
+- Inclusion and proof mechanisms.
+- Finality guarantees.
+
+This makes it essential for Time Bandits to maintain **a unified and causally consistent view of time** across all timelines participating in a program's execution. This view must:
+- **Capture external observations from each timeline.**
+- **Provide replayable proofs of external facts.**
+- **Preserve internal causal ordering between program effects.**
+
 
 ## Decision
 
-We will implement a time model consisting of:
-- The Time Map, a shared, observable snapshot of external time.
-- The Observed Time Map, recorded by every effect when proposed.
-- The Causal Clock, which tracks not only external timeline heights, but also the internal logical order of applied effects.
-- The Precondition Horizon, which defines the safe window for effect preconditions based on timeline advancement.
+### Core Concept: The **Time Map**
 
-### Key Concept: The Time Map
+The **Time Map** is the canonical record of the **latest observed state across all timelines**. It serves as the **bridge between internal program time and external timeline time**.
 
-The Time Map is the authoritative record of the latest known state of all observed timelines. It is maintained collectively by the Time Keepers, who are responsible for:
-- Observing each supported timeline (Ethereum, Celestia, etc.).
-- Recording:
-    - The latest block height.
-    - The latest block hash.
-    - The block's timestamp.
-- Combining these into a content-addressed Time Map.
 
-### Example Time Map
+## Time Map Components
 
-```yaml
-time_map:
-    Ethereum:
-        height: 123456
-        hash: "0xabc123"
-        timestamp: 1710768000
-    Celestia:
-        height: 98765
-        hash: "0xdef456"
-        timestamp: 1710768005
+| Field | Description |
+|---|---|
+| Timeline ID | Ethereum, Solana, Celestia, etc. |
+| Height | Current block height or slot number. |
+| Hash | Block hash or equivalent commitment. |
+| Timestamp | Block timestamp (if provided by the chain). |
+
+
+## Example Time Map
+
+```toml
+[time_map.Ethereum]
+height = 123456
+hash = "0xabc123"
+timestamp = 1710768000
+
+[time_map.Celestia]
+height = 98765
+hash = "0xdef456"
+timestamp = 1710768005
 ```
 
-### Observed Time Map (Per Effect)
 
-Every effect proposed by a Time Traveler or by a program invoking another program records the exact time map snapshot it observed when it was proposed.
+## Observed Time Map (Per Effect)
 
-This snapshot becomes part of the effect's proof, ensuring:
+Every proposed effect — whether originating from a time traveler, account program, or program-to-program invocation — records the **time map snapshot** that was observed when the effect was proposed.
 
-- The effect depended on specific external facts (balances, proofs, etc.).
-- The preconditions were originally validated against that snapshot.
+This **Observed Time Map** is **part of the effect proof**, ensuring that:
 
-### Time Map and Causal Ordering
+- Each effect is tied to **a specific set of external facts**.
+- Each precondition check (e.g., balance proofs) is tied to the **exact external state** at the time of proposal.
+- Replay and audit can reconstruct **the same snapshot** to check for validity.
 
-The Time Map acts as the causal boundary between:
 
-- Internal program memory, which follows strict causal order between effects applied to the same program.
-- External facts from timelines, which advance independently, and whose latest state must be observed before proposing a valid effect.
+## Time Map in the Effect Pipeline
 
-Rule - Every applied effect must be provably linked to:
+| Stage | Role of Time Map |
+|---|---|
+| Proposal | Proposing actor queries latest Time Map and embeds it in effect proposal. |
+| Application | Effect is re-validated against current Time Map before application. |
+| Replay | Replay reconstructs each observed Time Map to re-run all precondition checks. |
 
-- Its immediate causal parent in the resource log.
-- The time map snapshot it observed at proposal time.
 
-This dual causality ensures that:
+## Internal Logical Time: Lamport Clock
 
-- Effects obey program-level causality (internal sequencing of state updates).
-- Effects obey timeline-level causality (external facts were correct at the time of proposal).
+Each program maintains an **internal Lamport clock**, which tracks:
 
-### Precondition Horizon
+- Total causal ordering of all effects applied within the program.
+- Monotonic sequence number for each applied effect.
+- Links to the **per-resource effect log**.
 
-When applying an effect, the system compares:
+This ensures internal time is totally ordered **within each program** — even if external timelines advance asynchronously.
 
-- The time map the effect observed.
-- The current time map maintained by Time Keepers.
 
-If the time map advanced (new blocks were observed), the system must:
+## Precondition Horizon
 
-- Revalidate all preconditions that depended on external facts.
-- If the preconditions still hold, the effect can apply.
-- If the preconditions fail under the new time map, the effect is rejected.
+Every effect records:
+- The **observed time map** (snapshot at proposal time).
+- The external facts it depended on (balance proofs, inclusion proofs).
 
-This ensures effects do not rely on stale external facts, protecting against:
+At the time of application, the **current time map** is compared to the observed one:
 
-- Reorgs.
-- Withdrawals that already happened.
-- Changes in external balances.
+- If the time map advanced (new blocks observed), external preconditions are **revalidated**.
+- If preconditions still hold, the effect applies.
+- If preconditions fail under the new time map, the effect is rejected.
 
-### Lamport Clock and Internal Logical Time
+This protects programs against:
 
-The Time Map tracks external (real-world) time, but programs also have an internal Lamport clock that tracks:
+- Reorgs.  
+- Double-spends (withdrawals already processed).  
+- External state drift (balance changes, price changes).  
 
-- The causal order of all effects applied within each program.
 
-The Lamport clock advances every time an effect applies, forming the internal logical time for the program. This internal clock:
+## Time Map Hashing
 
-- Orders internal state updates.
-- Provides a monotonic sequence number for each applied effect.
-- Links directly into the per-resource logs.
-
-### Time Map Hashing and Immutability
-
-Each Time Map is content-addressed, meaning:
+Each Time Map is **content-addressed**:
 
 ```haskell
-timeMapHash = hash(latest height, hash, timestamp of all observed timelines)
+timeMapHash = hash(all timelines’ heights, hashes, timestamps)
 ```
 
 This hash is:
 
-- Stored in each applied effect's log entry.
-- Included in each effect's proof.
-- Passed into any proof-of-correct-execution.
+- Stored directly in every applied effect’s log entry.
+- Included in every effect proof.
+- Passed into proof-of-correct-execution for zk generation.
 
-This ensures that any effect can be independently verified as:
+This guarantees:
 
-- Based on a correct, observable external state.
-- Consistent with all other effects applied to the same program and resource.
+- Effects are cryptographically linked to external state.
+- Time consistency is independently verifiable.
+- Effects cannot retroactively depend on altered facts.
 
-## Consequences
 
-### Time Map Consistency Rule
+## Time Map and the Unified Log
 
-Whenever an effect is proposed, the proposing actor (time traveler or program) must observe the current time map first.
+Every applied effect in the **unified log** includes:
 
-This means: 
-- No effect can be proposed without knowing the latest external state.
-- Effects that rely on old time maps are invalid, unless explicitly allowed by the program logic (e.g., archival queries).
+- Observed Time Map.
+- Time Map hash.
+- Parent effect hash (causal link).
+- Logical timestamp (Lamport clock tick).
 
-### Program Replay and Time Reconstruction
+This ensures the unified log records:
 
-When a program's state is reconstructed (e.g., for auditing or proving execution), the replay logic must:
+- **Causal history of effects.**
+- **External timeline observations at each step.**
+- **Causal consistency with both internal and external time.**
 
-- Reconstruct the full sequence of applied effects by following per-resource logs.
-- Reconstruct the time map snapshot observed at each step.
-- Re-run precondition checks against the observed time map (if required for audit).
 
-This ensures:
+## Replay and Time Reconstruction
 
-- Programs can be proven correct post hoc, even if the program state is deleted and only the logs remain.
-- Time Bandits programs are fully replayable from first principles.
+Replay must reconstruct:
 
-### External Observations and Watches
+- Full sequence of applied effects from the unified log.  
+- Exact time map snapshots that were observed at proposal time.  
+- Precondition checks against reconstructed time maps.  
 
-The watch effect (e.g., observing a cross-chain deposit) works by:
+This makes Time Bandits **fully replayable and auditable from first principles**, even if no live blockchain connection exists during replay.
 
-- Querying the current time map for the target timeline.
-- Submitting a proposed effect referencing that time map.
-- When the effect applies, re-checking the current time map.
 
-Generating a proof that the deposit existed at both proposal and application time.
+## Watches and Observations
 
-## Implementation
+The **watch primitive** (e.g., "wait for a deposit") works by:
 
-### Summary: What Each Effect Carries
+1. Querying the current time map.
+2. Proposing an effect that **observes** the desired event at a known block height.
+3. Validating that the event still exists at effect application time.
 
-| Field             | Purpose                                                       |
-|-------------------|---------------------------------------------------------------|
-| Observed Time Map | Declares external facts known at proposal time.               |
-| Time Map Hash     | Commit to specific external snapshot.                         |
-| Parent Log Hash   | Commit to previous effect (causal parent).                    |
-| Lamport Clock     | Monotonic internal clock within the program.                  |
-| Proof             | Demonstrates valid state transition based on the above.       |
+This provides:
 
-### Time and Simulation Consistency
+- Causal consistency between observation and program state.  
+- Replayable proof that the observation was valid.  
+- Defense against reorg-based ambiguity.  
 
-This entire time model applies consistently across:
 
-- In-memory simulation.
-- Multi-process local simulation.
-- Geo-distributed deployment.
+## Summary - What Each Effect Carries
 
-In each case, the Time Keepers enforce a single consistent Time Map API:
+| Field | Purpose |
+|---|---|
+| Observed Time Map | Declares external state known at proposal time. |
+| Time Map Hash | Commit to specific external snapshot. |
+| Parent Effect Hash | Causal predecessor. |
+| Lamport Clock | Internal ordering. |
+| Proof | Proves valid state transition given observed facts. |
 
-- Fetch latest time map.
-- Propose effect referencing current time map.
-- Apply effect after validating against current time map.
 
-### Example Time Map Handling in Effect Application
+## Cross-Timeline Consistency
 
-1. Traveler submits a deposit effect via their account program.
-2. Effect references time map hash T123.
-3. Time Bandit sees time map has advanced to T125.
-4. Before applying, Bandit:
-  - Fetches new balances using T125.
-  - Re-validates deposit preconditions (correct balances, correct proofs).
-  - If preconditions hold under T125, apply the effect.
-  - If preconditions fail under T125, reject the effect.
+The Time Map serves as the **global clock boundary** across all timelines:
 
-### Summary Invariants
+- Internal causal order (Lamport clock) applies within programs.
+- External timeline order (Time Map snapshots) applies across programs and timelines.
+- Cross-timeline consistency is ensured by:
+    - Observing facts via Time Keepers.
+    - Embedding observed facts into effects.
+    - Linking effects to the observed Time Map.
 
-| Invariant | Description |
-|-----------|-------------|
-| Time Map Observation | Every proposed effect references a specific time map. |
-| Time Map Causality | Every applied effect records its time map hash. |
-| Time Map Replay | Replaying a program must reconstruct every time map observed. |
-| Time Map Hashing | Time maps are content-addressed. |
-| Precondition Horizon | Effects are re-validated if the time map advances before they apply. |
 
-### Summary
+## Time in Simulation and Production
 
-Time Bandits time handling ensures: 
-- Programs operate against a single causal snapshot of external reality.
-- All external dependencies are fully recorded and proven.
-- Programs are replayable with time map reconstruction.
-- Time is handled uniformly across all simulation and deployment modes.
-- Precondition checks are always anchored to observed reality.
+This model applies equally to:
+
+| Mode | Time Source |
+|---|---|
+| In-Memory Simulation | Synthetic Time Map generated by controller. |
+| Multi-Process Local | Each process queries local Time Keeper for Time Map. |
+| Geo-Distributed | Each actor queries remote Time Keeper for Time Map. |
+
+Everywhere, the **Time Map API** is:
+
+```haskell
+getLatestTimeMap :: TimelineID -> IO TimeMap
+observeFact :: FactQuery -> IO (ObservedFact, TimeMap)
+```
+
+
+## Example Time Map Evolution Flow
+
+1. Traveler proposes effect at block 100.
+    - Observed Time Map includes block 100 hash.
+    - Balance proof at block 100.
+2. By the time the effect applies, block 102 is observed.
+    - Precondition check:
+        - Re-fetch balance at block 102.
+        - Check if balance still meets preconditions.
+        - Check inclusion proof is still valid in canonical chain.
+    - If valid, apply.
+    - If invalid, reject.
+
+
+## Time Map Consistency Invariants
+
+- Every effect carries exactly **one observed time map**.  
+- Every applied effect records the **time map hash**.  
+- No effect can apply unless preconditions hold against the **current time map**.  
+- Every fact and observation passes through Time Keepers — no direct timeline RPC in programs.  
+- Time Maps are **content-addressed and signed**.
+
+
+## Benefits
+
+- Works across any blockchain (timeline-agnostic).  
+- Replayable even with no live blockchain access.  
+- Handles reorgs gracefully.  
+- No program ever queries timelines directly.  
+- Fully auditable causal link between program state and external reality.  
+- Compatible with zk proof generation.
+
+
+This time model ensures:
+
+- **Internal causal consistency.**
+- **External factual consistency.**
+- **Replayable proofs of all observations.**
+- **Auditability across program boundaries.**
+
+It is **foundational** to the Time Bandits architecture and is required for secure, auditable, cross-timeline programs.

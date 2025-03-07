@@ -92,20 +92,6 @@ module Core.Types (
   UnifiedResourceTransaction (..),
   TransactionValidationResult (..),
 
-  -- * Fact Snapshot Types
-  FactSnapshot (..),
-  FactId (..),
-  FactValue (..),
-  ObservationProof (..),
-  ObservedFact (..),
-  EffectId (..),
-
-  -- * TimeMapId Type
-  TimeMapId,
-
-  -- * New Functions
-  emptyFactSnapshot,
-
   -- * Re-exported Effect Types from Types modules
   EffectId(..)
   , FactId(..)
@@ -119,9 +105,6 @@ module Core.Types (
   , EffectPayload
   , Guard
   , GuardedEffect
-
-  -- Re-export everything from Types.Core for backward compatibility
-  , module Types.Core
 ) where
 
 import Data.ByteString (ByteString)
@@ -129,6 +112,8 @@ import Data.Time.Clock (UTCTime)
 import Data.String (IsString)
 import qualified Data.ByteString as BS
 import Data.Text.Encoding (encodeUtf8, decodeUtf8)
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text as T
 
 -- For instances
 import Data.Map.Strict (Map)
@@ -153,25 +138,10 @@ import Core.Common (
   )
 
 -- Re-export types from Types modules
-import Types.Core
+import Types.Core (EffectId(..), FactId(..), FactValue(..), ObservationProof(..), ObservedFact(..), FactSnapshot(..), TimeMapId(..), emptyFactSnapshot)
 import Types.Effect (Effect)
 import Types.EffectPayload (EffectPayload)
 import Types.Guard (Guard, GuardedEffect)
-
--- | Instance for serializing UTCTime
-instance S.Serialize UTCTime where
-  put (UTCTime day time) = do
-    S.put (toModifiedJulianDay day)
-    S.put (realToFrac time :: Double)
-  get = do
-    day <- fmap ModifiedJulianDay (S.get :: S.Get Integer)
-    time <- fmap (realToFrac :: Double -> DiffTime) (S.get :: S.Get Double)
-    pure $ UTCTime day time
-
--- | Instance for serializing Text
-instance S.Serialize Text where
-  put = S.put . encodeUtf8
-  get = decodeUtf8 <$> S.get
 
 -- | Represents an actor in the system.
 data ActorType = TimeTraveler | Validator | Observer
