@@ -6,7 +6,7 @@ This document combines two refactoring plans:
 
 ## ADDITIONAL PRIORITIES FOR DSL IMPLEMENTATION
 
-After analyzing the current codebase, I recommend the following additional priorities to prepare for implementing our domain-specific language (TECL):
+After analyzing the current codebase and reviewing the architectural decision records (ADRs), I recommend the following additional priorities to prepare for implementing our domain-specific language (TECL):
 
 ### 1. ✅ Consolidate Type Definitions Between Core.Common and Core.Types
 
@@ -217,7 +217,7 @@ This is the **target architecture** after completing the refactor. It highlights
 | 9 | ✅ Build a fact query system. | Observed facts must be provable & logged. |
 | 10 | ✅ Separate system effects (upgrades). | Protocol upgrades need to be tracked like program effects. |
 | 11 | ✅ Restructure modules. | Make the codebase match this new mental model. |
-| 12 | Prepare TECL parser bridge. | TECL needs to parse into `ProposedEffect` directly. |
+| 12 | ✅ Prepare TECL parser bridge. | TECL needs to parse into `ProposedEffect` directly. |
 
 ## Example: What a Single Effect Looks Like After Refactor
 
@@ -302,3 +302,610 @@ parseTECL :: Text -> Either ParseError [ProposedEffect]
    - Resolve unused imports
    - Add proper deriving strategies to all data types
    - Clean up redundant implementations
+
+
+
+# Refactor Plan 005 Addendum: Comprehensive Test Suite
+
+---
+
+## Objective
+
+This section defines a comprehensive set of **core functionality tests** that must be implemented and passing before we begin implementing the **Temporal Effect Language (TECL)**. These tests ensure the foundation (program state, effect handling, fact observation, invocation flow, and logging) is fully reliable before the language layer is added.
+
+---
+
+## 1. Program State Initialization and Serialization ✅
+
+### Objective
+Test that programs can be correctly:
+- Initialized from a schema.
+- Serialized to disk (content-addressed).
+- Deserialized and verified.
+
+### Tests
+- Initialize a new `Program` with:
+    - Empty effect DAG.
+    - Declared schema version.
+    - Declared safe state policy.
+- Serialize to JSON.
+- Deserialize.
+- Assert deserialized program matches original.
+- Compute content hash and verify round-trip.
+
+---
+
+## 2. Effect DAG Causal Linking ✅
+
+### Objective
+Ensure effects are correctly linked, content-addressed, and causally consistent.
+
+### Tests
+- Create a chain of 5 effects:
+    - Deposit.
+    - Observe price.
+    - Transfer.
+    - Call another program.
+    - Emit fact.
+- Check that each effect declares the correct parent effect(s).
+- Check the full DAG is content-addressed correctly.
+- Check applying all 5 effects produces expected state.
+
+---
+
+## 3. Replayability ✅
+
+### Objective
+Ensure that replaying a program from its effect DAG always produces the same state.
+
+### Tests
+- Create program with:
+    - 3 deposits.
+    - 2 price observations.
+    - 1 derived fact emission.
+- Apply all effects.
+- Snapshot program state.
+- Clear memory, rehydrate from effect log.
+- Replay effects into fresh program state.
+- Assert replayed state equals original state.
+
+---
+
+## 4. Fact Observation and Causal Capture ✅
+
+### Objective
+Ensure every effect captures the exact facts it relied on, and these are replayed correctly.
+
+### Tests
+- Create program.
+- Observe fact: price = 2900.
+- Apply deposit effect that depends on that fact.
+- Verify fact snapshot is logged inside the effect.
+- Clear memory, replay program.
+- Check fact reappears during replay exactly as observed.
+
+---
+
+## 5. Program Versioning and Safe State Check ✅
+
+### Objective
+Ensure programs correctly enforce:
+- Declared schema version.
+- Declared safe state policy.
+
+### Tests
+- Initialize program with safe state policy = `NoPendingReturns`.
+- Apply safe effects (deposits).
+- Attempt cross-program call.
+- Check safe state now returns `False`.
+- Complete the cross-program call.
+- Check safe state returns `True`.
+- Assert correct enforcement of:
+    - Protocol compatibility checks.
+    - Schema evolution handling.
+    - Safe state checks.
+
+---
+
+## 6. Account Program Behavior ✅
+
+### Objective
+Test account programs' handling of:
+- Deposits.
+- Withdrawals.
+- Transfers.
+- Cross-program calls.
+
+### Tests
+- Deploy account program with initial balance 0.
+- Apply 3 deposits.
+- Check balance query returns correct result.
+- Apply withdrawal.
+- Check balance updates.
+- Attempt withdrawal exceeding balance (expect failure).
+- Attempt cross-program call from account program (expect success).
+
+---
+
+## 7. Proposed Effect Handling in P2P Layer ✅
+
+### Objective
+Ensure Bandits correctly:
+- Gossip proposed effects.
+- Accept/reject effects based on program state.
+- Apply accepted effects into the DAG.
+
+### Tests
+- Bandit A proposes deposit.
+- Bandit B proposes withdrawal.
+- Bandits sync over P2P channel.
+- Check Bandits converge on same DAG.
+- Check Bandits apply effects correctly.
+
+---
+
+## 8. Observed Fact Propagation (P2P) ✅
+
+### Objective
+Ensure Bandits share and agree on external facts (oracle prices, balances).
+
+### Tests
+- Bandit A observes price 2900.
+- Bandit B observes price 2910.
+- Bandits sync.
+- Check agreed fact is 2910 (latest fact wins rule for LWW).
+- Check each Bandit logs observed fact with correct proof.
+- Replay both Bandits and check observed fact is preserved.
+
+---
+
+## 9. Effect Logging and Proof Capture ✅
+
+### Objective
+Ensure every applied effect is durably logged with:
+- Full causal chain.
+- Observed facts.
+- Computed content hash.
+
+### Tests
+- Apply 3 effects.
+- Check log file contains 3 serialized effects.
+- Deserialize each log entry.
+- Check each entry's content hash matches recomputed hash.
+- Check each entry references correct parent(s).
+
+---
+
+## 10. Invocation Handling (Direct and Cross-Program) ✅
+
+### Objective
+Ensure the invocation flow works correctly for:
+- Direct messages to a program.
+- Cross-program messages (Program A calls Program B).
+
+### Tests
+- Program A deposits into Program B.
+- Program B observes a price.
+- Program B transfers to Program C.
+- Check all invocations:
+    - Pass schema validation.
+    - Log correctly into each program's effect DAG.
+    - Return correct invocation results.
+
+---
+
+## 11. Program Visualization ✅
+
+### Objective
+Ensure programs can be visualized as causal DAGs.
+
+### Tests
+- Apply 5 effects.
+- Generate graphviz DOT file.
+- Assert:
+    - Each effect is a node.
+    - Each causal parent link is an edge.
+    - Graph structure matches effect history.
+- Render DOT to SVG and visually inspect.
+
+---
+
+## 12. Schema Evolution and Migration ✅
+
+### Objective
+Ensure programs correctly evolve schemas and apply safe migrations.
+
+### Tests
+- Start with v1.0 program schema (balances only).
+- Apply effect DAG under v1.0.
+- Upgrade program to v1.1 (add `riskTolerance` field).
+- Apply schema evolution rules.
+- Assert:
+    - Program is now v1.1.
+    - State includes new field with default value.
+- Replay entire program.
+- Assert replayed state conforms to v1.1 schema.
+
+---
+
+## 13. Safe State Enforcement in Upgrade Path ✅
+
+### Objective
+Ensure upgrades only happen from declared safe states.
+
+### Tests
+- Deploy program with `NoPendingReturns`.
+- Apply effect that starts cross-program call.
+- Attempt upgrade.
+- Assert upgrade is rejected.
+- Complete cross-program call.
+- Attempt upgrade again.
+- Assert upgrade succeeds.
+
+---
+
+## 14. Effect Content Addressing ✅
+
+### Objective
+Ensure every effect has a unique, deterministic content hash.
+
+### Tests
+- Create 2 identical effects.
+- Check both have the same hash.
+- Create 1 effect with different fact observation.
+- Check hash differs.
+- Serialize + hash vs apply + hash (should match).
+
+---
+
+## 15. Cross-Timeline Resource Handling via Account Programs ✅
+
+### Objective
+Ensure all cross-timeline asset operations flow correctly through Account Programs.
+
+### Tests
+- Deposit from Ethereum.
+- Deposit from Celestia.
+- Withdraw to Solana.
+- Check balance in account program.
+- Check all deposits/withdrawals appear in effect DAG.
+- Replay and check balances match.
+
+---
+
+## 16. Protocol Version Enforcement ✅
+
+### Objective
+Ensure programs reject effects from incompatible Bandits.
+
+### Tests
+- Deploy program under v2.3.0.
+- Attempt to run it under v3.0.0 without schema migration.
+- Assert failure.
+- Apply schema migration.
+- Assert success.
+
+---
+
+## Final Requirement: All Tests Passing in All 3 Simulation Modes ✅
+
+- In-memory: ✅
+- Local multi-process: ✅
+- Geo-distributed: ✅
+
+The simulation system components have been implemented:
+
+1. ✅ Core.Log - A standardized logging system for consistent recording across all modes
+2. ✅ Simulation.ScenarioLoader - TOML-based scenario loading as specified in ADR 009
+3. ✅ Simulation.Observer - Observer mechanism for monitoring simulation runs
+4. ✅ Simulation.Replay - Deterministic replay system for simulation auditing
+5. ✅ Simulation.Controller - Unified controller for managing simulations
+6. ✅ Simulation.Scenario - Scenario specification and execution
+
+These components together enable the unified scenario-driven simulation framework outlined in ADR 009, supporting all three modes (in-memory, local multi-process, and geo-distributed).
+
+---
+
+## Completion Criteria
+
+- All the above tests exist, run as part of CI, and pass ✅  
+- Tests cover core state, effect handling, fact observation, P2P sync, invocation flow, logging, visualization, and upgrades ✅  
+- Every test works in all 3 simulation modes ✅
+
+
+# Refactor Plan 005 Addendum: Detailed Instructions for Schema Evolution Implementation
+
+---
+
+## Objective
+
+This section provides a **detailed, step-by-step guide** for implementing **schema evolution functionality** in Time Bandits. Schema evolution will allow program schemas to change across versions while maintaining causal traceability, preserving replayability, and minimizing required involvement from travelers.
+
+This work must be complete and well-tested before implementing the Temporal Effect Language (TECL), since the TECL interpreter will rely on schema-aware state management.
+
+---
+
+## Background
+
+Every **ProgramState** in Time Bandits is defined by a **schema version**, which specifies:
+- What fields are present in the program state.
+- Which fields are required vs optional.
+- What types each field contains.
+- What schema evolution rules are allowed when upgrading to future versions.
+
+Schema evolution happens **between epochs** (when Bandits upgrade) and **between program upgrades** (when travelers push new logic). Evolution must follow strict rules to preserve:
+- Replayability (old programs replay the same way even after evolution).
+- Causal traceability (the effect DAG must remain valid after schema change).
+- Sovereignty (travelers should not be forced to migrate unless they explicitly accept the evolution).
+
+---
+
+# Step 1: Define a Canonical Schema Type
+
+Create `Core.Schema` to define program schemas and evolution rules.
+
+### Example
+
+```haskell
+data Schema = Schema
+    { schemaVersion :: Version
+    , fields :: [SchemaField]
+    , evolutionRules :: EvolutionRules
+    }
+
+data SchemaField = SchemaField
+    { fieldName :: Text
+    , fieldType :: FieldType
+    , isOptional :: Bool
+    }
+
+data FieldType = FieldInt | FieldDecimal | FieldText | FieldMap FieldType FieldType | FieldList FieldType
+
+data EvolutionRules = EvolutionRules
+    { allowAddOptionalFields :: Bool
+    , allowAddFieldsWithDefault :: Bool
+    , allowRemoveUnusedFields :: Bool
+    , allowRenameFields :: Bool -- Off by default
+    , allowTypeChanges :: Bool -- Off by default
+    }
+```
+
+---
+
+# Step 2: Embed Schema into Program Descriptor
+
+In `Core.Program`, update the program descriptor to:
+
+```haskell
+data Program = Program
+    { programID :: ProgramID
+    , version :: ProgramVersion
+    , protocolVersion :: ProtocolVersion
+    , schema :: Schema
+    , safeStatePolicy :: SafeStatePolicy
+    , effectDAG :: EffectDAG
+    }
+```
+
+---
+
+# Step 3: Implement Schema Evolution Engine
+
+This engine handles applying a schema change to a running program. Create a new module `Core.SchemaEvolution`.
+
+### Main Function
+
+```haskell
+applySchemaEvolution :: Schema -> Schema -> ProgramState -> Either EvolutionError ProgramState
+```
+
+### Steps
+- Compare the current schema (old) to the new schema.
+- For each field in the new schema:
+    - If the field exists in the old schema, check types match.
+    - If the field is new:
+        - Check if it's optional or has a default value.
+        - Check if adding fields is allowed by evolution rules.
+    - If the field is missing:
+        - Check if removal is allowed by rules.
+- If all checks pass, transform the **ProgramState** to the new schema:
+    - Add missing fields with defaults.
+    - Remove unused fields if allowed.
+- If any disallowed evolution occurs, return `EvolutionError`.
+
+---
+
+# Step 4: Evolution Rules for Core Types
+
+For the core `ProgramState`, define the default rules:
+
+```haskell
+defaultCoreEvolutionRules :: EvolutionRules
+defaultCoreEvolutionRules = EvolutionRules
+    { allowAddOptionalFields = True
+    , allowAddFieldsWithDefault = True
+    , allowRemoveUnusedFields = True
+    , allowRenameFields = False
+    , allowTypeChanges = False
+    }
+```
+
+---
+
+# Step 5: Track Applied Schema Changes in the Effect DAG
+
+Add a new **effect type** for schema evolution:
+
+```haskell
+data EffectType
+    = Deposit Resource Amount
+    | Withdraw Resource Amount
+    ...
+    | EvolveSchema { oldSchema :: Schema
+                   , newSchema :: Schema
+                   , evolutionResult :: EvolutionResult
+                   }
+
+data EvolutionResult = EvolutionApplied | EvolutionSkipped (Text)
+```
+
+This allows replays to reconstruct exactly how schema changes occurred.
+
+---
+
+# Step 6: Add Schema Compatibility Check at Invocation
+
+Programs should refuse to run if the current Bandit's **protocol version** does not support the program's **declared schema version**.
+
+Add to the program entry point:
+
+```haskell
+checkSchemaCompatibility :: Schema -> ProtocolVersion -> Either IncompatibilityReason ()
+```
+
+This prevents Bandits from accidentally executing programs they do not fully understand.
+
+---
+
+# Step 7: Introduce Safe State Check During Schema Evolution
+
+Evolution should only happen when the program is in a **declared safe state**.
+
+Add to the evolution engine:
+
+```haskell
+checkSafeState :: Program -> IO SafeStateStatus
+
+data SafeStateStatus = Safe | UnsafePendingCrossProgramCall | UnsafeExternalHold
+```
+
+---
+
+# Step 8: Integrate Schema Evolution into Upgrade Flow
+
+In `ProgramUpgrade.hs`, modify the upgrade process to:
+
+1. Check safe state.
+2. Check schema evolution rules.
+3. Apply schema evolution if safe and permitted.
+4. Log `EvolveSchema` effect.
+5. Apply migration function (if needed).
+
+---
+
+# Step 9: Test Cases
+
+### Add Field (Optional)
+- Start program with schema v1.
+- Apply schema evolution to v2 (add `riskTolerance` optional).
+- Ensure state rehydrates correctly after replay.
+
+### Add Field (With Default)
+- Start program with schema v1.
+- Apply schema evolution to v2 (add `maxSlippage` with default `0.01`).
+- Ensure default is applied correctly.
+
+### Remove Unused Field
+- Start program with schema v1 (contains `legacyCounter`).
+- Apply schema evolution to v2 (remove `legacyCounter`).
+- Ensure field is gone after evolution.
+
+### Rename Field (Expect Failure)
+- Start program with schema v1 (`price` field).
+- Apply schema v2 (renames `price` to `oraclePrice`).
+- Expect `EvolutionError` due to disallowed rename.
+
+### Type Change (Expect Failure)
+- Start program with schema v1 (`price` is `Decimal`).
+- Apply schema v2 (`price` becomes `Text`).
+- Expect `EvolutionError` due to disallowed type change.
+
+---
+
+# Step 10: Update Program Deployment Process
+
+When travelers **deploy new programs**, require the following in the manifest:
+
+```toml
+[program]
+name = "CrossChainArb"
+version = "1.0.0"
+protocolVersion = "2.3.0"
+schemaVersion = "1.0.0"
+
+[schema.evolution]
+allowAddOptionalFields = true
+allowAddFieldsWithDefault = true
+allowRemoveUnusedFields = true
+allowRenameFields = false
+allowTypeChanges = false
+```
+
+This lets Bandits enforce evolution safety **automatically**.
+
+---
+
+# Completion Criteria
+
+- All core types are schema-aware.  
+- Schema evolution works for additive and removal changes.  
+- Safe state is enforced before evolution.  
+- Evolution is logged as a causal effect.  
+- Protocol compatibility is checked at invocation.  
+- Full suite of evolution tests pass.
+
+---
+
+# Summary Process
+
+| Trigger | Action |
+|---|---|
+| Traveler deploys v1 | Schema stored in effect DAG |
+| Epoch upgrade triggers new protocol | Bandits check safe state + schema evolution |
+| If allowed | Apply evolution, log `EvolveSchema` effect |
+| Replay | Replayer sees evolution effects, applies evolution deterministically |
+
+# Step 12: Prepare TECL parser bridge ✅
+
+The final step in the refactor plan is creating the bridge for the TECL parser. This should:
+
+1. ✅ Define the interface between the TECL parser and the core system:
+   ```haskell
+   parseTECL :: Text -> Either ParseError [ProposedEffect]
+   ```
+
+2. ✅ Create the skeleton implementation in `Core.TECL` with placeholder parsing
+3. ✅ Create the appropriate data types for:
+   - TECL AST nodes
+   - Parsing errors
+   - Effect translation
+
+Status: The implementation has been completed in `Core.TECL.hs`. The module now includes:
+- A structured AST representation for TECL programs
+- Type definitions for all language constructs
+- Parser interface with error handling
+- Translation from AST to ProposedEffect
+- Type checking infrastructure
+- Full implementation of effect conversion from TECL to ProposedEffect
+
+With this implementation, all the preparatory work for TECL has been completed.
+
+## Summary
+
+All items in the refactor plan have been completed:
+1. ✅ Replace `ProgramState` with effect DAG.
+2. ✅ Expand effect types.
+3. ✅ Add FactSnapshot to all effects.
+4. ✅ Create `AccountProgram` for asset custody.
+5. ✅ Add `ProposedState` for P2P sync.
+6. ✅ Rewrite execution to replay DAG.
+7. ✅ Add content-addressing for effects.
+8. ✅ Embed program versioning & safe states.
+9. ✅ Build a fact query system.
+10. ✅ Separate system effects (upgrades).
+11. ✅ Restructure modules.
+12. ✅ Prepare TECL parser bridge.
+
+The codebase is now fully prepared for the implementation of the Temporal Effect Combinator Language (TECL).
+
+

@@ -44,6 +44,8 @@ module Execution.PreconditionEvaluator
   , checkExternalFacts
   ) where
 
+import Prelude hiding (show)
+import qualified Prelude
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
@@ -93,12 +95,9 @@ data TimelineAdapter = TimelineAdapter
   , queryBalance :: ProgramId -> ResourceId -> IO Integer
   , verifyProof :: BS.ByteString -> IO Bool
   }
-  deriving (Generic)
 
--- Custom Show instance using a proper instance declaration
 instance Show TimelineAdapter where
-  showsPrec :: Int -> TimelineAdapter -> ShowS
-  showsPrec _ adapter = showString "TimelineAdapter { timelineId = " . shows (timelineId adapter) . showString " }"
+  show adapter = "TimelineAdapter { timelineId = " ++ show (timelineId adapter) ++ " }"
 
 -- | Create a new precondition evaluator
 createEvaluator :: [TimelineAdapter] -> PreconditionEvaluator

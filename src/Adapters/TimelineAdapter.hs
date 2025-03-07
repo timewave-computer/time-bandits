@@ -10,6 +10,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE InstanceSigs #-}
 
+import Prelude hiding (show)
+import qualified Prelude
+
 {- |
 Module: Adapters.TimelineAdapter
 Description: Adapter system for connecting to different timeline implementations.
@@ -122,8 +125,7 @@ data AdapterConfig = AdapterConfig
 
 -- Custom Show instance to avoid showing Manager
 instance Show AdapterConfig where
-  showsPrec :: Int -> AdapterConfig -> ShowS
-  showsPrec _ config = showString "AdapterConfig { endpoints = " . shows (acEndpoints config) . showString ", ... }"
+  show config = "AdapterConfig { endpoints = " ++ show (acEndpoints config) ++ ", ... }"
 
 -- | State for a timeline adapter
 data AdapterState = AdapterState

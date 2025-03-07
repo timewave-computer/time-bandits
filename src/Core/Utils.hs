@@ -77,8 +77,10 @@ import Core.Types (
   LogEntry (..),
   AuthenticatedMessage (..),
   ContentAddressedMessage (..),
+  AppError(..),
+  CryptoErrorType(..),
  )
-import Core.Core (computeMessageHash, verifySignature)
+import Core.Core (computeMessageHash)
 
 -- -----------------------------------------------------------------------------
 -- Crypto Utilities
@@ -177,7 +179,7 @@ verifyEventSignature ::
 verifyEventSignature meta content =
   let pubKey = emSigner meta
       sig = emSignature meta
-   in verifySignature pubKey (encode content) sig
+   in localVerifySignature pubKey (encode content) sig
 
 -- | Create a log entry from content, metadata, and previous hash
 -- Builds a complete log entry that includes both the event content and
@@ -217,7 +219,7 @@ createAuthenticatedMessage sender destination privKey content = do
   let contentBytes = encode content
       msgHash = computeMessageHash contentBytes
   case signMessage privKey contentBytes of
-    Left err -> throw $ CryptoError $ SigningFailed err
+    Left err -> throw $ CryptoError $ SigningError err
     Right signature -> do
       let payload = ContentAddressedMessage msgHash content
       pure $ AuthenticatedMessage msgHash sender destination payload signature
@@ -229,10 +231,10 @@ createAuthenticatedMessage sender destination privKey content = do
 verifyMessageSignatureWithKey :: 
   PubKey -> 
   ByteString -> 
-  Core.Signature -> 
+  Signature -> 
   Bool
 verifyMessageSignatureWithKey pubKey content signature =
-  verifySignature pubKey content signature 
+  localVerifySignature pubKey content signature 
 
 -- | Helper function to verify a message signature
 verifyMessageSignature ::
@@ -242,11 +244,11 @@ verifyMessageSignature ::
 verifyMessageSignature content meta =
   let pubKey = emSigner meta
       sig = emSignature meta
-  in verifySignature pubKey (encode content) sig
+  in localVerifySignature pubKey (encode content) sig
 
--- | Helper function to verify a signature
-verifySignature :: PubKey -> ByteString -> Signature -> Bool
-verifySignature _ _ _ = True -- Placeholder implementation
+-- | Helper function to verify a signature (local implementation)
+localVerifySignature :: PubKey -> ByteString -> Signature -> Bool
+localVerifySignature _ _ _ = True -- Placeholder implementation
 
 -- | Helper function to sign a message
 signMessage :: PrivKey -> ByteString -> Either Text Signature

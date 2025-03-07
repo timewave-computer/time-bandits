@@ -8,6 +8,7 @@
 module Programs.ProgramTypes 
   ( -- * Common Types
     Program
+  , ProgramId
   , MemorySlot(..)
   , ProgramState(..)
   , TimeMap(..)
@@ -17,7 +18,7 @@ import Data.Map (Map)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Core.Common (TimelineHash, EntityHash(..))
-import Core.Serialize (Serialize)
+import Data.Serialize (Serialize)
 
 -- | Unique identifier for a Program
 type ProgramId = EntityHash Program

@@ -50,6 +50,10 @@ import Data.Serialize (Serialize)
 import GHC.Generics (Generic)
 import Data.Time.Clock (UTCTime)
 import Core.Common (Hash(..), EntityHash(..), computeHash)
+import Core.Schema (Schema, EvolutionResult)
+import Control.DeepSeq (NFData)
+import qualified Data.ByteString as BS
+import Data.Word (Word64)
 
 -- Re-export from Types.Core
 import Types.Core
@@ -87,6 +91,11 @@ data EffectType
     | ConditionalEffect               -- ^ Execute conditionally
     | BatchEffect                     -- ^ Execute multiple effects as batch
     | SystemEffect                    -- ^ System-level effect (upgrades, etc.)
+    | EvolveSchema                    -- ^ Schema evolution effect
+        { oldSchema :: Schema         -- ^ Previous schema
+        , newSchema :: Schema         -- ^ New schema
+        , evolutionResult :: EvolutionResult -- ^ Result of evolution
+        }
     deriving (Eq, Show, Generic)
     deriving anyclass (Serialize)
 
