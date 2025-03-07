@@ -10,6 +10,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 
 {- |
 
@@ -91,6 +92,8 @@ import Polysemy.Trace qualified as PT
 import System.Random (randomIO)
 import Relude ()
 import Relude.Extra.Tuple (fmapToFst)
+import Prelude hiding (show)
+import qualified Prelude
 
 import Core qualified as Core
 import Core.Types
@@ -266,19 +269,8 @@ makeSem ''P2PNetwork
 
 -- | Compute a score for a node using rendezvous hashing
 -- Returns the node's score for the given key
-computeNodeScore :: P2PNode -> Hash -> Double
-computeNodeScore node key = 
-  -- Simple XOR distance metric
-  let nodeId = pnId node
-      keyBytes = unHash key
-      nodeBytes = unEntityHash nodeId
-  in 1.0 / (1.0 + fromIntegral (xorDistance keyBytes nodeBytes))
-
--- | Helper function to compute XOR distance between two byte strings
-xorDistance :: ByteString -> ByteString -> Int
-xorDistance bs1 bs2 = 
-  -- Simple implementation - in practice would use proper XOR distance
-  abs (BS.length bs1 - BS.length bs2)
+computeNodeScore :: P2PNode -> ByteString -> Word64
+computeNodeScore node = Core.computeNodeScore (pnId node)
 
 -- | Interpret the P2P Network effect
 -- Provides concrete implementations for all P2P network operations, including
@@ -459,7 +451,7 @@ interpretP2PNetwork config self pubKey = interpret \case
     -- Compute score for each node using rendezvous hashing
     -- This implements a consistent hashing algorithm that assigns keys to nodes
     -- in a deterministic way that minimizes reassignments when nodes join/leave
-    let scoredNodes = map (\node -> (node, computeNodeScore node key)) currentPeers
+    let scoredNodes = map (\node -> (node, Core.computeNodeScore (pnId node) key)) currentPeers
         -- Sort by score (highest first)
         sortedNodes = map fst $ sortOn (Down . snd) scoredNodes
         -- Take required number of nodes
@@ -671,25 +663,4 @@ scoreNodeHealth health node =
       statsScore = (psSuccessRate (pnStats node) * 0.4) +
                    (1.0 - min 1.0 (psResponseTime (pnStats node) / 200.0)) * 0.4 +
                    min 1.0 (psUptime (pnStats node) / 86400.0) * 0.2
-  in baseScore * 0.7 + statsScore * 0.3
-
--- | Create an authenticated message from a node to another node
-createAuthenticatedMessage :: 
-  (Member (Error AppError) r, Serialize a) => 
-  P2PNode -> 
-  P2PNode -> 
-  PrivKey -> 
-  a -> 
-  Sem r (AuthenticatedMessage ByteString)
-createAuthenticatedMessage sender recipient privKey content = do
-  let contentBytes = encode content
-      msgHash = computeMessageHash contentBytes
-  -- In a real implementation, we would sign the message here
-  let signature = Signature "dummy-signature"
-  pure $ AuthenticatedMessage
-    { amHash = msgHash
-    , amSender = pnPublicKey sender
-    , amDestination = pnPublicKey recipient
-    , amPayload = ContentAddressedMessage msgHash content
-    , amSignature = signature
-    } 
+  in baseScore * 0.7 + statsScore * 0.3 

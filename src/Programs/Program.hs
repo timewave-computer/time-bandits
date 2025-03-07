@@ -87,7 +87,8 @@ import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
 -- Import from Core modules
-import Core.Types (AppError(..), ProgramErrorType(..))
+import Core.Types (AppError(..))
+import Types.Core (ProgramErrorType(..))
 import Core.Common (EntityHash(..), Hash(..))
 import Core.Resource (Resource, Address, EscrowId)
 import Core.Timeline (TimelineHash, BlockHeader)
