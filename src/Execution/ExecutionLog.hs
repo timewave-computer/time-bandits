@@ -19,7 +19,7 @@ Execution Logs:
 - Are causally linked to ensure proper execution order
 - Support verification of execution histories
 -}
-module TimeBandits.ExecutionLog 
+module Execution.ExecutionLog 
   ( -- * Core Types
     ExecutionLog(..)
   , LogStore
@@ -53,22 +53,22 @@ import System.IO (IOMode(..), withFile)
 import qualified Data.ByteString.Char8 as BS
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect
   )
-import TimeBandits.TransitionMessage
+import Actors.TransitionMessage
   ( LogEntry(..)
   , TransitionMessage
   , verifyLogEntryChain

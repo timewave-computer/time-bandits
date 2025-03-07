@@ -23,7 +23,7 @@ module Core.TimelineId
   , fromHash
   
   -- * Conversion
-  , toText
+  , timelineIdToText
   , toByteString
   , toHash
   ) where
@@ -39,10 +39,15 @@ import GHC.Generics (Generic)
 
 -- | Unique identifier for timelines in the Time Bandits system
 newtype TimelineId = TimelineId { unTimelineId :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
+  deriving (Eq, Ord, Generic)
+  deriving anyclass (Serialize)
+  deriving stock (Show)
 
-instance Show TimelineId where
-  show = T.unpack . toText
+-- | Helper function for text conversion
+timelineIdToText :: TimelineId -> Text
+timelineIdToText (TimelineId bs) = case TE.decodeUtf8' bs of
+  Left _  -> T.pack $ "TimelineId:" ++ show (BS.take 8 bs) ++ "..."
+  Right t -> t
 
 -- | Allows using string literals for TimelineId
 instance IsString TimelineId where
@@ -69,10 +74,6 @@ fromByteString bs
 -- | Create a TimelineId from a hash value
 fromHash :: ByteString -> TimelineId
 fromHash = TimelineId
-
--- | Convert a TimelineId to Text
-toText :: TimelineId -> Text
-toText = TE.decodeUtf8 . unTimelineId
 
 -- | Convert a TimelineId to ByteString
 toByteString :: TimelineId -> ByteString

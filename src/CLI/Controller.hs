@@ -22,11 +22,10 @@ regardless of deployment mode. The Controller is responsible for:
 The Controller is the central component that ensures the system behaves consistently
 across different deployment modes.
 -}
-module TimeBandits.Controller 
+module CLI.Controller 
   ( -- * Core Types
     Controller(..)
   , ControllerConfig(..)
-  , SimulationMode(..)
   , DeploymentMode(..)
   , ControllerError(..)
   
@@ -69,38 +68,38 @@ import Control.Monad (forever, replicateM)
 import System.Directory (createDirectoryIfMissing)
 import Network.Socket (SockAddr(..), PortNumber)
 import qualified Polysemy.Trace as PT
-import TimeBandits.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
-import TimeBandits.Network (P2PConfig(..), P2PCapability(..))
+import Adapters.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
+import Adapters.Network (P2PConfig(..), P2PCapability(..))
 import Polysemy (Embed, embed, runM)
 import Polysemy.Error (runError)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource(..)
   , Address
   , verifyResourceOwnership
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , ProgramState(..)
   , isAuthorizedCaller
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect
   , GuardedEffect(..)
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   , TimeMapId
   , updateTimeMap
   , verifyTimeMapConsistency
   )
-import TimeBandits.TransitionMessage
+import Actors.TransitionMessage
   ( TransitionMessage(..)
   , LogEntry(..)
   , validateTransitionMessage
@@ -108,48 +107,45 @@ import TimeBandits.TransitionMessage
   , hashTransitionMessage
   , createLogEntry
   )
-import TimeBandits.ExecutionLog
+import Execution.ExecutionLog
   ( ExecutionLog(..)
   , LogStore
   , createLogStore
   , appendLogEntry
   , verifyLogChain
   )
-import TimeBandits.EffectExecutor
+import Execution.EffectExecutor
   ( applyEffect
   , verifyTransitionProof
   )
-import TimeBandits.Scenario
-  ( Scenario(..)
+
+-- Import from Core.Common for shared types
+import Core.Common (SimulationMode(..))
+
+-- Import shared actor types
+import Types.Actor
+  ( ActorRole(..)
+  , ActorCapability(..)
+  , ActorSpec(..)
+  )
+
+-- Import shared scenario types
+import Types.Scenario
+  ( ScenarioConfig(..)
+  , ScenarioError(..)
+  , ScenarioResult(..)
+  , ExecutionMode(..)
   , ScenarioEntity(..)
   , ScenarioTimeline(..)
-  , ExecutionMode(..)
-  , scenarioEntities
-  , scenarioTimelines
-  , scenarioExecutionMode
   )
-import TimeBandits.Actor
-  ( Actor(..)
-  , ActorSpec(..)
-  , ActorRole(..)
-  , ActorCapability(..)
-  , ActorHandle
-  , ActorError(..)
-  , deployActor
-  )
+
+-- Import from Actors modules
+import Actors.ActorTypes (ActorHandle(..))
 
 -- Import specialized actor role modules
-import qualified TimeBandits.TimeTraveler
-import qualified TimeBandits.TimeKeeper
-import qualified TimeBandits.TimeBandit
-
--- | Simulation mode determines how actors are deployed and communicate
-data SimulationMode
-  = InMemory        -- ^ All actors run in the same process
-  | LocalProcesses  -- ^ Actors run in separate local processes
-  | GeoDistributed  -- ^ Actors run on different machines
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+import qualified Actors.TimeTraveler
+import qualified Actors.TimeKeeper
+import qualified Actors.TimeBandit
 
 -- | Deployment mode (alias for SimulationMode for consistency)
 type DeploymentMode = SimulationMode
@@ -172,6 +168,7 @@ data ControllerError
   | LogVerificationFailed Text
   | DeploymentError Text
   | UnauthorizedAccess Address ProgramId
+  | ActorDeploymentError Text
   deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
@@ -463,14 +460,14 @@ createController spec = do
 -- | Run the controller with a scenario
 runWithScenario :: (Member (Error ControllerError) r)
                 => ControllerSpec
-                -> Scenario
+                -> ScenarioConfig
                 -> Sem r Controller
-runWithScenario spec scenario = do
+runWithScenario spec scenarioConfig = do
   -- Create the controller from the specification
   controller <- createController spec
   
   -- Deploy actors based on the scenario requirements
-  let requiredActors = determineRequiredActors scenario
+  let requiredActors = scenarioActors scenarioConfig
   
   -- Group actors by role for specialized deployment
   let travelers = filter (\s -> actorSpecRole s == TimeTravelerRole) requiredActors
@@ -495,58 +492,39 @@ runWithScenario spec scenario = do
   return updatedController
 
 -- | Determine the required actors for a scenario
-determineRequiredActors :: Scenario -> [ActorSpec]
-determineRequiredActors scenario = 
-  -- Create actor specs for each role required by the scenario
-  concat
-    [ createTimeTravelersForScenario scenario
-    , createTimeKeepersForScenario scenario
-    , createTimeBanditsForScenario scenario
-    ]
+determineRequiredActors :: ScenarioConfig -> [ActorSpec]
+determineRequiredActors = scenarioActors
 
 -- | Create Time Traveler actor specs for a scenario
-createTimeTravelersForScenario :: Scenario -> [ActorSpec]
-createTimeTravelersForScenario scenario =
-  -- For each entity in the scenario that needs a Time Traveler role
-  map (\(idx, entity) -> ActorSpec
-    { actorSpecId = "traveler-" <> T.pack (show idx)
-    , actorSpecRole = TimeTravelerRole
-    , actorSpecCapabilities = 
-        [ CanCreateProgram
-        , CanTransferResource 
-        ]
-    , actorSpecInitialPrograms = []
-    }) (zip [1..] (scenarioEntities scenario))
+createTimeTravelersForScenario :: ScenarioConfig -> [ActorSpec]
+createTimeTravelersForScenario scenarioConfig =
+  -- Filter actors from the scenario config that have TimeTravelerRole
+  filter (\spec -> actorSpecRole spec == TimeTravelerRole) 
+         (scenarioActors scenarioConfig)
 
 -- | Create Time Keeper actor specs for a scenario
-createTimeKeepersForScenario :: Scenario -> [ActorSpec]
-createTimeKeepersForScenario scenario =
-  -- For each timeline in the scenario that needs a Time Keeper role
-  map (\(idx, timeline) -> ActorSpec
-    { actorSpecId = "keeper-" <> T.pack (show idx)
-    , actorSpecRole = TimeKeeperRole
-    , actorSpecCapabilities = 
-        [ CanValidateTransition
-        , CanServeTimelineState
-        ]
-    , actorSpecInitialPrograms = []
-    }) (zip [1..] (scenarioTimelines scenario))
+createTimeKeepersForScenario :: ScenarioConfig -> [ActorSpec]
+createTimeKeepersForScenario scenarioConfig =
+  -- Filter actors from the scenario config that have TimeKeeperRole
+  filter (\spec -> actorSpecRole spec == TimeKeeperRole) 
+         (scenarioActors scenarioConfig)
 
 -- | Create Time Bandit actor specs for a scenario
-createTimeBanditsForScenario :: Scenario -> [ActorSpec]
-createTimeBanditsForScenario scenario =
-  -- Create a fixed number of Time Bandits based on the scenario's execution needs
-  let numBandits = case scenarioExecutionMode scenario of
-        SingleNode -> 1
-        MultiNode -> 3
-        DistributedNodes -> 5
-  in
-  map (\idx -> ActorSpec
-    { actorSpecId = "bandit-" <> T.pack (show idx)
-    , actorSpecRole = TimeBanditRole
-    , actorSpecCapabilities = 
-        [ CanExecuteProgram
-        , CanGenerateProof
-        ]
-    , actorSpecInitialPrograms = []
-    }) [1..numBandits] 
+createTimeBanditsForScenario :: ScenarioConfig -> [ActorSpec]
+createTimeBanditsForScenario scenarioConfig =
+  -- Filter actors from the scenario config that have TimeBanditRole
+  filter (\spec -> actorSpecRole spec == TimeBanditRole) 
+         (scenarioActors scenarioConfig)
+
+-- | Deploy an actor based on the spec
+deployActor :: (Member (Error ControllerError) r)
+            => ActorSpec
+            -> SimulationMode
+            -> Sem r (ActorHandle r)
+deployActor spec mode = do
+  -- TODO: Implement actual deployment logic
+  throw $ ActorDeploymentError "Actor deployment not yet implemented"
+  
+  -- This part never executes due to the throw above
+  -- but is needed for type checking
+  undefined

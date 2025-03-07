@@ -26,7 +26,7 @@ The P2P layer is responsible for:
 - Maintaining connections to other nodes
 - Replicating data according to the configured replication factor
 -}
-module TimeBandits.Network
+module Adapters.Network
   ( -- * P2P Effects
     P2PNetwork (..),
     interpretP2PNetwork,
@@ -91,8 +91,8 @@ import System.Random (randomIO)
 import Relude ()
 import Relude.Extra.Tuple (fmapToFst)
 
-import TimeBandits.Core qualified as Core
-import TimeBandits.Types
+import Core qualified as Core
+import Core.Types
 
 -- | Information about a P2P node in the network
 data P2PNode = P2PNode

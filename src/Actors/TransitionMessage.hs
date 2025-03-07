@@ -20,7 +20,7 @@ TransitionMessages:
 - Are causally linked to parent effects
 - Form the basis of the execution log
 -}
-module TimeBandits.TransitionMessage 
+module Actors.TransitionMessage 
   ( -- * Core Types
     TransitionMessage(..)
   , TransitionMessageId
@@ -91,32 +91,32 @@ import Polysemy.Embed (Embed)
 import Polysemy.Error (Error, throw, catch, fromEither)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   , TimelineHash
   , TimelineErrorType(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   , ResourceId
   , resourceToByteString
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , ProgramState
   , getLastEffect
   , getCurrentStep
   , applyEffect
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect(..)
   , GuardedEffect(..)
   , effectToByteString
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   , TimeMapId
   , TimeMapEntry(..)

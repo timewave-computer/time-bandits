@@ -23,7 +23,7 @@ module Core.ResourceId
   , fromHash
   
   -- * Conversion
-  , toText
+  , resourceIdToText
   , toByteString
   , toHash
   ) where
@@ -39,10 +39,15 @@ import GHC.Generics (Generic)
 
 -- | Unique identifier for resources in the Time Bandits system
 newtype ResourceId = ResourceId { unResourceId :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
+  deriving (Eq, Ord, Generic)
+  deriving anyclass (Serialize)
+  deriving stock (Show)
 
-instance Show ResourceId where
-  show = T.unpack . toText
+-- | Helper function for text conversion
+resourceIdToText :: ResourceId -> Text
+resourceIdToText (ResourceId bs) = case TE.decodeUtf8' bs of
+  Left _  -> T.pack $ "ResourceId:" ++ show (BS.take 8 bs) ++ "..."
+  Right t -> t
 
 -- | Allows using string literals for ResourceId
 instance IsString ResourceId where
@@ -69,10 +74,6 @@ fromByteString bs
 -- | Create a ResourceId from a hash value
 fromHash :: ByteString -> ResourceId
 fromHash = ResourceId
-
--- | Convert a ResourceId to Text
-toText :: ResourceId -> Text
-toText = TE.decodeUtf8 . unResourceId
 
 -- | Convert a ResourceId to ByteString
 toByteString :: ResourceId -> ByteString

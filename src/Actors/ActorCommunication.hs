@@ -19,7 +19,7 @@ The communication protocol supports:
 - State queries and responses
 - System control messages
 -}
-module TimeBandits.ActorCommunication
+module Actors.ActorCommunication
   ( -- * Core Types
     ActorMessage(..)
   , ActorChannel(..)
@@ -75,26 +75,26 @@ import Polysemy.Embed (Embed)
 import Relude (newIORef)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   , TransitionMessage(..)
   , Actor(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , ResourceHash
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , ProgramDefinition
   , ProgramState
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   )
-import TimeBandits.Actor
+import Actors.Actor
   ( ActorRole
   )
 

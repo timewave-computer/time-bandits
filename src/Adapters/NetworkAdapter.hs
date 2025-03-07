@@ -10,7 +10,7 @@
 This module adapts the QUIC-based network implementation for use with Time Bandits' P2P networking.
 It provides a layer that connects the core P2P network interface with the QUIC transport implementation.
 -}
-module TimeBandits.NetworkAdapter
+module Adapters.NetworkAdapter
   ( -- * Network Adaptation Functions
     adaptNetworkToQuic
   , createQuicNetworkEffect
@@ -39,8 +39,8 @@ import Polysemy.State qualified as PS
 import Polysemy.Trace qualified as PT
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (ActorHash, Hash(..))
-import TimeBandits.Network
+import Core (ActorHash, Hash(..))
+import Adapters.Network
   ( P2PNetwork
   , P2PConfig(..)
   , P2PNode(..)
@@ -49,7 +49,7 @@ import TimeBandits.Network
   , MessageDeliveryStatus(..)
   , MessageType(..)
   )
-import TimeBandits.NetworkQUIC
+import Adapters.NetworkQUIC
   ( QuicConfig(..)
   , QuicPeer(..)
   , QuicConnection(..)
@@ -63,7 +63,7 @@ import TimeBandits.NetworkQUIC
   , discoverQuicPeers
   , registerWithBootstrapPeers
   )
-import TimeBandits.Types
+import Core.Types
   ( Actor(..)
   , AppError(..)
   , PubKey(..)
@@ -148,7 +148,7 @@ adaptNetworkToQuic ::
   PubKey ->
   (P2PNetwork ~> Sem r)
 adaptNetworkToQuic p2pConfig self pubKey = interpret \case
-  TimeBandits.Network.ConnectToNode nodeAddr -> do
+  Adapters.Network.ConnectToNode nodeAddr -> do
     PT.trace $ "Connecting to node via QUIC: " <> show nodeAddr
     
     -- Convert P2P config to QUIC config
@@ -164,7 +164,7 @@ adaptNetworkToQuic p2pConfig self pubKey = interpret \case
         PT.trace "Connection failed"
         return Nothing
         
-  TimeBandits.Network.DiscoverNodes -> do
+  Adapters.Network.DiscoverNodes -> do
     PT.trace "Discovering nodes via QUIC network"
     
     -- Convert P2P config to QUIC config
@@ -202,7 +202,7 @@ adaptNetworkToQuic p2pConfig self pubKey = interpret \case
         peers <- discoverQuicPeers quicConfig connections
         return $ map quicPeerToP2PNode peers
         
-  TimeBandits.Network.BroadcastMessage msgType payload -> do
+  Adapters.Network.BroadcastMessage msgType payload -> do
     PT.trace $ "Broadcasting message via QUIC: " <> show msgType
     
     -- Convert P2P config to QUIC config
@@ -211,7 +211,7 @@ adaptNetworkToQuic p2pConfig self pubKey = interpret \case
     -- Simulate having connections (in a real implementation, we would maintain these)
     now <- embed getCurrentTime
     connId <- embed $ BS.pack <$> replicateM 16 (randomRIO (0, 255))
-    peers <- TimeBandits.Network.DiscoverNodes
+    peers <- Adapters.Network.DiscoverNodes
     
     -- Create simulated connections
     connections <- fmap catMaybes $ forM peers $ \peer -> do
@@ -225,7 +225,7 @@ adaptNetworkToQuic p2pConfig self pubKey = interpret \case
       then return PartialDelivery
       else return DeliveryFailed
         
-  TimeBandits.Network.SendDirectMessage targetNode msgType payload -> do
+  Adapters.Network.SendDirectMessage targetNode msgType payload -> do
     PT.trace $ "Sending direct message via QUIC to: " <> show (nodeId targetNode) <> " type: " <> show msgType
     
     -- Convert P2P config to QUIC config
@@ -243,7 +243,7 @@ adaptNetworkToQuic p2pConfig self pubKey = interpret \case
       Nothing ->
         return DeliveryFailed
         
-  TimeBandits.Network.GetNetworkStats -> do
+  Adapters.Network.GetNetworkStats -> do
     PT.trace "Getting network stats from QUIC connections"
     
     -- In a real implementation, we would track these stats
@@ -277,13 +277,13 @@ interpretNetworkForGeoDistributed ::
   Sem (P2PNetwork ': r) a ->
   Sem r a
 interpretNetworkForGeoDistributed config self pubKey nodesRef = interpret \case
-  TimeBandits.Network.ConnectToNode nodeAddr -> do
+  Adapters.Network.ConnectToNode nodeAddr -> do
     -- Delegate to QUIC implementation
-    adaptNetworkToQuic config self pubKey (TimeBandits.Network.ConnectToNode nodeAddr)
+    adaptNetworkToQuic config self pubKey (Adapters.Network.ConnectToNode nodeAddr)
   
-  TimeBandits.Network.DiscoverNodes -> do
+  Adapters.Network.DiscoverNodes -> do
     -- Discover nodes using QUIC
-    newNodes <- adaptNetworkToQuic config self pubKey TimeBandits.Network.DiscoverNodes
+    newNodes <- adaptNetworkToQuic config self pubKey Adapters.Network.DiscoverNodes
     
     -- Update the nodes storage
     embed $ atomically $ do
@@ -296,17 +296,17 @@ interpretNetworkForGeoDistributed config self pubKey nodesRef = interpret \case
     -- Return the discovered nodes
     return newNodes
   
-  TimeBandits.Network.BroadcastMessage msgType payload -> do
+  Adapters.Network.BroadcastMessage msgType payload -> do
     -- Delegate to QUIC implementation
-    adaptNetworkToQuic config self pubKey (TimeBandits.Network.BroadcastMessage msgType payload)
+    adaptNetworkToQuic config self pubKey (Adapters.Network.BroadcastMessage msgType payload)
   
-  TimeBandits.Network.SendDirectMessage targetNode msgType payload -> do
+  Adapters.Network.SendDirectMessage targetNode msgType payload -> do
     -- Delegate to QUIC implementation
-    adaptNetworkToQuic config self pubKey (TimeBandits.Network.SendDirectMessage targetNode msgType payload)
+    adaptNetworkToQuic config self pubKey (Adapters.Network.SendDirectMessage targetNode msgType payload)
   
-  TimeBandits.Network.GetNetworkStats -> do
+  Adapters.Network.GetNetworkStats -> do
     -- Delegate to QUIC implementation
-    adaptNetworkToQuic config self pubKey TimeBandits.Network.GetNetworkStats
+    adaptNetworkToQuic config self pubKey Adapters.Network.GetNetworkStats
 
 -- Helper functions
 

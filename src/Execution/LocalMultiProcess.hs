@@ -20,7 +20,7 @@ The LocalMultiProcess module:
 3. Coordinates execution across multiple processes
 4. Handles process failures and recovery
 -}
-module TimeBandits.LocalMultiProcess 
+module Execution.LocalMultiProcess 
   ( -- * Core Types
     ProcessConfig(..)
   , ProcessId
@@ -70,12 +70,12 @@ import System.IO (Handle, hPutStr, hGetLine, hFlush)
 import System.Process (ProcessHandle, createProcess, proc, waitForProcess, terminateProcess)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , ActorId
   )
-import TimeBandits.ActorCommunication
+import Actors.ActorCommunication
   ( ActorMessage(..)
   , ActorAddress(..)
   , ChannelError(..)

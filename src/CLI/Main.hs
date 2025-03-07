@@ -8,7 +8,7 @@ Description: The main entry point for the Time-Bandits application.
 This module serves as a pure CLI dispatcher that parses command-line arguments and
 dispatches to the appropriate functionality based on the specified command.
 -}
-module TimeBandits.CLI.Main where
+module CLI.Main where
 
 import Control.Exception (catch, throwIO)
 import Control.Monad (when)
@@ -16,7 +16,7 @@ import Data.Text qualified as T
 import Data.Version (Version, makeVersion, showVersion)
 import System.Directory (doesFileExist)
 import System.Environment qualified as Env
-import System.Exit (exitFailure, exitSuccess)
+import System.Exit qualified as Exit
 import System.IO (hPutStrLn, stderr)
 
 -- | Command-line options
@@ -57,14 +57,14 @@ main = do
         then do
           putStrLn $ "Would run scenario: " ++ path
           putStrLn $ "Note: Simulation functionality is not implemented yet."
-          exitSuccess
+          Exit.exitSuccess
         else do
           hPutStrLn stderr $ "Scenario file not found: " ++ path
-          exitFailure
+          Exit.exitFailure
     
     Version -> do
       putStrLn $ "Time Bandits version " ++ showVersion version
-      exitSuccess
+      Exit.exitSuccess
     
     Help -> do
       -- Display help information
@@ -77,7 +77,7 @@ main = do
       putStrLn ""
       putStrLn "Options:"
       putStrLn "  -v, --verbose      Enable verbose output"
-      exitSuccess
+      Exit.exitSuccess
 
 -- | Version information
 version :: Version

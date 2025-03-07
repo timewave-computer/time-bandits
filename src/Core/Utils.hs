@@ -22,7 +22,7 @@ It includes functions for:
    - Message validation and verification
    - Message processing utilities
 -}
-module TimeBandits.Core.Utils (
+module Core.Utils (
   -- * Crypto Utilities
   -- ** Key Management
   derivePubKeyFromPrivKey,
@@ -60,7 +60,7 @@ import Data.Serialize (Serialize, encode)
 import Data.Time.Clock (UTCTime)
 import Polysemy
 import Polysemy.Error (Error, throw)
-import TimeBandits.Core (
+import Core (
   ActorHash,
   EntityHash (..),
   EventContent,
@@ -74,7 +74,7 @@ import TimeBandits.Core (
   computeMessageHash,
   signMessage,
  )
-import TimeBandits.Core.Types qualified as Core (
+import Core.Types qualified as Core (
   Actor,
   AuthenticatedMessage (..),
   ContentAddressedMessage (..),

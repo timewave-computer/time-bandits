@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 {- |
-Module: TimeBandits.Actor
+Module: Actors.Actor
 Description: Actor system framework for the Time-Bandits architecture.
 
 This module provides the Actor abstraction, which defines the interface for
@@ -45,7 +45,7 @@ The Actor module connects with the Programs module for program execution,
 the Execution module for effect handling, and the Core module for basic
 primitives like cryptographic functions and event handling.
 -}
-module TimeBandits.Actor 
+module Actors.Actor 
   ( -- * Core Types
     Actor(..)
   , ActorSpec(..)
@@ -97,146 +97,54 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.IORef as IORef
 import System.Directory (createDirectoryIfMissing)
 import Polysemy.Trace qualified as PT
-import TimeBandits.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
-import TimeBandits.Network (P2PConfig(..))
+import Adapters.NetworkQUIC (startQuicServer, p2pConfigToQuicConfig)
+import Adapters.Network (P2PConfig(..))
 import Data.Time.Clock (UTCTime, getCurrentTime)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (ActorHash, Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (ActorHash, Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   , PubKey(..)
   , Actor(..)
   , ActorType(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource(..)
   , ResourceId
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   )
-import TimeBandits.TransitionMessage
+import Actors.TransitionMessage
   ( TransitionMessage
   )
-import TimeBandits.Controller
+import Core.Common
   ( SimulationMode(..)
+  )
+import Actors.ActorTypes
+  ( ActorType(..)
+  , ActorRole(..)
+  , ActorCapability(..)
+  , ActorSpec(..)
   )
 
 -- Import specialized actor role modules (forward references)
-import qualified TimeBandits.TimeTraveler as TimeTraveler
-import qualified TimeBandits.TimeKeeper as TimeKeeper
-import qualified TimeBandits.TimeBandit as TimeBandit
-import qualified TimeBandits.ActorCoordination as ActorCoordination
+import qualified Actors.TimeTraveler as TimeTraveler
+import qualified Actors.TimeKeeper as TimeKeeper
+import qualified Actors.TimeBandit as TimeBandit
+import qualified Actors.ActorCoordination as ActorCoordination
 
--- | Actor roles define what an actor can do in the system
-data ActorRole
-  = TimeKeeperRole  -- ^ Time Keeper role responsible for timeline integrity
-  | TimeTravelerRole  -- ^ Time Traveler role responsible for program creation
-  | TimeBanditRole  -- ^ Time Bandit role responsible for execution and P2P networking
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Actor capabilities define what specific actions an actor can perform
-data ActorCapability
-  = CanCreateTimeline             -- ^ Can create new timelines
-  | CanValidateTransition         -- ^ Can validate transition messages
-  | CanExecuteProgram             -- ^ Can execute program code
-  | CanCreateProgram              -- ^ Can create new programs
-  | CanTransferResource           -- ^ Can transfer resource ownership
-  | CanGenerateProof              -- ^ Can generate cryptographic proofs
-  | CanServeTimelineState         -- ^ Can serve timeline state to others
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Actor specification for deployment
-data ActorSpec = ActorSpec
-  { actorSpecId :: Address
-  , actorSpecRole :: ActorRole
-  , actorSpecCapabilities :: [ActorCapability]
-  , actorSpecInitialPrograms :: [ProgramId]
-  , actorSpecBootstrapNodes :: [Address]
-  , actorSpecAddress :: Maybe Address
-  , actorSpecActor :: ByteString
-  , actorSpecPubKey :: ByteString
+-- | The Actor handle for interaction with an actor
+data ActorHandle r = ActorHandle
+  { handleId :: Text
+  , handleType :: ActorType
+  , handleProcess :: Maybe ProcessHandle
+  , handleThread :: Maybe ThreadId
+  , handleSocket :: Maybe Socket
+  , handleMailbox :: Chan TransitionMessage
   }
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Actor state
-data ActorState = ActorState
-  { actorStateId :: Address
-  , actorStateRole :: ActorRole
-  , actorStateCapabilities :: [ActorCapability]
-  , actorStatePrograms :: [ProgramId]
-  , actorStateResources :: [EntityHash Resource]
-  }
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Actor errors
-data ActorError
-  = ActorNotFound Address
-  | UnauthorizedAction ActorCapability
-  | CommunicationError Text
-  | DeploymentError Text
-  | ActorMissingCapability Text
-  | ActorTypeError Text
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Messages that can be sent between actors
-data ActorMessage
-  = TransitionRequest TransitionMessage
-  | TransitionResponse (Either Text ProgramId)
-  | ResourceRequest (EntityHash Resource)
-  | ResourceResponse (Either Text Resource)
-  | PingRequest
-  | PongResponse
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Message queue for actor communication
-newtype MessageQueue = MessageQueue (Chan ActorMessage)
-
--- | Create a new message queue
-createMessageQueue :: IO MessageQueue
-createMessageQueue = MessageQueue <$> newChan
-
--- | Enqueue a message
-enqueueMessage :: MessageQueue -> ActorMessage -> IO ()
-enqueueMessage (MessageQueue chan) = writeChan chan
-
--- | Dequeue a message
-dequeueMessage :: MessageQueue -> IO ActorMessage
-dequeueMessage (MessageQueue chan) = readChan chan
-
--- | Actor handle for different simulation modes
-data ActorHandle
-  = InMemoryHandle
-      { inMemoryId :: Address
-      , inMemoryState :: MVar ActorState
-      , inMemoryQueue :: MessageQueue
-      , inMemoryThread :: ThreadId
-      }
-  | LocalProcessHandle
-      { localProcessId :: Address
-      , localProcessHandle :: ProcessHandle
-      , localProcessSocket :: Socket
-      }
-  | RemoteHandle
-      { remoteId :: Address
-      , remoteHost :: Text
-      , remotePort :: Int
-      , remoteSocket :: Maybe Socket
-      , remoteActor :: ByteString
-      , remoteState :: ActorState
-      , remoteAddress :: SockAddr
-      , remoteNetworkConfig :: P2PConfig
-      , remoteLastSeen :: LamportTime
-      , remoteIsConnected :: Bool
-      }
 
 -- | Actor class defines the interface for all actors
 class Actor a where
@@ -294,7 +202,7 @@ deployInMemoryActor spec = do
   case actorRole spec of
     TimeTravelerRole -> do
       -- Import the specialized TimeTraveler module
-      import qualified TimeBandits.TimeTraveler as TT
+      import qualified Actors.TimeTraveler as TT
       
       -- Create a TimeTraveler spec from the actor spec
       let travelerSpec = TT.TimeTravelerSpec
@@ -330,7 +238,7 @@ deployInMemoryActor spec = do
     
     TimeKeeperRole -> do
       -- Import the specialized TimeKeeper module
-      import qualified TimeBandits.TimeKeeper as TK
+      import qualified Actors.TimeKeeper as TK
       
       -- Create a TimeKeeper spec from the actor spec
       let keeperSpec = TK.TimeKeeperSpec
@@ -364,7 +272,7 @@ deployInMemoryActor spec = do
     
     TimeBanditRole -> do
       -- Import the specialized TimeBandit module
-      import qualified TimeBandits.TimeBandit as TB
+      import qualified Actors.TimeBandit as TB
       
       -- Create a TimeBandit spec from the actor spec
       let banditSpec = TB.TimeBanditSpec

@@ -1,30 +1,52 @@
--- | Core module that re-exports all Core submodules
+-- | Core module that re-exports all Core submodules in an organized way
 module Core 
-  ( -- * Core Types
-    module Core.AccountProgram
-  , module Core.ActorId
-  , module Core.Common
-  , module Core.Effect
-  , module Core.Effects
-  , module Core.ProgramId
+  ( -- * Fundamental Types
+    -- | Common primitive types used throughout the codebase
+    module Core.Common
+    
+    -- * Resource Management
   , module Core.Resource
   , module Core.ResourceId
   , module Core.ResourceLedger
-  , module Core.Serialize
-  , module Core.TimeMap
+    
+    -- * Effect System
+    -- | The unified effect model for all operations
+  , module Core.Effect
+    
+    -- * Polysemy Effects
+    -- | Polysemy-based effect interfaces for composable operations
+  , module Core.Effects
+    
+    -- * Timeline Management
   , module Core.Timeline
-  , module Core.TimelineDescriptor
   , module Core.TimelineId
+  , module Core.TimelineDescriptor
+  , module Core.TimeMap
+    
+    -- * Actor and Program Identity
+  , module Core.ActorId
+  , module Core.ProgramId
+  , module Core.AccountProgram
+    
+    -- * Core Types
+    -- | Additional type definitions from Core.Types
+    -- (primitives are from Core.Common)
   , module Core.Types
-  , module Core.Utils
+    
+    -- * Utilities
+  , module Core.Serialize
+  , module Core.Error
+  , module Core.ExecutionLog
   ) where
 
--- Import all Core submodules
+-- Re-export all Core submodules
 import Core.AccountProgram
 import Core.ActorId
 import Core.Common
 import Core.Effect
 import Core.Effects
+import Core.Error
+import Core.ExecutionLog
 import Core.ProgramId
 import Core.Resource
 import Core.ResourceId
@@ -35,4 +57,3 @@ import Core.Timeline
 import Core.TimelineDescriptor
 import Core.TimelineId
 import Core.Types
-import Core.Utils

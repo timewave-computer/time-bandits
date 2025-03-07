@@ -19,7 +19,7 @@ Each adapter handles:
 - Proof collection and validation
 - State queries and verification
 -}
-module TimeBandits.EffectAdapterGenerator 
+module Execution.EffectAdapterGenerator 
   ( -- * Core Types
     TimelineDescriptor(..)
   , EffectAdapter(..)
@@ -52,19 +52,19 @@ import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>), takeDirectory)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.ProgramEffect
+import Programs.ProgramEffect
   ( Effect(..)
   )
-import TimeBandits.Timeline
+import Core.Timeline
   ( Timeline
   , TimelineId
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   )
 

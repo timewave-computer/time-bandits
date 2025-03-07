@@ -93,11 +93,10 @@ import Core.Resource (Resource, Address, EscrowId)
 import Core.Timeline (TimelineHash, BlockHeader)
 
 -- Import from Programs modules
+import Programs.ProgramTypes (ProgramId, ProgramState(..), MemorySlot(..), TimeMap(..))
+
 import Programs.ProgramState 
-  ( ProgramState(..)
-  , ProgramMemory(..)
-  , MemorySlot(..)
-  , TimeMap(..)
+  ( ProgramMemory(..)
   , ResourceClaim(..)
   , createInitialState
   , advanceProgramCounter
@@ -119,10 +118,8 @@ import Programs.ProgramDefinition
   , validateMemoryContract
   )
 
-import Programs.ProgramEffect (GuardedEffect)
-
--- | Unique identifier for a Program
-type ProgramId = EntityHash Program
+-- Forward declaration of GuardedEffect to avoid circular dependency
+data GuardedEffect
 
 -- | Program owner address
 type ProgramOwner = Address

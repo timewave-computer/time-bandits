@@ -1,6 +1,7 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -17,17 +18,22 @@
 
 {- |
 This module provides the core types used throughout the Time Bandits application.
+It imports primitive types from Core.Common to avoid duplication.
 -}
-module TimeBandits.Core.Types (
-  -- * Core Types
-  Hash (..),
-  EntityHash (..),
-  PubKey (..),
-  PrivKey (..),
-  Signature (..),
+module Core.Types (
+  -- * Re-export primitive types from Core.Common
+  Hash(..),
+  EntityHash(..),
   ActorHash,
   ResourceHash,
   TimelineHash,
+  PubKey(..),
+  PrivKey(..),
+  Signature(..),
+  LamportTime(..),
+  
+  -- * Timeline Type
+  Timeline,
 
   -- * Event Types
   ActorEvent (..),
@@ -51,9 +57,6 @@ module TimeBandits.Core.Types (
   fromListTrie,
   SyncPoint (..),
 
-  -- * Resource Types
-  Resource (..),
-
   -- * Message Types
   AuthenticatedMessage (..),
 
@@ -69,11 +72,12 @@ module TimeBandits.Core.Types (
 
   -- * Actor Types
   ActorType (..),
-  Actor (..),
+  ActorInfo (..),
 
-  -- * Lamport Clock Types
-  LamportTime (..),
-
+  -- * Resource Types
+  ResourceInfo (..),
+  ResourceCapability (..),
+  
   -- * Transient Datastore Types
   TransientDatastore (..),
   TransientStoredItem (..),
@@ -84,29 +88,75 @@ module TimeBandits.Core.Types (
   -- * New Types
   ContentAddressedMessage (..),
 
-  -- * Resource Capabilities
-  ResourceCapability (..),
-
-  -- * Cryptographic Functions
-  signMessage,
-  verifySignature,
-
   -- * Unified Resource Transaction Types
   UnifiedResourceTransaction (..),
   TransactionValidationResult (..),
+
+  -- * Fact Snapshot Types
+  FactSnapshot (..),
+  FactId (..),
+  FactValue (..),
+  ObservationProof (..),
+  ObservedFact (..),
+  EffectId (..),
+
+  -- * TimeMapId Type
+  TimeMapId,
+
+  -- * New Functions
+  emptyFactSnapshot,
+
+  -- * Re-exported Effect Types from Types modules
+  EffectId(..)
+  , FactId(..)
+  , FactValue(..)
+  , ObservationProof(..)
+  , ObservedFact(..)
+  , FactSnapshot(..)
+  , TimeMapId(..)
+  , emptyFactSnapshot
+  , Effect
+  , EffectPayload
+  , Guard
+  , GuardedEffect
+
+  -- Re-export everything from Types.Core for backward compatibility
+  , module Types.Core
 ) where
 
-import Data.ByteString ()
+import Data.ByteString (ByteString)
+import Data.Time.Clock (UTCTime)
+import Data.String (IsString)
+import qualified Data.ByteString as BS
+import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 
 -- For instances
-import Crypto.Error (CryptoFailable (..))
-import Crypto.PubKey.Ed25519 qualified as Ed25519
-import Data.ByteArray (convert)
-import Data.Map.Strict qualified as Map
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Serialize qualified as S
-import Data.Text ()
+import Data.Text (Text)
 import Data.Time (Day (..), DiffTime, UTCTime (..))
-import GHC.Generics ()
+import GHC.Generics (Generic)
+
+-- Import primitive types from Core.Common to avoid duplication
+import Core.Common (
+    Hash(..),
+    EntityHash(..),
+    ActorHash,
+    ResourceHash,
+    TimelineHash,
+    PubKey(..),
+    PrivKey(..),
+    Signature(..),
+    LamportTime(..),
+    Timeline
+  )
+
+-- Re-export types from Types modules
+import Types.Core
+import Types.Effect (Effect)
+import Types.EffectPayload (EffectPayload)
+import Types.Guard (Guard, GuardedEffect)
 
 -- | Instance for serializing UTCTime
 instance S.Serialize UTCTime where
@@ -118,50 +168,10 @@ instance S.Serialize UTCTime where
     time <- fmap (realToFrac :: Double -> DiffTime) (S.get :: S.Get Double)
     pure $ UTCTime day time
 
--- | Represents a SHA-256 content addressable hash.
-newtype Hash = Hash ByteString
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | A type-safe wrapper for hashes of different entities
-newtype EntityHash a = EntityHash {unEntityHash :: Hash}
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | Type aliases for common entity hashes
-type ActorHash = EntityHash Actor
-
-type ResourceHash = EntityHash Resource
-type TimelineHash = EntityHash Timeline
-
--- | Phantom type for Timeline entity
-data Timeline
-
--- | Represents a logical timestamp in a distributed system
-newtype LamportTime = LamportTime Int
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | Represents a public key, which uniquely identifies actors.
-newtype PubKey = PubKey ByteString
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | Represents a private key, used for signing messages.
-newtype PrivKey = PrivKey ByteString
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | Represents a cryptographic signature.
-newtype Signature = Signature ByteString
-  deriving stock (Eq, Ord, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
+-- | Instance for serializing Text
+instance S.Serialize Text where
+  put = S.put . encodeUtf8
+  get = decodeUtf8 <$> S.get
 
 -- | Represents an actor in the system.
 data ActorType = TimeTraveler | Validator | Observer
@@ -170,7 +180,8 @@ data ActorType = TimeTraveler | Validator | Observer
   deriving anyclass (S.Serialize)
 
 -- | An actor in the system with their public key hash and role
-data Actor = Actor
+-- Renamed from Actor to ActorInfo to avoid name conflicts with Core.Common.Actor
+data ActorInfo = ActorInfo
   { actorId :: ActorHash -- Hash of the public key
   , actorType :: ActorType
   }
@@ -198,6 +209,18 @@ defaultSystemConfig =
     , scMaxRetries = 3
     }
 
+-- | Capabilities that can be granted by resources
+data ResourceCapability
+  = TransferCapability -- Can transfer the resource
+  | UpdateCapability -- Can update resource metadata
+  | DelegateCapability -- Can delegate capabilities to others
+  | CreateChildCapability -- Can create child resources
+  | ValidateCapability -- Can validate timeline operations
+  | ObserveCapability -- Can observe timeline data
+  deriving stock (Eq, Show)
+  deriving stock (Generic)
+  deriving anyclass (S.Serialize)
+
 {- | A digital object tracked across timelines with UTXO-like structure.
 Resources are the fundamental units of value in the system and follow
 an unspent transaction output (UTXO) model where:
@@ -206,7 +229,8 @@ an unspent transaction output (UTXO) model where:
 - Resources maintain their provenance chain across timelines
 - Resources have capabilities that determine what actions can be performed with them
 -}
-data Resource = Resource
+-- Renamed from Resource to ResourceInfo to avoid name conflicts with Core.Common.Resource
+data ResourceInfo = ResourceInfo
   { resourceId :: ResourceHash -- Unique identifier (SHA-256)
   , resourceOrigin :: TimelineHash -- Origin timeline
   , resourceOwner :: ActorHash -- Current owner (hash of their public key)
@@ -217,18 +241,6 @@ data Resource = Resource
   , resourceTimestamp :: LamportTime -- When the resource was created
   , resourceProvenanceChain :: [TimelineHash] -- Tracks resource movement across timelines
   }
-  deriving stock (Eq, Show)
-  deriving stock (Generic)
-  deriving anyclass (S.Serialize)
-
--- | Capabilities that can be granted by resources
-data ResourceCapability
-  = TransferCapability -- Can transfer the resource
-  | UpdateCapability -- Can update resource metadata
-  | DelegateCapability -- Can delegate capabilities to others
-  | CreateChildCapability -- Can create child resources
-  | ValidateCapability -- Can validate timeline operations
-  | ObserveCapability -- Can observe timeline data
   deriving stock (Eq, Show)
   deriving stock (Generic)
   deriving anyclass (S.Serialize)
@@ -314,7 +326,7 @@ data SyncPoint = SyncPoint
 data TransientDatastore = TransientDatastore
   { tdReplicationFactor :: Int
   -- ^ Number of nodes that replicate each stored item
-  , tdTimeBandits :: [Actor]
+  , tdTimeBandits :: [ActorInfo]
   -- ^ Available Time Bandit nodes
   }
   deriving stock (Eq, Show)
@@ -339,7 +351,7 @@ data TransientStoredItem = TransientStoredItem
 
 -- | Types of actor events
 data ActorEventType
-  = ActorRegistered Actor -- Actor was registered
+  = ActorRegistered ActorInfo -- Actor was registered
   | ActorRoleChanged ActorType -- Role was changed
   | ActorDeactivated -- Actor was deactivated
   deriving stock (Eq, Show)
@@ -348,7 +360,7 @@ data ActorEventType
 
 -- | Resource event types
 data ResourceEventType
-  = ResourceCreated Resource -- Resource was created
+  = ResourceCreated ResourceInfo -- Resource was created
   | ResourceTransferred UnifiedResourceTransaction -- Resource was transferred to a new owner
   | ResourceCapabilityChecked -- Check if a resource is unspent and has capability
       { rcCheckedResource :: ResourceHash
@@ -488,7 +500,7 @@ data ContentAddressedMessage a = ContentAddressedMessage
 -- | A content-addressed authenticated message
 data AuthenticatedMessage a = AuthenticatedMessage
   { amHash :: Hash -- Hash of the message content and metadata
-  , amSender :: Actor -- Sender actor
+  , amSender :: ActorInfo -- Sender actor
   , amDestination :: Maybe ActorHash -- Optional recipient hash (if direct messaging)
   , amPayload :: ContentAddressedMessage a -- Message payload
   , amSignature :: Signature -- Cryptographic proof of authenticity
@@ -507,11 +519,11 @@ The transaction follows the UTXO model where:
 This design ensures atomic operations and maintains a complete audit trail.
 -}
 data UnifiedResourceTransaction = UnifiedResourceTransaction
-  { urtInputs :: [AuthenticatedMessage Resource] -- Input resources (must be unspent)
-  , urtOutputs :: [ContentAddressedMessage Resource] -- Output resources to be created
+  { urtInputs :: [AuthenticatedMessage ResourceInfo] -- Input resources (must be unspent)
+  , urtOutputs :: [ContentAddressedMessage ResourceInfo] -- Output resources to be created
   , urtMetadata :: ByteString -- Additional transaction metadata
   , urtTimestamp :: LamportTime -- When the transaction occurred
-  , urtSigner :: Actor -- Who authorized the transaction
+  , urtSigner :: ActorInfo -- Who authorized the transaction
   , urtSignature :: Signature -- Proof of authorization
   , urtProvenanceChain :: [TimelineHash] -- Tracks resource movement across timelines
   }
@@ -569,27 +581,3 @@ fromListTrie = Trie . Map.fromList
 -- processing all items in a timeline log or other collection.
 elemsTrie :: Trie a -> [a]
 elemsTrie (Trie m) = Map.elems m
-
--- | Sign a message with a private key
--- Creates a cryptographic signature for a message using Ed25519,
--- allowing others to verify the authenticity of the message using
--- the corresponding public key. This is a core security mechanism
--- for all actor operations in the system.
-signMessage :: PrivKey -> ByteString -> Either Text Signature
-signMessage (PrivKey privKey) msg =
-  case Ed25519.secretKey privKey of
-    CryptoFailed err -> Left $ "Invalid private key: " <> show err
-    CryptoPassed sk -> Right $ Signature $ convert (Ed25519.sign sk (Ed25519.toPublic sk) msg)
-
--- | Verify a signature with a public key
--- Validates that a message was created by the holder of the private key
--- corresponding to the provided public key. This ensures the authenticity
--- and integrity of all messages and events in the system.
-verifySignature :: PubKey -> ByteString -> Signature -> Bool
-verifySignature (PubKey pubKey) msg (Signature sig) =
-  case Ed25519.publicKey pubKey of
-    CryptoFailed _ -> False
-    CryptoPassed pk ->
-      case Ed25519.signature sig of
-        CryptoFailed _ -> False
-        CryptoPassed sig' -> Ed25519.verify pk msg sig'

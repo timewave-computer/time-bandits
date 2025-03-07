@@ -23,7 +23,7 @@ module Core.ProgramId
   , fromHash
   
   -- * Conversion
-  , toText
+  , programIdToText
   , toByteString
   , toHash
   ) where
@@ -39,10 +39,15 @@ import GHC.Generics (Generic)
 
 -- | Unique identifier for programs in the Time Bandits system
 newtype ProgramId = ProgramId { unProgramId :: ByteString }
-  deriving (Eq, Ord, Generic, Serialize)
+  deriving (Eq, Ord, Generic)
+  deriving anyclass (Serialize)
+  deriving stock (Show)
 
-instance Show ProgramId where
-  show = T.unpack . toText
+-- | Helper function for text conversion
+programIdToText :: ProgramId -> Text
+programIdToText (ProgramId bs) = case TE.decodeUtf8' bs of
+  Left _  -> T.pack $ "ProgramId:" ++ show (BS.take 8 bs) ++ "..."
+  Right t -> t
 
 -- | Allows using string literals for ProgramId
 instance IsString ProgramId where
@@ -69,10 +74,6 @@ fromByteString bs
 -- | Create a ProgramId from a hash value
 fromHash :: ByteString -> ProgramId
 fromHash = ProgramId
-
--- | Convert a ProgramId to Text
-toText :: ProgramId -> Text
-toText = TE.decodeUtf8 . unProgramId
 
 -- | Convert a ProgramId to ByteString
 toByteString :: ProgramId -> ByteString

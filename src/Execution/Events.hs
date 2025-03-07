@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module TimeBandits.Events (
+module Execution.Events (
   -- * Type Classes
   Event (..),
   Message (..),
@@ -49,11 +49,11 @@ import Polysemy (Sem, Member, embed)
 import Polysemy.Embed (Embed)
 import Polysemy.Error (Error, throw)
 import System.IO.Unsafe (unsafePerformIO)
-import TimeBandits.Core (
+import Core (
   Event(..),
   Message(..)
   )
-import TimeBandits.Types
+import Core.Types
     ( EventMetadata(..),
       EventContent(ActorEventContent, TimelineEventContent,
                    ResourceEventContent),
@@ -67,10 +67,10 @@ import TimeBandits.Types
       PubKey(..),
       ActorHash,
       EntityHash(unEntityHash) )
-import TimeBandits.Types qualified as Types
-import TimeBandits.Core qualified as Core
-import TimeBandits.Utils
-import TimeBandits.Effects (
+import Core.Types qualified as Types
+import Core qualified as Core
+import Core.Utils
+import Core.Effects (
   KeyManagement,
   lookupPublicKey,
   verifyWithPublicKey,

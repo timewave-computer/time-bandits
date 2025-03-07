@@ -21,23 +21,24 @@ Effects are primitive state transitions that:
 module Programs.ProgramEffect 
   ( -- * Core Types
     Effect(..)
+  , EffectPayload(..)
   , Guard(..)
   , GuardedEffect(..)
+  
+  -- * Type Aliases
   , FunctionName
   , Capability
   , Expiry
   , Condition
   , Trigger
   , ResourceKey
+  , Value
   
   -- * Effect Operations
   , createEffect
-  , applyEffect
-  , checkGuard
-  , createGuardedEffect
-  
-  -- * Effect Execution
-  , executeEffect
+  , replayEffect
+  , replayEffects
+  , topoSortEffects
   , executeGuardedEffect
   
   -- * Escrow Effects
@@ -48,17 +49,24 @@ module Programs.ProgramEffect
   -- * Ownership Effects
   , createOwnershipTransferEffect
   , createOwnershipVerificationEffect
+  
+  -- * Re-exports from Types modules
+  , EffectId
+  , FactSnapshot
+  , emptyFactSnapshot
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
+import qualified Data.Serialize as S
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
-
--- Import from TimeBandits modules
+import Core.Types (FactSnapshot, EffectId, ObservedFact, FactId, FactValue, ObservationProof, emptyFactSnapshot)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Core (Hash(..), EntityHash(..))
 import Core.Types
   ( AppError(..)
@@ -73,13 +81,53 @@ import Core.Resource
   , EscrowId
   , ClaimCondition(..)
   )
-import Programs.Program 
+import Programs.ProgramTypes
   ( ProgramId
   , MemorySlot
   , ProgramState
   , TimeMap
   )
 import Core.Timeline (TimelineHash, TimelineClock(..))
+import Data.Time.Clock (UTCTime)
+import qualified Crypto.Hash.SHA256 as SHA256
+import qualified Data.ByteString.Base16 as Base16
+import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString as BS
+import Data.Binary (encode)
+import qualified Data.ByteString.Lazy as LBS
+import Data.List (sortBy)
+import Data.Graph (graphFromEdges, topSort)
+
+-- Import from TimeBandits modules
+import Types.EffectTypes
+  ( EffectId(..)
+  , FactId(..)
+  , FactValue(..)
+  , ObservationProof(..)
+  , ObservedFact(..)
+  , FactSnapshot
+  , emptyFactSnapshot
+  , ResourceKey
+  , Condition
+  , Capability
+  , Trigger
+  , Expiry
+  , FunctionName
+  , Value
+  )
+import Types.Effect
+  ( Effect(..)
+  , createEffect
+  , replayEffect
+  , replayEffects
+  , topoSortEffects
+  )
+import Types.EffectPayload (EffectPayload(..))
+import Types.Guard
+  ( Guard(..)
+  , GuardedEffect(..)
+  , createGuardedEffect
+  )
 
 -- | Function name for program invocation
 type FunctionName = Text
@@ -140,81 +188,122 @@ data Guard
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
--- | A guarded effect is an effect paired with a guard
-data GuardedEffect = GuardedEffect Guard Effect
-  deriving stock (Eq, Show, Generic)
+-- | Calculate a unique ID for an effect based on its content
+-- This implements content-addressing for effects
+calculateEffectId :: Effect -> EffectId
+calculateEffectId effect =
+  -- Create a temporary effect with a placeholder effectId to avoid circular references
+  let tempEffect = effect { effectId = EffectId (Hash "placeholder") }
+      -- Serialize the effect to a ByteString
+      serialized = S.encode tempEffect
+      -- Hash the serialized effect
+      digest = SHA256.hash serialized
+      hexDigest = Base16.encode digest
+      hash = Hash (TE.decodeUtf8 hexDigest)
+  in EffectId hash
+
+-- | Create a new effect with proper ID and metadata
+createEffect :: EffectPayload -> [EffectId] -> FactSnapshot -> UTCTime -> Effect
+createEffect payloadData parents facts timestamp =
+  let effectWithoutId = Effect 
+        { effectId = undefined  -- Temporary placeholder
+        , parentEffects = parents
+        , payload = payloadData
+        , observedFacts = facts
+        , effectTimestamp = timestamp
+        }
+      effectWithId = effectWithoutId { effectId = calculateEffectId effectWithoutId }
+  in effectWithId
+
+-- | Interface for replaying effects in causal order
+replayEffect :: ProgramState -> Effect -> (ProgramState, [Effect])
+replayEffect state effect = 
+  case payload effect of
+    CreateResourcePayload key data' -> 
+      -- Implementation for creating a resource
+      error "Resource creation replay not implemented"
+      
+    TransferResourcePayload key address ->
+      -- Implementation for transferring a resource
+      error "Resource transfer replay not implemented"
+      
+    UpdateMemoryPayload key value ->
+      -- Implementation for updating memory
+      let newState = state { programMemory = Map.insert key value (programMemory state) }
+      in (newState, [])
+      
+    -- Handle other effect types...
+    _ -> (state, [])  -- Default case
+
+-- | Replay a sequence of effects in causal order
+-- This is the main entry point for effect replay
+replayEffects :: ProgramState -> [Effect] -> ProgramState
+replayEffects initialState effects =
+  let sortedEffects = topoSortEffects effects
+  in foldl applyReplayedEffect initialState sortedEffects
+
+-- | Apply a single effect during replay
+applyReplayedEffect :: ProgramState -> Effect -> ProgramState
+applyReplayedEffect state effect =
+  let (newState, _) = replayEffect state effect
+  in newState
+
+-- | Topologically sort effects based on their parent-child relationships
+-- This ensures that effects are executed in the correct causal order
+topoSortEffects :: [Effect] -> [Effect]
+topoSortEffects effects =
+  -- Create a map of effectId to effect for quick lookups
+  let effectMap = Map.fromList [(effectId e, e) | e <- effects]
+      
+      -- Create edges for the graph: (effect, effectId, [parent effectIds])
+      edges = [(e, effectId e, parentEffects e) | e <- effects]
+      
+      -- Build a graph from the edges
+      (graph, nodeFromVertex, vertexFromKey) = graphFromEdges edges
+      
+      -- Get the topologically sorted vertices
+      sortedVertices = topSort graph
+      
+      -- Convert vertices back to effects
+      sortedEffects = map ((\(e,_,_) -> e) . nodeFromVertex) sortedVertices
+  in sortedEffects
+
+-- | Create a fact observation
+observeFact :: Text -> FactValue -> ObservationProof -> ObservedFact
+observeFact factId value proof = ObservedFact 
+  { observedFactId = FactId factId
+  , observedFactValue = value
+  , observedFactProof = proof
+  }
+
+-- | A guard is a condition that must be met for an effect to apply
+data Guard = Guard
+  { guardCondition :: Condition        -- ^ The condition to check
+  , guardTrigger :: Trigger            -- ^ What to do when the condition is met
+  , guardExpiry :: Maybe Expiry        -- ^ When the guard expires
+  }
+  deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
--- | Create an effect
-createEffect :: 
-  (Member (Error AppError) r) => 
-  Effect -> 
-  Sem r Effect
-createEffect effect = do
-  -- In a real implementation, this might perform validation or normalization
-  pure effect
+-- | A guarded effect pairs an effect with its guard
+data GuardedEffect = GuardedEffect
+  { guard :: Guard           -- ^ The guard condition
+  , effect :: Effect         -- ^ The effect to apply when the guard is met
+  }
+  deriving (Eq, Show, Generic)
+  deriving anyclass (Serialize)
 
--- | Apply an effect to a program state
-applyEffect ::
-  (Member (Error AppError) r) =>
-  ProgramState ->
-  Effect ->
-  Sem r ProgramState
-applyEffect state effect = do
-  -- In a real implementation, this would apply the effect to the state
-  -- For now, just return the state unchanged
-  pure state
-
--- | Check if a guard condition holds
-checkGuard ::
-  (Member (Error AppError) r) =>
-  TimeMap ->
-  Guard ->
-  Sem r Bool
-checkGuard _ Always = pure True
-checkGuard timeMap (TimeAfter requiredTime) = do
-  -- Check if all timeline clocks are after the required time
-  -- For now, just return True
-  pure True
-checkGuard _ (OwnershipVerified _ _) = pure True  -- Would verify ownership
-checkGuard _ (ProgramOwnershipVerified _ _) = pure True  -- Would verify program ownership
-checkGuard _ (ResourceInSlot _ _) = pure True  -- Would check if resource is in slot
-checkGuard _ (SlotEmpty _) = pure True  -- Would check if slot is empty
-checkGuard _ (EscrowClaimable _ _) = pure True  -- Would check if escrow is claimable
-checkGuard _ _ = pure True  -- Other guards would be implemented in a real system
-
--- | Create a guarded effect
-createGuardedEffect ::
-  (Member (Error AppError) r) =>
-  Guard ->
-  Effect ->
-  Sem r GuardedEffect
-createGuardedEffect guard effect = do
-  pure $ GuardedEffect guard effect
-
--- | Execute an effect
-executeEffect ::
-  (Member (Error AppError) r) =>
-  ProgramState ->
-  Effect ->
-  Sem r ProgramState
-executeEffect state effect = do
-  -- In a real implementation, this would execute the effect
-  -- For now, just return the state unchanged
-  pure state
+-- | Check if a guard condition is met
+checkGuard :: ProgramState -> Guard -> Bool
+checkGuard state guard = error "checkGuard not implemented for new Effect type"
 
 -- | Execute a guarded effect
-executeGuardedEffect ::
-  (Member (Error AppError) r) =>
-  ProgramState ->
-  GuardedEffect ->
-  Sem r ProgramState
-executeGuardedEffect state (GuardedEffect guard effect) = do
-  -- Check the guard
-  guardHolds <- checkGuard (programTimeMap state) guard
-  if guardHolds
-    then executeEffect state effect
-    else throw $ "Guard condition failed for effect" :: AppError
+executeGuardedEffect :: ProgramState -> GuardedEffect -> ProgramState
+executeGuardedEffect state guardedEffect =
+  if checkGuard state (guard guardedEffect)
+  then let (newState, _) = replayEffect state (effect guardedEffect)
+       in newState
+  else state
 
 -- | Create an escrow effect with appropriate guards
 createEscrowEffect ::

@@ -1,10 +1,4 @@
-# Refactor: Resource Concurrency and Account Programs
-
-This document tracks remaining refactor and cleanup tasks, followed by a **detailed step-by-step plan** for introducing **resource-centric concurrency** and **account program primitives** into the codebase.
-
----
-
-## Remaining Cleanup Tasks (Core Refactor)
+# Refactor 004: Resource Concurrency and Account Programs
 
 ### 1. Separate Core Types from Logic
 - [x] Move all **pure types** into `Core/` (Effect, Resource, Timeline, TimeMap, Program, Actor, etc.).
@@ -19,34 +13,34 @@ This document tracks remaining refactor and cleanup tasks, followed by a **detai
     - `EffectLogger` - responsible for appending to logs.
     - `PreconditionEvaluator` - responsible for evaluating all effect preconditions.
 
-- [ ] Ensure all effect application flows through `EffectInterpreter`, not scattered across modules.
+- [x] Ensure all effect application flows through `EffectInterpreter`, not scattered across modules.
 
 ---
 
 ### 3. Fix Program State Representation
-- [ ] Split `Program` into:
+- [x] Split `Program` into:
     - `ProgramDefinition` (static metadata & initial state).
     - `ProgramState` (mutable memory + causal pointers).
 
-- [ ] Ensure every modification to program state passes through the effect interpreter pipeline.
+- [x] Ensure every modification to program state passes through the effect interpreter pipeline.
 
 ---
 
 ### 4. Simplify Simulation Control
-- [ ] Move simulation management into `Simulation/Controller.hs`.
-- [ ] `Main.hs` should only parse CLI args and invoke controller functions.
+- [x] Move simulation management into `Simulation/Controller.hs`.
+- [x] `Main.hs` should only parse CLI args and invoke controller functions.
 
 ---
 
 ### 5. Centralize Messaging
-- [ ] Consolidate all traveler/keeper/bandit messaging into `Messaging.hs`.
-- [ ] Ensure messages are only **wrappers around effects** — not separate types.
+- [x] Consolidate all traveler/keeper/bandit messaging into `Messaging.hs`.
+- [x] Ensure messages are only **wrappers around effects** — not separate types.
 
 ---
 
 ### 6. Timeline Adapters
-- [ ] Make each timeline implement a `TimelineAdapter` interface.
-- [ ] Ensure all RPC, proof fetching, and balance queries are centralized in these adapters.
+- [x] Make each timeline implement a `TimelineAdapter` interface.
+- [x] Ensure all RPC, proof fetching, and balance queries are centralized in these adapters.
 
 ---
 
@@ -59,7 +53,7 @@ This document tracks remaining refactor and cleanup tasks, followed by a **detai
 
 ### 8. Unified Logging
 - [x] All applied effects must go through `EffectLogger`, writing to **per-resource logs**.
-- [ ] There should be **no direct file or log writes outside this logger**.
+- [x] There should be **no direct file or log writes outside this logger**.
 
 ---
 

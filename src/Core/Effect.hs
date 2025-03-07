@@ -20,6 +20,7 @@ Effects have several key properties:
 - They are deterministic, ensuring consistent behavior when replayed
 - They can be cryptographically verified for security
 - They provide an abstraction over different timeline implementations
+- They form a directed acyclic graph (DAG) for temporal causality tracking
 
 The Effect type is used throughout the system as the primary building block for
 programs that operate across timelines.
@@ -29,6 +30,8 @@ module Core.Effect
     Effect(..)
   , EffectId
   , EffectResult(..)
+  , EffectDAG(..)
+  , EffectNode(..)
   
   -- * Effect Metadata
   , EffectMetadata(..)
@@ -37,6 +40,11 @@ module Core.Effect
   -- * Effect Preconditions
   , Precondition(..)
   , PreconditionType(..)
+  
+  -- * Fact Observation Model
+  , FactSnapshot(..)
+  , FactSource(..)
+  , ObservationMethod(..)
   
   -- * Effect Creation
   , createEffect
@@ -50,11 +58,19 @@ module Core.Effect
   -- * Effect Serialization
   , serializeEffect
   , deserializeEffect
+  
+  -- * Effect DAG Functions
+  , addEffectToDAG
+  , getEffectAncestors
+  , findEffectInDAG
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Serialize (Serialize, encode, decode)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
 import GHC.Generics (Generic)
@@ -66,6 +82,7 @@ import Core.ResourceId (ResourceId)
 import Core.TimelineId (TimelineId)
 import Core.ActorId (ActorId)
 import Core.AccountProgram (AccountMessage)
+import Core.TimeMap (TimeMap)
 
 -- | Unique identifier for effects
 type EffectId = Hash
@@ -85,6 +102,8 @@ data EffectMetadata = EffectMetadata
   , effectCreatedAt :: UTCTime          -- ^ When the effect was created
   , effectStatus :: EffectStatus        -- ^ Current status of the effect
   , effectPreconditions :: [Precondition] -- ^ Preconditions that must be satisfied
+  , effectParentIds :: Set EffectId     -- ^ Parent effects in the DAG
+  , effectObserved :: [FactSnapshot]    -- ^ Facts observed when effect was created
   }
   deriving (Show, Eq, Generic, Serialize)
 
@@ -94,12 +113,41 @@ data PreconditionType
   | TimelineState TimelineId ByteString     -- ^ Timeline must be in specific state
   | TimeCondition UTCTime                   -- ^ Time-based condition
   | LogicalCondition Text                   -- ^ Logical condition expressed as code
+  | EffectApplied EffectId                  -- ^ Another effect must be applied first
+  | FactObserved FactSnapshot               -- ^ A specific fact must have been observed
   deriving (Show, Eq, Generic, Serialize)
 
 -- | Precondition that must be satisfied for an effect to be applied
 data Precondition = Precondition
   { preconditionType :: PreconditionType  -- ^ Type of precondition
   , preconditionDescription :: Text       -- ^ Human-readable description
+  }
+  deriving (Show, Eq, Generic, Serialize)
+
+-- | Source of an observed fact
+data FactSource
+  = TimelineSource TimelineId   -- ^ Fact from a specific timeline
+  | ProgramSource ProgramId     -- ^ Fact from a program's state
+  | ResourceSource ResourceId   -- ^ Fact from a resource
+  | SystemSource Text           -- ^ Fact from the system itself
+  deriving (Show, Eq, Generic, Serialize)
+
+-- | Method used to observe a fact
+data ObservationMethod
+  = DirectObservation     -- ^ Fact was directly observed by the effect creator
+  | IndirectObservation   -- ^ Fact was indirectly observed via another effect
+  | ProvenObservation     -- ^ Fact was observed with cryptographic proof
+  | ConsensusObservation  -- ^ Fact was observed via consensus mechanism
+  deriving (Show, Eq, Generic, Serialize)
+
+-- | Snapshot of an observed fact
+data FactSnapshot = FactSnapshot
+  { factSource :: FactSource           -- ^ Where the fact was observed
+  , factContent :: ByteString          -- ^ Content of the fact
+  , factHash :: Hash                   -- ^ Hash of the fact content
+  , factObservedAt :: UTCTime          -- ^ When the fact was observed
+  , factMethod :: ObservationMethod    -- ^ How the fact was observed
+  , factTimeMap :: TimeMap             -- ^ TimeMap at the moment of observation
   }
   deriving (Show, Eq, Generic, Serialize)
 
@@ -112,16 +160,84 @@ data EffectResult
 
 -- | The core Effect type representing atomic operations
 data Effect
-  = ResourceEffect ResourceId ByteString  -- ^ Effect on a resource
-  | TimelineEffect TimelineId ByteString  -- ^ Effect on a timeline
-  | ProgramEffect ProgramId ByteString    -- ^ Effect on a program
-  | CompositeEffect [Effect]              -- ^ Composition of multiple effects
-  | AccountMessageEffect ActorId AccountMessage  -- ^ Message to an account program
+  = ResourceEffect 
+      { effectResourceId :: ResourceId
+      , effectResourceData :: ByteString
+      }  -- ^ Effect on a resource
+      
+  | TimelineEffect 
+      { effectTimelineId :: TimelineId
+      , effectTimelineData :: ByteString
+      }  -- ^ Effect on a timeline
+      
+  | ProgramEffect 
+      { effectProgramId :: ProgramId
+      , effectProgramData :: ByteString
+      }  -- ^ Effect on a program
+      
+  | AccountMessageEffect 
+      { effectActorId :: ActorId
+      , effectMessage :: AccountMessage
+      }  -- ^ Message to an account program
+      
+  | DepositEffect
+      { depositResourceId :: ResourceId
+      , depositAmount :: Integer
+      , depositToProgramId :: ProgramId
+      }  -- ^ Deposit resource to a program
+      
+  | WithdrawEffect
+      { withdrawResourceId :: ResourceId
+      , withdrawAmount :: Integer
+      , withdrawFromProgramId :: ProgramId
+      }  -- ^ Withdraw resource from a program
+      
+  | TransferEffect
+      { transferResourceId :: ResourceId
+      , transferAmount :: Integer
+      , transferFromProgramId :: ProgramId
+      , transferToProgramId :: ProgramId
+      }  -- ^ Transfer resource between programs
+      
+  | InvokeEffect
+      { invokeTargetProgramId :: ProgramId
+      , invokeEntrypoint :: Text
+      , invokeArguments :: [ByteString]
+      }  -- ^ Invoke another program
+      
+  | ReceiveCallbackEffect
+      { callbackFromProgramId :: ProgramId
+      , callbackPayload :: ByteString
+      }  -- ^ Receive callback from another program
+      
+  | InternalStateEffect
+      { stateKey :: Text
+      , stateValue :: ByteString
+      }  -- ^ Update internal program state
+      
+  | CompositeEffect 
+      { subEffects :: [Effect]
+      }  -- ^ Composition of multiple effects
+  deriving (Show, Eq, Generic, Serialize)
+
+-- | A node in the effect DAG
+data EffectNode = EffectNode
+  { nodeEffect :: Effect            -- ^ The effect itself
+  , nodeMetadata :: EffectMetadata  -- ^ Metadata for the effect
+  , nodeChildren :: Set EffectId    -- ^ Child effects in the DAG
+  }
+  deriving (Show, Eq, Generic, Serialize)
+
+-- | Directed acyclic graph of effects representing causal relationships
+data EffectDAG = EffectDAG
+  { dagNodes :: Map EffectId EffectNode  -- ^ Map of effect nodes
+  , dagRoots :: Set EffectId             -- ^ Root effects (no parents)
+  }
   deriving (Show, Eq, Generic, Serialize)
 
 -- | Create a new effect with metadata
-createEffect :: ProgramId -> [Precondition] -> Effect -> IO (Effect, EffectMetadata)
-createEffect programId preconditions effect = do
+createEffect :: ProgramId -> [Precondition] -> [FactSnapshot] -> Set EffectId -> Effect -> IO (Effect, EffectMetadata)
+createEffect programId preconditions observations parentIds effect = do
   currentTime <- getCurrentTime
   let effectHash = computeHash $ encode effect
       metadata = EffectMetadata
@@ -130,6 +246,8 @@ createEffect programId preconditions effect = do
         , effectCreatedAt = currentTime
         , effectStatus = EffectPending
         , effectPreconditions = preconditions
+        , effectParentIds = parentIds
+        , effectObserved = observations
         }
   pure (effect, metadata)
 
@@ -149,7 +267,7 @@ effectPreconditions (TimelineEffect _ _) = []  -- Placeholder, actual implementa
 effectPreconditions (ProgramEffect _ _) = []   -- Placeholder, actual implementation depends on effect
 effectPreconditions (CompositeEffect effects) = 
   concatMap effectPreconditions effects        -- Combine preconditions from all sub-effects
-effectPreconditions (AccountMessageEffect _ _) = []  -- Placeholder, actual implementation depends on message type
+effectPreconditions _ = []  -- Placeholder for other effect types
 
 -- | Get all postconditions guaranteed by an effect
 effectPostconditions :: Effect -> [Precondition]
@@ -158,7 +276,7 @@ effectPostconditions (TimelineEffect _ _) = []  -- Placeholder, actual implement
 effectPostconditions (ProgramEffect _ _) = []   -- Placeholder, actual implementation depends on effect
 effectPostconditions (CompositeEffect effects) = 
   concatMap effectPostconditions effects        -- Combine postconditions from all sub-effects
-effectPostconditions (AccountMessageEffect _ _) = []  -- Placeholder, actual implementation depends on message type
+effectPostconditions _ = []  -- Placeholder for other effect types
 
 -- | Serialize an effect to bytes
 serializeEffect :: Effect -> ByteString
@@ -166,4 +284,59 @@ serializeEffect = encode
 
 -- | Deserialize an effect from bytes
 deserializeEffect :: ByteString -> Either String Effect
-deserializeEffect = decode 
+deserializeEffect = decode
+
+-- | Add an effect to an effect DAG
+addEffectToDAG :: EffectDAG -> Effect -> EffectMetadata -> EffectDAG
+addEffectToDAG dag effect metadata = 
+  let effectId = nodeEffectId
+      nodeEffectId = effectId effect
+      parentIds = effectParentIds metadata
+      
+      -- Create the new node
+      newNode = EffectNode
+        { nodeEffect = effect
+        , nodeMetadata = metadata
+        , nodeChildren = Set.empty
+        }
+      
+      -- Update the DAG nodes
+      updatedNodes = Map.insert nodeEffectId newNode (dagNodes dag)
+      
+      -- Add this effect as a child to all parent nodes
+      updatedNodesWithParents = foldl updateParentNode updatedNodes (Set.toList parentIds)
+      
+      -- If this effect has no parents, add it to roots
+      updatedRoots = if Set.null parentIds
+                      then Set.insert nodeEffectId (dagRoots dag)
+                      else dagRoots dag
+  in
+  EffectDAG
+    { dagNodes = updatedNodesWithParents
+    , dagRoots = updatedRoots
+    }
+  where
+    -- Helper to update a parent node with a new child
+    updateParentNode nodes parentId =
+      Map.adjust addChild parentId nodes
+      where
+        addChild node = node { nodeChildren = Set.insert (effectId effect) (nodeChildren node) }
+
+-- | Get all ancestor effects of a given effect
+getEffectAncestors :: EffectDAG -> EffectId -> Set EffectId
+getEffectAncestors dag effectId =
+  case Map.lookup effectId (dagNodes dag) of
+    Nothing -> Set.empty
+    Just node ->
+      let parentIds = effectParentIds (nodeMetadata node)
+          directParents = parentIds
+          indirectParents = foldl (\ancestors parentId -> 
+                                Set.union ancestors (getEffectAncestors dag parentId))
+                              Set.empty
+                              (Set.toList directParents)
+      in
+      Set.union directParents indirectParents
+
+-- | Find an effect in the DAG by its ID
+findEffectInDAG :: EffectDAG -> EffectId -> Maybe EffectNode
+findEffectInDAG dag effectId = Map.lookup effectId (dagNodes dag) 

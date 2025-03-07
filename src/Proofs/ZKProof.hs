@@ -16,7 +16,7 @@ It contains mock implementations for ZK proof generation and verification.
 In a production version, this would integrate with actual ZK proving systems
 like Groth16, PLONK, or other SNARK/STARK systems.
 -}
-module TimeBandits.ZKProof
+module Proofs.ZKProof
   ( -- * Core Types
     ZKProof(..)
   , ProofType(..)
@@ -67,25 +67,25 @@ import Polysemy.Embed (Embed)
 import Polysemy.Error (Error, throw, catch)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , ProgramState
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect(..)
   , Guard(..)
   , GuardedEffect(..)
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   )
 

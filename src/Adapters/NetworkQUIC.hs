@@ -19,7 +19,7 @@ It provides:
 4. Resilience against network partitions and failures
 5. Service discovery mechanisms
 -}
-module TimeBandits.NetworkQUIC
+module Adapters.NetworkQUIC
   ( -- * QUIC Network Configuration
     QuicConfig(..)
   , defaultQuicConfig
@@ -82,9 +82,9 @@ import System.Directory (doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>))
 import System.Process (callCommand)
 
-import TimeBandits.Core qualified as Core
-import TimeBandits.Types
-import TimeBandits.Network (P2PNode(..), P2PCapability(..))
+import Core qualified as Core
+import Core.Types
+import Adapters.Network (P2PNode(..), P2PCapability(..))
 
 -- | QUIC peer representation
 data QuicPeer = QuicPeer

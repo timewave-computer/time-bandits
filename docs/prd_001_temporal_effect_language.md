@@ -1,4 +1,4 @@
-# PRD + R&D: Time Bandits Temporal Effect Language
+# PRD 001: Time Bandits Temporal Effect Language
 
 ## Overview
 

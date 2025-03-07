@@ -98,7 +98,7 @@ import Data.ByteString ()
 import Data.Serialize (Serialize, encode)
 import Polysemy
 import Polysemy.Error (Error, throw)
-import TimeBandits.Types
+import Core.Types
 
 -- Add necessary imports for P2P functions
 import qualified Data.ByteString as BS

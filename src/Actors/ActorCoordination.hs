@@ -19,7 +19,7 @@ This module implements coordination between different actor roles:
 It defines the protocols and workflows for how these roles interact to 
 accomplish common tasks in the Time Bandits system.
 -}
-module TimeBandits.ActorCoordination
+module Actors.ActorCoordination
   ( -- * Core Types
     CoordinationError(..)
   , WorkflowResult(..)
@@ -57,31 +57,32 @@ import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types (AppError(..), PeerId(..))
-import TimeBandits.Resource (Resource, Address, ResourceId)
-import TimeBandits.Program (ProgramId, ProgramDefinition, ProgramState, Effect)
-import TimeBandits.Timeline (TimelineId)
-import TimeBandits.TimeMap (TimeMap)
-import TimeBandits.TransitionMessage (TransitionMessage)
-import TimeBandits.Controller (Controller)
+import Core (Hash(..), EntityHash(..))
+import Core.Types (AppError(..), PeerId(..))
+import Core.Resource (Resource, Address, ResourceId)
+import Programs.Program (ProgramId, ProgramDefinition, ProgramState, Effect)
+import Core.Timeline (TimelineId)
+import Core.TimeMap (TimeMap)
+import Actors.TransitionMessage (TransitionMessage)
+import CLI.Controller (Controller)
+import Actors.ActorTypes (SimulationMode(..))
 
 -- Actor role imports
-import TimeBandits.TimeTraveler (TimeTraveler, TransitionResult)
-import qualified TimeBandits.TimeTraveler as TimeTraveler
-import TimeBandits.TimeKeeper (TimeKeeper, ValidationResult, ApplyResult)
-import qualified TimeBandits.TimeKeeper as TimeKeeper
-import TimeBandits.TimeBandit (TimeBandit, ExecutionResult, Proof)
-import qualified TimeBandits.TimeBandit as TimeBandit
+import Actors.TimeTraveler (TimeTraveler, TransitionResult)
+import qualified Actors.TimeTraveler as TimeTraveler
+import Actors.TimeKeeper (TimeKeeper, ValidationResult, ApplyResult)
+import qualified Actors.TimeKeeper as TimeKeeper
+import Actors.TimeBandit (TimeBandit, ExecutionResult, Proof)
+import qualified Actors.TimeBandit as TimeBandit
 
 -- | Type alias for deployment mode
 type DeploymentMode = SimulationMode
 
 -- | Simulation mode for actors
-data SimulationMode
-  = InMemory
-  | LocalProcesses
-  | GeoDistributed
+-- data SimulationMode removed
+  = InMemory      -- ^ All actors run in the same process 
+  | MultiProcess  -- ^ Actors run in separate processes
+  | Distributed   -- ^ Actors run on separate machines
   deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
 

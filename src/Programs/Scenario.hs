@@ -20,12 +20,15 @@ Scenarios define:
 
 The scenario module allows for reproducible simulations and tests.
 -}
-module TimeBandits.Scenario 
+module Programs.Scenario 
   ( -- * Core Types
     Scenario(..)
   , ScenarioConfig(..)
   , ScenarioError(..)
   , ScenarioResult(..)
+  , ExecutionMode(..)
+  , ScenarioEntity(..)
+  , ScenarioTimeline(..)
   
   -- * Scenario Operations
   , loadScenario
@@ -57,74 +60,42 @@ import Data.Char (isSpace)
 import qualified Data.ByteString.Char8 as BS
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , ProgramState
   )
-import TimeBandits.Controller
-  ( Controller
-  , ControllerConfig(..)
-  , SimulationMode(..)
-  , initController
-  )
-import TimeBandits.Actor
-  ( Actor
-  , ActorSpec(..)
-  , ActorRole(..)
+import Core.Common (SimulationMode(..))
+import Types.Actor
+  ( ActorRole(..)
   , ActorCapability(..)
+  , ActorSpec(..)
   )
-import TimeBandits.Deployment
-  ( Deployment
-  , DeploymentConfig(..)
-  , DeploymentError
-  , createDeployment
-  , startDeployment
+import Actors.ActorTypes
+  ( ActorHandle
   )
-
--- | Scenario configuration
-data ScenarioConfig = ScenarioConfig
-  { scenarioName :: Text
-  , scenarioDescription :: Text
-  , scenarioMode :: SimulationMode
-  , scenarioActors :: [ActorSpec]
-  , scenarioPrograms :: [ProgramId]
-  , scenarioInitialResources :: [EntityHash Resource]
-  , scenarioLogPath :: FilePath
-  , scenarioMaxSteps :: Int
-  , scenarioTimeout :: Int  -- in seconds
-  }
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Scenario errors
-data ScenarioError
-  = ParseError Text
-  | ValidationError Text
-  | ExecutionError Text
-  | TimeoutError
-  | ResourceError Text
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
-
--- | Scenario execution results
-data ScenarioResult = ScenarioResult
-  { resultSuccess :: Bool
-  , resultSteps :: Int
-  , resultErrors :: [Text]
-  , resultFinalState :: Maybe Controller
-  , resultExecutionLog :: [Text]
-  }
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+import Types.Deployment
+  ( DeploymentConfig(..)
+  , DeploymentError(..)
+  , DeploymentResult(..)
+  , Deployment(..)
+  )
+import Types.Scenario
+  ( ScenarioConfig(..)
+  , ScenarioError(..)
+  , ScenarioResult(..)
+  , ExecutionMode(..)
+  , ScenarioEntity(..)
+  , ScenarioTimeline(..)
+  )
 
 -- | A scenario is a specific configuration of actors and programs
 data Scenario = Scenario
@@ -198,11 +169,11 @@ parseScenarioToml content = do
     , scenarioDescription = desc
     , scenarioMode = mode
     , scenarioActors = allActors
-    , scenarioPrograms = []  -- We'd parse from TOML in a real implementation
-    , scenarioInitialResources = []  -- We'd parse from TOML
+    , scenarioInitialPrograms = []  -- We'd parse from TOML in a real implementation
     , scenarioLogPath = "logs"
     , scenarioMaxSteps = 100
     , scenarioTimeout = 60
+    , scenarioExecutionMode = SingleNode  -- Default to SingleNode
     }
 
 -- | Find a value for a key in lines of text
@@ -344,7 +315,7 @@ runScenario scenario = do
         , deploymentLogPath = scenarioLogPath (scenarioConfig scenario)
         , deploymentVerbose = True
         , deploymentActors = scenarioActors (scenarioConfig scenario)
-        , deploymentInitialPrograms = []
+        , deploymentInitialPrograms = scenarioInitialPrograms (scenarioConfig scenario)
         }
   
   -- Create and start the deployment
@@ -406,3 +377,30 @@ exportScenarioResults scenario path = do
 -- | Helper function to lift IO actions into Sem
 liftIO :: Member (Embed IO) r => IO a -> Sem r a
 liftIO = embed 
+
+-- | Create a deployment from a deployment config
+-- This is a placeholder for the actual implementation
+createDeployment :: 
+  (Member (Error DeploymentError) r, Member (Embed IO) r) => 
+  DeploymentConfig -> 
+  Sem r Deployment
+createDeployment config = do
+  -- In a real implementation, this would create a deployment
+  return Deployment
+    { deploymentConfig = config
+    , deploymentName = "test-deployment"
+    , deploymentId = "deployment-123"
+    , deploymentStartTime = "2023-01-01T00:00:00Z"
+    , deploymentActorIds = []
+    , deploymentProgramIds = []
+    }
+
+-- | Start a deployment
+-- This is a placeholder for the actual implementation
+startDeployment :: 
+  (Member (Error DeploymentError) r, Member (Embed IO) r) => 
+  Deployment -> 
+  Sem r Deployment
+startDeployment deployment = do
+  -- In a real implementation, this would start the deployment
+  return deployment 

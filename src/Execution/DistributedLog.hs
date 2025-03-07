@@ -19,7 +19,7 @@ The distributed log ensures:
 3. Availability - logs can be accessed even if some nodes are offline
 4. Partition tolerance - the system continues to function during network partitions
 -}
-module TimeBandits.DistributedLog 
+module Execution.DistributedLog 
   ( -- * Core Types
     DistributedLog(..)
   , LogEntry(..)
@@ -71,12 +71,12 @@ import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((</>))
 import System.IO (IOMode(..), hClose, hPutStrLn, withFile)
 
-import TimeBandits.Core (Hash(..), EntityHash(..), ActorHash)
-import TimeBandits.Crypto (PubKey(..), PrivKey(..), signMessage, verifySignature)
-import TimeBandits.Error (AppError(..))
-import TimeBandits.Types (LamportTime(..))
-import qualified TimeBandits.Network as Network
-import qualified TimeBandits.NetworkQUIC as NetworkQUIC
+import Core (Hash(..), EntityHash(..), ActorHash)
+import Core.Crypto (PubKey(..), PrivKey(..), signMessage, verifySignature)
+import Core.Error (AppError(..))
+import Core.Types (LamportTime(..))
+import qualified Adapters.Network as Network
+import qualified Adapters.NetworkQUIC as NetworkQUIC
 
 -- | Log storage type
 data LogStorageType

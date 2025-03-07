@@ -21,7 +21,7 @@ The ResourceLedger:
 3. Prevents double-spending of resources
 4. Maintains a history of ownership changes
 -}
-module TimeBandits.Core.ResourceLedger 
+module Execution.ResourceLedger 
   ( -- * Core Types
     ResourceLedger(..)
   , OwnershipRecord(..)
@@ -49,17 +49,17 @@ import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core.Core (Hash(..), EntityHash(..), computeSha256)
-import TimeBandits.Core.Types
+import Core.Core (Hash(..), EntityHash(..), computeSha256)
+import Core.Types
   ( AppError(..)
   , ResourceErrorType(..)
   , ResourceErrorType(ResourceNotFound)
   )
-import TimeBandits.Core.Resource
+import Core.Resource
   ( Resource
   , ResourceHash
   )
-import TimeBandits.Core.Timeline (TimelineHash)
+import Core.Timeline (TimelineHash)
 
 -- | Type alias for program identifiers
 type ProgramId = ByteString

@@ -18,7 +18,7 @@ Each timeline may have different proof requirements, this module:
 - Handles different proof types across various timeline implementations
 - Provides a unified interface for verification across different timelines
 -}
-module TimeBandits.TimelineProof 
+module Proofs.TimelineProof 
   ( -- * Core Types
     TimelineProof(..)
   , ProofRequest(..)
@@ -61,33 +61,33 @@ import System.IO.Unsafe (unsafePerformIO)
 import Relude (newIORef)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   )
-import TimeBandits.Timeline
+import Core.Timeline
   ( Timeline
   , TimelineId
   , TimelineHash
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , ProgramState
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect(..)
   , Guard(..)
   , GuardedEffect(..)
   )
-import TimeBandits.ZKProof
+import Proofs.ZKProof
   ( ZKProof(..)
   , ProofInput(..)
   , ProofType(..)
@@ -96,7 +96,7 @@ import TimeBandits.ZKProof
   , verifyZKProof
   , combineProofs
   )
-import TimeBandits.EffectAdapterGenerator
+import Execution.EffectAdapterGenerator
   ( TimelineDescriptor(..)
   , TimelineAdapterInterface(..)
   )

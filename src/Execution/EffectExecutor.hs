@@ -38,7 +38,7 @@ The EffectExecutor connects the Programs module (which defines what should happe
 with the Timeline and Adapter modules (which implement how effects are applied
 to specific timelines). It serves as the execution engine of the Time-Bandits system.
 -}
-module TimeBandits.EffectExecutor 
+module Execution.EffectExecutor 
   ( -- * Effect Execution
     applyEffect
   , executeProgram
@@ -78,12 +78,12 @@ import Polysemy.Error (Error, throw, fromEither)
 import qualified Data.ByteString.Char8 as BS
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..), EntityHash(..))
-import TimeBandits.Types
+import Core (Hash(..), EntityHash(..))
+import Core.Types
   ( AppError(..)
   , LamportTime(..)
   )
-import TimeBandits.Resource 
+import Core.Resource 
   ( Resource
   , Address
   , EscrowId
@@ -96,7 +96,7 @@ import TimeBandits.Resource
   , verifyEscrowStatus
   , verifyResourceOwnership
   )
-import TimeBandits.Program 
+import Programs.Program 
   ( ProgramId
   , MemorySlot
   , ProgramState(..)
@@ -109,19 +109,19 @@ import TimeBandits.Program
   , transferProgramOwnership
   , isAuthorizedCaller
   )
-import TimeBandits.ProgramEffect 
+import Programs.ProgramEffect 
   ( Effect(..)
   , FunctionName
   , GuardedEffect(..)
   )
-import TimeBandits.TimeMap
+import Core.TimeMap
   ( TimeMap
   , TimeMapId
   , updateTimeMap
   , verifyTimeMapConsistency
   )
 -- New imports for TransitionMessage integration
-import TimeBandits.TransitionMessage
+import Actors.TransitionMessage
   ( TransitionMessage(..)
   , Proof(..)
   , LogEntry(..)

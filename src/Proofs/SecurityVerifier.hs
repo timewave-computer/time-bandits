@@ -20,7 +20,7 @@ The SecurityVerifier:
 3. Ensures complete traceability of all operations
 4. Prevents backdating of transitions through time map enforcement
 -}
-module TimeBandits.SecurityVerifier 
+module Proofs.SecurityVerifier 
   ( -- * Core Types
     SecurityProperty(..)
   , SecurityError(..)
@@ -48,13 +48,13 @@ import Polysemy.Error (Error, throw, catch)
 import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
-import TimeBandits.Core (Hash(..))
-import TimeBandits.Types (LamportTime(..), AppError)
-import TimeBandits.Program (ProgramId)
-import TimeBandits.Resource (ResourceHash, resourceId)
-import TimeBandits.ResourceLedger (ResourceLedger(..), OwnershipRecord(..), getOwnershipHistory)
-import TimeBandits.ExecutionLog (ExecutionLog(..), LogEntry(..), getLogEntries)
-import TimeBandits.Timeline (TimelineHash, TimeMap(..))
+import Core (Hash(..))
+import Core.Types (LamportTime(..), AppError)
+import Programs.Program (ProgramId)
+import Core.Resource (ResourceHash, resourceId)
+import Core.ResourceLedger (ResourceLedger(..), OwnershipRecord(..), getOwnershipHistory)
+import Execution.ExecutionLog (ExecutionLog(..), LogEntry(..), getLogEntries)
+import Core.Timeline (TimelineHash, TimeMap(..))
 
 -- | Security properties that must be maintained by the system
 data SecurityProperty

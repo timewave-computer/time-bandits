@@ -54,10 +54,10 @@ import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
 import qualified Data.Serialize as S
 
--- Import from TimeBandits modules
-import TimeBandits.Core.Core (Hash, EntityHash(..), computeSha256)
-import TimeBandits.Core.Types (AppError(..), TimelineHash, TimelineErrorType(..))
-import TimeBandits.Core.Serialize ()  -- Import Serialize instances
+-- Import from Core modules
+import Core.Common (Hash, EntityHash(..), computeSha256)
+import Core.Types (AppError(..), TimelineHash, TimelineErrorType(..))
+import Core.Serialize ()  -- Import Serialize instances
 
 -- | Virtual Machine types supported by timelines
 data VMType
