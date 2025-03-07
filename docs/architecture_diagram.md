@@ -3,216 +3,90 @@
 This diagram illustrates the key components and relationships of the Time-Bandits system.
 
 ```mermaid
-flowchart TB
-    %% Styling
-    classDef core fill:#e1f5fe,stroke:#01579b,stroke-width:1px
-    classDef programs fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
-    classDef actors fill:#fff3e0,stroke:#e65100,stroke-width:1px
-    classDef execution fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
-    classDef adapters fill:#fffde7,stroke:#fbc02d,stroke-width:1px
-    classDef proofs fill:#e8eaf6,stroke:#3f51b5,stroke-width:1px
-    classDef cli fill:#fce4ec,stroke:#c2185b,stroke-width:1px
-    
-    %% CORE Components
-    subgraph CorePackage["Core"]
-        direction TB
-        subgraph EffectSystem["Effect System"]
-            Effect["Effect"]
-            EffectId["EffectId"]
-            EffectResult["EffectResult"]
-        end
-        
-        subgraph TimeMap["TimeMap"]
-            TimelineState["TimelineState"]
-            ResourceTracking["ResourceTracking"]
-        end
-        
-        subgraph Resource["Resource"]
-            ResourceTypes["ResourceTypes"]
-            ResourceLedger["ResourceLedger"]
-        end
-        
-        subgraph Timeline["Timeline"]
-            TimelineDescriptor["TimelineDescriptor"]
-        end
+graph TB
+  %% Define subgraphs for each major component
+  subgraph TimeBanditsSystem
+    direction TB
+
+    %% Time Keepers
+    subgraph TimeKeepers
+      direction TB
+      TK1[Time Keeper 1]
+      TK2[Time Keeper 2]
+      TK3[Time Keeper 3]
     end
-    
-    %% PROGRAMS Components
-    subgraph ProgramsPackage["Programs"]
-        direction TB
-        subgraph ProgramComponent["Program"]
-            ProgramDefinition["ProgramDefinition"]
-            ProgramInstance["ProgramInstance"]
-        end
-        ProgramEffect["ProgramEffect"]
-        PreconditionEvaluator["PreconditionEvaluator"]
-        Scenario["Scenario"]
+
+    %% Bandits
+    subgraph Bandits
+      direction TB
+      B1[Bandit 1]
+      B2[Bandit 2]
+      B3[Bandit 3]
     end
-    
-    %% ACTORS Components
-    subgraph ActorsPackage["Actors"]
-        direction TB
-        subgraph TimeTraveler["TimeTraveler"]
-            TravelerProgramExecution["ProgramExecution"]
-            TravelerEffectSubmission["EffectSubmission"]
-        end
-        
-        subgraph TimeKeeper["TimeKeeper"]
-            KeeperEffectValidation["EffectValidation"]
-            KeeperTimelineConsensus["TimelineConsensus"]
-        end
-        
-        subgraph TimeBandit["TimeBandit"]
-            BanditTimelineAttack["TimelineAttack"]
-            BanditResourceTheft["ResourceTheft"]
-        end
-        
-        subgraph ActorCommunication["ActorCommunication"]
-            TransitionMessage["TransitionMessage"]
-            ActorCoordination["ActorCoordination"]
-        end
+
+    %% Travelers
+    subgraph Travelers
+      direction TB
+      T1[Traveler 1]
+      T2[Traveler 2]
     end
-    
-    %% EXECUTION Components
-    subgraph ExecutionPackage["Execution"]
-        direction TB
-        subgraph EffectInterpreter["EffectInterpreter"]
-            EffectExecutor["EffectExecutor"]
-        end
-        
-        subgraph ExecutionLog["ExecutionLog"]
-            DistributedLog["DistributedLog"]
-            Events["Events"]
-        end
-        
-        LocalMultiProcess["LocalMultiProcess"]
+
+    %% External Timelines
+    subgraph ExternalTimelines
+      direction TB
+      ET1[Blockchain A]
+      ET2[Blockchain B]
     end
-    
-    %% ADAPTERS Components
-    subgraph AdaptersPackage["Adapters"]
-        direction TB
-        TimelineAdapter["TimelineAdapter"]
-        
-        subgraph ExternalTimelines["External Timelines"]
-            EthereumAdapter["EthereumAdapter"]
-            CelestiaAdapter["CelestiaAdapter"]
-            OtherAdapters["Other Adapters"]
-        end
-        
-        subgraph NetworkAdapter["NetworkAdapter"]
-            NetworkQUIC["NetworkQUIC"]
-        end
-    end
-    
-    %% PROOFS Components
-    subgraph ProofsPackage["Proofs"]
-        direction TB
-        TimelineProof["TimelineProof"]
-        ZKProof["ZKProof"]
-        SecurityVerifier["SecurityVerifier"]
-    end
-    
-    %% CLI Components
-    subgraph CLIPackage["CLI"]
-        direction TB
-        Main["Main"]
-        Controller["Controller"]
-    end
-    
-    %% Core internal relationships
-    Effect --> EffectId
-    Effect --> EffectResult
-    Effect --> Resource
-    TimeMap --> Timeline
-    TimeMap --> ResourceTracking
-    
-    %% Program internal relationships
-    ProgramComponent --> ProgramDefinition
-    ProgramComponent --> ProgramEffect
-    ProgramComponent --> PreconditionEvaluator
-    Scenario --> ProgramComponent
-    
-    %% Actor internal relationships
-    TimeTraveler --> TravelerProgramExecution
-    TimeTraveler --> TravelerEffectSubmission
-    TimeKeeper --> KeeperEffectValidation
-    TimeKeeper --> KeeperTimelineConsensus
-    TimeBandit --> BanditTimelineAttack
-    ActorCommunication --> TransitionMessage
-    ActorCommunication --> ActorCoordination
-    
-    %% Cross-package relationships
-    ProgramsPackage --> CorePackage
-    ActorsPackage --> CorePackage
-    ActorsPackage --> ProgramsPackage
-    ExecutionPackage --> CorePackage
-    AdaptersPackage --> CorePackage
-    ProofsPackage --> CorePackage
-    CLIPackage --> ActorsPackage
-    
-    %% Detailed dataflow
-    TimeTraveler --> ProgramComponent
-    ProgramComponent --> Effect
-    Effect --> EffectInterpreter
-    EffectInterpreter --> TimelineAdapter
-    TimelineAdapter --> ExternalTimelines
-    TimeKeeper --> EffectInterpreter
-    TimeKeeper --> ExecutionLog
-    TimeBandit --> TimelineAdapter
-    ExecutionLog --> TimelineProof
-    
-    %% Apply styling
-    class Effect,EffectId,EffectResult,TimeMap,TimelineState,ResourceTracking,Resource,ResourceTypes,ResourceLedger,Timeline,TimelineDescriptor core
-    class ProgramComponent,ProgramDefinition,ProgramInstance,ProgramEffect,PreconditionEvaluator,Scenario programs
-    class TimeTraveler,TravelerProgramExecution,TravelerEffectSubmission,TimeKeeper,KeeperEffectValidation,KeeperTimelineConsensus,TimeBandit,BanditTimelineAttack,BanditResourceTheft,ActorCommunication,TransitionMessage,ActorCoordination actors
-    class EffectInterpreter,EffectExecutor,ExecutionLog,DistributedLog,Events,LocalMultiProcess execution
-    class TimelineAdapter,ExternalTimelines,EthereumAdapter,CelestiaAdapter,OtherAdapters,NetworkAdapter,NetworkQUIC adapters
-    class TimelineProof,ZKProof,SecurityVerifier proofs
-    class Main,Controller cli
+
+    %% Unified Log
+    UL[Unified Log]
+  end
+
+  %% Define relationships between components
+  %% Time Keepers observe external timelines
+  ET1 -- Observes --> TK1
+  ET2 -- Observes --> TK2
+
+  %% Time Keepers synchronize time maps
+  TK1 -- Syncs Time Map --> TK2
+  TK2 -- Syncs Time Map --> TK3
+
+  %% Bandits receive time maps from Time Keepers
+  TK1 -- Provides Time Map --> B1
+  TK2 -- Provides Time Map --> B2
+  TK3 -- Provides Time Map --> B3
+
+  %% Travelers propose effects to Bandits
+  T1 -- Proposes Effect --> B1
+  T2 -- Proposes Effect --> B2
+
+  %% Bandits apply effects and update the unified log
+  B1 -- Applies Effect --> UL
+  B2 -- Applies Effect --> UL
+  B3 -- Applies Effect --> UL
+
+  %% Bandits synchronize effects among themselves
+  B1 -- Syncs Effect --> B2
+  B2 -- Syncs Effect --> B3
+  B3 -- Syncs Effect --> B1
+
+  %% Travelers query the unified log
+  T1 -- Queries --> UL
+  T2 -- Queries --> UL
 ```
 
-## Execution Flow
+Key Objects:
 
-The Time-Bandits system follows this general execution flow:
+- Time Keepers: Nodes responsible for observing external timelines (e.g., blockchains) and maintaining synchronized time maps.​
+- Bandits: Executor nodes that apply effects proposed by travelers, update the unified log, and synchronize effects among themselves.​
+- Travelers: Users or entities that propose effects (actions or transactions) to be executed within the Time Bandits system.​
+- External Timelines: External systems or blockchains that Time Keepers observe to maintain accurate time maps.​
+- Unified Log: A centralized log that records all applied effects, ensuring consistency and traceability within the system.​
 
-1. **Programs define effects** - Programs specify what operations should be performed on timelines
-2. **Effects are validated by preconditions** - Before execution, effect validity is checked
-3. **Time Travelers execute programs** - They initiate the execution of time-travel operations
-4. **Effects are processed by interpreters** - The core system interprets and routes effects
-5. **Time Keepers validate and maintain timelines** - They ensure timeline integrity
-6. **Execution results are logged** - All operations are recorded in a distributed log
-7. **Proofs verify execution integrity** - Cryptographic proofs ensure all operations are valid
-8. **Time Bandits attempt to exploit timelines** - They test the security of the system
+Key Interactions:
 
-## Key Component Descriptions
-
-### Core
-- **Effect System**: Defines all possible operations that can be performed across timelines
-- **TimeMap**: Maintains the state of all timelines and resources
-- **Resource**: Represents assets that can be manipulated by effects
-- **Timeline**: Represents a sequence of effects that have been applied
-
-### Programs
-- **Program**: Defines a sequence of effects to be executed
-- **PreconditionEvaluator**: Validates whether effects can be applied
-- **Scenario**: Composes multiple programs for complex simulations
-
-### Actors
-- **TimeTraveler**: Executes programs and submits effects
-- **TimeKeeper**: Validates effects and maintains timeline consensus
-- **TimeBandit**: Attempts to attack timelines and steal resources
-- **ActorCommunication**: Enables message passing between actors
-
-### Execution
-- **EffectInterpreter**: Processes and routes effects to appropriate timelines
-- **ExecutionLog**: Records all effect applications for verification
-- **LocalMultiProcess**: Manages execution across multiple processes
-
-### Adapters
-- **TimelineAdapter**: Connects to external timelines like Ethereum and Celestia
-- **NetworkAdapter**: Handles communication between distributed components
-
-### Proofs
-- **TimelineProof**: Verifies the integrity of timeline operations
-- **ZKProof**: Provides zero-knowledge proofs for private operations
-- **SecurityVerifier**: Validates the security properties of the system 
+- Time Keepers observe external timelines to gather data and synchronize time maps among themselves.​
+- Bandits receive these synchronized time maps from Time Keepers to ensure they operate based on the latest external state.​
+- Travelers propose effects to Bandits, which are then applied and recorded in the unified log.
+- Bandits synchronize applied effects among themselves to maintain system-wide consistency.​
+- Travelers can query the unified log to verify the status and history of applied effects.​

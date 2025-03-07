@@ -5,12 +5,12 @@
 
 This document defines a **comprehensive set of tests** that must be implemented to validate all core functionality, simulation functionality, APIs, actor interactions, and the foundational infrastructure required for the upcoming **Temporal Effect Language (TECL)** implementation.
 
-This test plan is designed to stand alone, so it includes detailed context for each test case, including what specific code is being tested, what behaviors or properties are under test, and guidance for the test’s structure.
+This test plan is designed to stand alone, so it includes detailed context for each test case, including what specific code is being tested, what behaviors or properties are under test, and guidance for the test's structure.
 
 
 # Test Categories
 
-## 1. Core Program State Tests
+## 1. Core Program State Tests ✅
 
 ### Context
 Every program maintains a `ProgramState` which contains its effect history (DAG), current balances, and observed facts. These tests ensure program state behaves correctly across creation, mutation, serialization, deserialization, and replay.
@@ -28,10 +28,10 @@ Every program maintains a `ProgramState` which contains its effect history (DAG)
 - `Core.Effect`
 
 
-## 2. Effect DAG Tests
+## 2. Effect DAG Tests ✅
 
 ### Context
-Every program’s history is represented as a **DAG of effects**. These tests ensure the DAG behaves correctly for adding, retrieving, and replaying effects.
+Every program's history is represented as a **DAG of effects**. These tests ensure the DAG behaves correctly for adding, retrieving, and replaying effects.
 
 ### Tests
 - **Effect Linking**: Apply effects with explicit parent-child relationships and check causal graph.
@@ -43,7 +43,7 @@ Every program’s history is represented as a **DAG of effects**. These tests en
 - `Core.EffectDAG`
 
 
-## 3. Fact Observation and Handling Tests
+## 3. Fact Observation and Handling Tests ✅
 
 ### Context
 Programs depend on observed facts (prices, balances, external state). These tests ensure fact handling works correctly across observation, serialization, and replay.
@@ -60,10 +60,10 @@ Programs depend on observed facts (prices, balances, external state). These test
 - `Timeline API Fact Queries`
 
 
-## 4. Resource Handling and Account Program Tests
+## 4. Resource Handling and Account Program Tests ✅
 
 ### Context
-All resource flows (deposits, withdrawals, transfers) go through account programs. These tests validate the account program’s correctness and interactions.
+All resource flows (deposits, withdrawals, transfers) go through account programs. These tests validate the account program's correctness and interactions.
 
 ### Tests
 - **Deposit Handling**: Deposit asset into account, check balance updates.
@@ -78,7 +78,7 @@ All resource flows (deposits, withdrawals, transfers) go through account program
 - `Effect Types: Deposit, Withdraw, Transfer`
 
 
-## 5. Invocation Handling (Direct and Cross-Program)
+## 5. Invocation Handling (Direct and Cross-Program) ✅
 
 ### Context
 Programs communicate by **sending and receiving messages**, encapsulated in invocations. These tests validate invocation processing across direct calls and cross-program calls.
@@ -94,7 +94,7 @@ Programs communicate by **sending and receiving messages**, encapsulated in invo
 - `Program Execution Interface`
 
 
-## 6. P2P Effect Propagation and Consensus
+## 6. P2P Effect Propagation and Consensus ✅
 
 ### Context
 Effects are proposed and agreed via P2P consensus before they are applied. These tests validate the effect proposal, gossip, and confirmation pipeline.
@@ -112,7 +112,7 @@ Effects are proposed and agreed via P2P consensus before they are applied. These
 - `Effect DAG`
 
 
-## 7. Safe State Enforcement and Schema Evolution
+## 7. Safe State Enforcement and Schema Evolution ✅
 
 ### Context
 Programs upgrade safely only if they are in a **declared safe state**, and only if the schema evolution rules allow the upgrade. These tests validate safe state checks and schema handling.
@@ -129,7 +129,7 @@ Programs upgrade safely only if they are in a **declared safe state**, and only 
 - `SchemaEvolution`
 
 
-## 8. Simulation Environment Tests
+## 8. Simulation Environment Tests ✅
 
 ### Context
 The system supports 3 simulation modes (in-memory, local multi-process, geo-distributed). These tests ensure all 3 modes work identically from a functional point of view.
@@ -146,7 +146,7 @@ The system supports 3 simulation modes (in-memory, local multi-process, geo-dist
 - `P2P Networking`
 
 
-## 9. Logging and Traceability
+## 9. Logging and Traceability ✅
 
 ### Context
 Every effect, fact, and program transition must be durably logged for audit and replay. These tests validate logging and causal reconstruction.
@@ -163,7 +163,7 @@ Every effect, fact, and program transition must be durably logged for audit and 
 - `Replay Engine`
 
 
-## 10. Visualization and Developer Tools
+## 10. Visualization and Developer Tools ✅
 
 ### Context
 Developers should be able to **see program history and state** using visualization tools. These tests ensure visual tools work across all cases.
@@ -180,7 +180,7 @@ Developers should be able to **see program history and state** using visualizati
 - `Schema Visualizer`
 
 
-## 11. Full Lifecycle Test (End-to-End)
+## 11. Full Lifecycle Test (End-to-End) ✅
 
 ### Context
 This test exercises the **full lifecycle** from program deployment, through cross-timeline interactions, program upgrades, and replay.
@@ -199,7 +199,7 @@ This test exercises the **full lifecycle** from program deployment, through cros
 - Full System
 
 
-# Completion Criteria
+# Completion Criteria ✅
 
 - All tests implemented in `time-bandits-core/test` and `time-bandits-simulation/test`.  
 - Tests run and pass in CI pipeline.  

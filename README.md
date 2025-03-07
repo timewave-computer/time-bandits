@@ -2,7 +2,7 @@
 
 ![](map_of_time.png)
 
-> Taking its name from [Terry Gilliam’s 1981 fantasy adventure](https://en.wikipedia.org/wiki/Time_Bandits), this project embraces the chaos of distributed time travel in the hopes of making cross-chain programming fun again.
+> Taking its name from [Terry Gilliam's 1981 fantasy adventure](https://en.wikipedia.org/wiki/Time_Bandits), this project embraces the chaos of distributed time travel in the hopes of making cross-chain programming fun again.
 
 Time Bandits is a distributed system for deploying and executing programs that coordinate logic and assets across multiple independent timelines (blockchains).
 
@@ -34,10 +34,15 @@ cabal run time-bandits -- sim in-memory --scenario basic
 
 For more detailed information about the Time-Bandits system, please refer to:
 
-- [Codebase Overview](docs/codebase_overview.md) - Overview of the main components and architecture
+- [Architectural Overview](docs/architectural_overview.md) - Comprehensive system architecture and design
+- [System Specification](docs/spec.md) - Detailed technical specification
+- [System Contract](docs/system_contract.md) - Rules and guarantees of the system
+- [Codebase Overview](docs/codebase_overview.md) - Overview of the main components and implementation
 - [Onboarding Guide](docs/onboarding_guide.md) - Detailed guide for new developers
 - [Developer Workflow](docs/dev_workflow.md) - Common development workflows
 - [Glossary](docs/glossary.md) - Definitions of key terms and concepts
+
+Additional documentation including Architecture Decision Records (ADRs) and Product Requirements Documents (PRDs) can be found in the [docs](docs/) directory.
 
 ## System Overview
 
@@ -45,7 +50,7 @@ For more detailed information about the Time-Bandits system, please refer to:
 
 **Time Travelers** are the entities who deploy programs and submit state transition messages to timelines. They initiate program execution by creating signed messages that propose new effects, attach necessary proofs, and commit any required resources. Time Travelers never directly modify program state—instead, they act as external proposers who trigger causally consistent updates.
 
-**Time Keepers** are timeline-specific actors responsible for maintaining the integrity of individual timelines. Each Time Keeper observes a particular blockchain, rollup, or event log, validating new messages (like deposits, claims, and cross-program calls) and ensuring they follow that timeline’s rules. Time Keepers also expose query interfaces so Time Bandits can request proofs, balances, and other timeline state needed to validate preconditions.
+**Time Keepers** are timeline-specific actors responsible for maintaining the integrity of individual timelines. Each Time Keeper observes a particular blockchain, rollup, or event log, validating new messages (like deposits, claims, and cross-program calls) and ensuring they follow that timeline's rules. Time Keepers also expose query interfaces so Time Bandits can request proofs, balances, and other timeline state needed to validate preconditions.
 
 **Time Bandits** operate the P2P execution network that applies program effects, generates cryptographic proofs, and maintains the immutable execution log. They observe incoming messages, apply valid effects to program state, and link each effect to its causal predecessor. Time Bandits are responsible for enforcing all cross-program and cross-timeline security properties, ensuring that programs only advance if all preconditions are satisfied, time maps are up to date, and every resource transfer follows strict ownership rules.
 
@@ -65,7 +70,7 @@ Effects are the only way programs can change state. Each effect:
 
 Effects are intentionally simple and composable. Travelers write programs by composing sequences of effects, rather than writing arbitrary code.
 
-### Time Map
+### Map of Time
 
 The time map is the core causal clock of Time Bandits. It tracks:
 - The latest observed block or event for every external timeline.
@@ -110,4 +115,4 @@ More and more applications need to operate across multiple blockchains and rollu
 
 If this wasn't bad enough, cross-chain software is almost always high-stakes. As a result, cross-chain programs must be of the highest assurance and designed to gracefully fail into well-defined error states under adverse conditions. All this without relying on trusted intermediaries. Time Bandits tackles this by ensuring that programs are always owned and operated by the actors initiating them (Time Travelers). Zero knowledge proofs of execution give the assurance that off-chain actors adhere to pre-defined control flow.
 
-To make this possible, Time Bandits introduces an temporal effect system, where programs are written as the composition of atomic algebreic effects, each reliant on their own preconditions, dependencies, and oracle definitions. This transforms the cross-chain programming experience from gluing together a brittle collection of scripts, to defining a verifiable data structure—a program isn’t "run" so much as it unfolds effect by effect, with every step causally linked to its predecessors, accompanied by a proof. The peer-to-peer network exists to provide the distributed transient storage these programs use to interact, while ensuring that no single actor can censor, reorder, or alter program history. The combination of effect system, content-addressed immutable logs, and verifiable distributed execution, creates the foundation for secure, auditable, actor-owned cross-chain applications, treating multi-chain programming as a first-class design space.
+To make this possible, Time Bandits introduces an temporal effect system, where programs are written as the composition of atomic algebreic effects, each reliant on their own preconditions, dependencies, and oracle definitions. This transforms the cross-chain programming experience from gluing together a brittle collection of scripts, to defining a verifiable data structure—a program isn't "run" so much as it unfolds effect by effect, with every step causally linked to its predecessors, accompanied by a proof. The peer-to-peer network exists to provide the distributed transient storage these programs use to interact, while ensuring that no single actor can censor, reorder, or alter program history. The combination of effect system, content-addressed immutable logs, and verifiable distributed execution, creates the foundation for secure, auditable, actor-owned cross-chain applications, treating multi-chain programming as a first-class design space.
