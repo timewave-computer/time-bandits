@@ -138,29 +138,28 @@ parseTimelineDescriptor ::
 parseTimelineDescriptor content = do
   -- In a real implementation, this would use a TOML parser library
   
-  do
-    let lines = T.lines content
-        
-        -- Function to find key-value pairs
-        findValue section key = T.strip <$> findValueInSection section key lines
-        
-        -- Extract timeline section
-        timelineId <- fromMaybe "" <$> findValue "timeline" "id"
-        timelineName <- fromMaybe "" <$> findValue "timeline" "name"
-        timelineType <- fromMaybe "" <$> findValue "timeline" "type"
-        timelineDesc <- fromMaybe "" <$> findValue "timeline" "description"
-        timelineModule <- fromMaybe "" <$> findValue "timeline" "adapter_module"
-        
-        -- Extract other sections as maps
-        properties = extractSectionAsMap "properties" lines
-        clock = extractSectionAsMap "clock" lines
-        effectAdapters = extractSectionAsMap "effect_adapters" lines
-        proofAdapters = extractSectionAsMap "proof_adapters" lines
-        resourceMappings = extractSectionAsMap "resource_mappings" lines
-        rpcEndpoints = extractSectionAsMap "rpc_endpoints" lines
-        validationRules = Map.map parseBoolValue $ extractSectionAsMap "validation_rules" lines
-        stateQueries = extractSectionAsMap "state_queries" lines
-    
+  let lines = T.lines content
+      
+      -- Function to find key-value pairs
+      findValue section key = T.strip <$> findValueInSection section key lines
+  
+  -- Extract timeline section
+  timelineId <- fromMaybe "" <$> findValue "timeline" "id"
+  timelineName <- fromMaybe "" <$> findValue "timeline" "name"
+  timelineType <- fromMaybe "" <$> findValue "timeline" "type"
+  timelineDesc <- fromMaybe "" <$> findValue "timeline" "description"
+  timelineModule <- fromMaybe "" <$> findValue "timeline" "adapter_module"
+  
+  -- Extract other sections as maps
+  properties = extractSectionAsMap "properties" lines
+  clock = extractSectionAsMap "clock" lines
+  effectAdapters = extractSectionAsMap "effect_adapters" lines
+  proofAdapters = extractSectionAsMap "proof_adapters" lines
+  resourceMappings = extractSectionAsMap "resource_mappings" lines
+  rpcEndpoints = extractSectionAsMap "rpc_endpoints" lines
+  validationRules = Map.map parseBoolValue $ extractSectionAsMap "validation_rules" lines
+  stateQueries = extractSectionAsMap "state_queries" lines
+  
   -- Validate required fields
   when (T.null timelineId) $
     throw $ MissingRequiredField "timeline.id"

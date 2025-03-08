@@ -71,7 +71,7 @@ import Prelude hiding (find, readIORef, writeIORef, newIORef)
 import qualified Data.IORef as IORef
 
 -- Import from Core modules
-import Core.Common (Hash(..), EntityHash(..), Address, Asset, LamportTime(..), Actor(..), PubKey(..))
+import Core.Common (Hash(..), EntityHash(..), Address, Asset(..), LamportTime(..), Actor(..), PubKey(..))
 import Core.TimelineId (TimelineId(..))
 import Core.ProgramId (ProgramId)
 import Core.ResourceId (ResourceId)
@@ -160,17 +160,30 @@ mockExecuteEffect stateRef effect = do
         Left err -> 
           return $ Left $ DecodingError $ "Failed to decode timeline effect: " <> T.pack err
         
-        Right ("deposit", resourceId, amount, address) -> do
-          result <- mockDeposit stateRef resourceId amount address
-          return $ Right $ encode result
+        -- Standardize all patterns to use (String, ByteString) format for consistency
+        Right ("deposit", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode deposit data: " <> T.pack err
+            Right (resourceId, amount, address) -> do
+              result <- mockDeposit stateRef resourceId amount address
+              return $ Right $ encode result
           
-        Right ("withdraw", resourceId, amount, address) -> do
-          result <- mockWithdraw stateRef resourceId amount address
-          return $ Right $ encode result
+        Right ("withdraw", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode withdraw data: " <> T.pack err
+            Right (resourceId, amount, address) -> do
+              result <- mockWithdraw stateRef resourceId amount address
+              return $ Right $ encode result
           
-        Right ("transfer", resourceId, amount, fromAddress, toAddress) -> do
-          result <- mockTransfer stateRef resourceId amount fromAddress toAddress
-          return $ Right $ encode result
+        Right ("transfer", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode transfer data: " <> T.pack err
+            Right (resourceId, amount, fromAddress, toAddress) -> do
+              result <- mockTransfer stateRef resourceId amount fromAddress toAddress
+              return $ Right $ encode result
           
         Right (effectName, _) ->
           return $ Left $ ExecutionError $ "Unknown timeline effect: " <> T.pack (show effectName)
@@ -181,13 +194,22 @@ mockExecuteEffect stateRef effect = do
         Left err -> 
           return $ Left $ DecodingError $ "Failed to decode resource effect: " <> T.pack err
         
-        Right ("update", newValue) -> do
-          -- Mock updating a resource's state
-          return $ Right $ encode ("resource-updated", resourceId, newValue)
+        -- Standardize patterns to use (String, ByteString) for consistency
+        Right ("update", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode update data: " <> T.pack err
+            Right newValue -> do
+              -- Mock updating a resource's state
+              return $ Right $ encode ("resource-updated", resourceId, newValue)
           
-        Right ("create", initialValue) -> do
-          -- Mock creating a new resource
-          return $ Right $ encode ("resource-created", resourceId, initialValue)
+        Right ("create", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode create data: " <> T.pack err
+            Right initialValue -> do
+              -- Mock creating a new resource
+              return $ Right $ encode ("resource-created", resourceId, initialValue)
           
         Right ("delete", _) -> do
           -- Mock deleting a resource
@@ -202,13 +224,22 @@ mockExecuteEffect stateRef effect = do
         Left err -> 
           return $ Left $ DecodingError $ "Failed to decode program effect: " <> T.pack err
         
-        Right ("invoke", functionName, args) -> do
-          -- Mock invoking a program function
-          return $ Right $ encode ("function-invoked", programId, functionName, args)
+        -- Standardize patterns to use (String, ByteString) for consistency
+        Right ("invoke", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode invoke data: " <> T.pack err
+            Right (functionName, args) -> do
+              -- Mock invoking a program function
+              return $ Right $ encode ("function-invoked", programId, functionName, args)
           
-        Right ("update", newCode) -> do
-          -- Mock updating a program's code
-          return $ Right $ encode ("program-updated", programId, newCode)
+        Right ("update", effectData) -> do
+          -- Decode the effect data
+          case decode effectData of
+            Left err -> return $ Left $ DecodingError $ "Failed to decode update data: " <> T.pack err
+            Right newCode -> do
+              -- Mock updating a program's code
+              return $ Right $ encode ("program-updated", programId, newCode)
           
         Right (effectName, _) ->
           return $ Left $ ExecutionError $ "Unknown program effect: " <> T.pack (show effectName)
@@ -238,23 +269,40 @@ mockQueryState stateRef query = do
   case decode query of
     Left err -> return $ Left $ DecodingError $ T.pack err
     
-    Right ("balance", address, asset) -> do
-      balance <- mockQuery stateRef address asset
-      return $ Right $ encode balance
+    -- All queries will now use the same pattern type (String, ByteString) for consistency
+    -- We'll extract and convert the values as needed in each handler
+    
+    Right ("balance", queryData) -> do
+      -- Extract address and asset from queryData
+      case decode queryData of
+        Left err -> return $ Left $ DecodingError $ "Failed to decode balance query: " <> T.pack err
+        Right (address, asset) -> do
+          balance <- mockQuery stateRef address asset
+          return $ Right $ encode balance
       
-    Right ("nonce", address) -> do
-      state <- readIORef stateRef
-      let nonce = Map.findWithDefault 0 address (mockNonce state)
-      return $ Right $ encode nonce
+    Right ("nonce", queryData) -> do
+      -- Extract address from queryData
+      case decode queryData of
+        Left err -> return $ Left $ DecodingError $ "Failed to decode nonce query: " <> T.pack err
+        Right address -> do
+          state <- readIORef stateRef
+          let nonce = Map.findWithDefault 0 address (mockNonce state)
+          return $ Right $ encode nonce
       
-    Right ("block", height) -> do
-      state <- readIORef stateRef
-      let block = find (\b -> bhHeight b == height) (mockBlocks state)
-      case block of
-        Nothing -> return $ Left $ ExecutionError $ "Block not found: " <> T.pack (show height)
-        Just b -> return $ Right $ encode b
+    Right ("block", queryData) -> do
+      -- Extract height from queryData
+      case decode queryData of
+        Left err -> return $ Left $ DecodingError $ "Failed to decode block query: " <> T.pack err
+        Right height -> do
+          state <- readIORef stateRef
+          let block = find (\b -> bhHeight b == height) (mockBlocks state)
+          case block of
+            Nothing -> return $ Left $ ExecutionError $ "Block not found: " <> T.pack (show height)
+            Just b -> return $ Right $ encode b
         
-    Right ("transaction", txHash) -> do
+    Right ("transaction", queryData) -> do
+      -- Use txHash directly from queryData
+      let txHash = queryData
       state <- readIORef stateRef
       let tx = find (\(_, result) -> txHash `BS.isInfixOf` result) (mockTransactions state)
       case tx of
@@ -291,8 +339,11 @@ advanceBlock stateRef = do
   state <- readIORef stateRef
   now <- getCurrentTime
   let nowLamport = LamportTime $ floor $ utcTimeToPOSIXSeconds now
-  let latestBlock = head $ mockBlocks state
-  let txsInBlock = map tTxHash $ filter ((==) (latestBlock `txsFromBlock` mockTransactions state)) . mockTransactions $ state
+  
+  -- Get the latest block (using head safely)
+  let latestBlock = case mockBlocks state of
+        (block:_) -> block
+        [] -> error "No blocks available in state"  -- This should never happen in practice
   
   let newHeader = BlockHeader
         { bhHeight = bhHeight latestBlock + 1
@@ -508,7 +559,11 @@ mockProof stateRef txData = do
 
 -- | Helper function to convert a ResourceId to an Asset
 resourceIdToAsset :: ResourceId -> Asset
-resourceIdToAsset = T.pack . show  -- Simplified for mock purposes
+resourceIdToAsset resourceId = Asset
+  { assetId = EntityHash $ Hash $ TE.encodeUtf8 $ T.pack (show resourceId)  -- Convert ResourceId to Hash
+  , assetType = "MOCK_ASSET"                                               -- Mock asset type
+  , assetQuantity = 0                                                      -- Default quantity
+  }
 
 -- | Generate a mock transaction hash
 generateMockTxHash :: IO Text
