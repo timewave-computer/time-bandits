@@ -58,7 +58,8 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 
 -- Import from core modules
-import Core.Common (EntityHash, generateEntityHash)
+import Core.Common (EntityHash)
+import Core (generateEntityHash)
 import Core.Error (DefinitionError(..), Result)
 import Core.Resource (Address)
 

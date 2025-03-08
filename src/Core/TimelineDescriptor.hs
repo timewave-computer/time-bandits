@@ -43,17 +43,7 @@ import Data.Serialize (Serialize, Get)
 import qualified Data.Serialize as S
 
 import Core.TimelineId (TimelineId)
-
--- | Instance for serializing Text values
-instance Serialize Text where
-  put text = do
-    let bytes = TE.encodeUtf8 text
-    S.put (fromIntegral (BS.length bytes) :: Int)
-    S.putByteString bytes
-  get = do
-    len <- S.get :: Get Int
-    bytes <- S.getByteString (fromIntegral len)
-    return (TE.decodeUtf8 bytes)
+import Core.SerializeInstances ()
 
 -- | Virtual machine types that can be used by timelines
 data VMType

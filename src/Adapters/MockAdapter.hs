@@ -60,25 +60,31 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (UTCTime, getCurrentTime, addUTCTime)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import GHC.Generics (Generic)
 import Numeric (showHex)
 import Polysemy (Member, Sem, embed)
 import Polysemy.Error (Error, throw)
 import Polysemy.Embed (Embed)
 import System.Random (randomRIO)
+import Prelude hiding (find, readIORef, writeIORef, newIORef)
+import qualified Data.IORef as IORef
 
 -- Import from Core modules
-import Core.Common (Hash(..), EntityHash(..), Address, Asset)
+import Core.Common (Hash(..), EntityHash(..), Address, Asset, LamportTime(..), Actor(..), PubKey(..))
 import Core.TimelineId (TimelineId(..))
 import Core.ProgramId (ProgramId)
 import Core.ResourceId (ResourceId)
-import Core.Types (AppError(..), ProgramErrorType(..))
+import Core.Types (AppError(..))
+import Types.Core (ProgramErrorType(..))
 import Core.Timeline (TimelineHash, BlockHeader(..))
 import Core.Effect (Effect(..))
 import Core.Resource (Resource(..))
 import Core.TimeMap (TimeMap(..), LamportClock(..))
-import Core.TimelineDescriptor (TimelineDescriptor(..), VMType(..), EffectType(..))
+import Core.TimelineDescriptor (TimelineDescriptor(..), VMType(..))
+import Types.EffectTypes (EffectType(..))
 import Adapters.TimelineAdapter (TimelineAdapter(..), AdapterConfig(..), AdapterState(..), AdapterError(..))
+import Core.Error (ExecutionError(..))
 
 -- | Mock state for simulating a blockchain
 data MockState = MockState
@@ -94,11 +100,14 @@ data MockState = MockState
 initialMockState :: IO MockState
 initialMockState = do
   now <- getCurrentTime
+  -- Convert UTCTime to LamportTime (using timestamp as Word64)
+  let nowLamport = LamportTime $ floor $ utcTimeToPOSIXSeconds now
   let genesisHeader = BlockHeader
-        { blockHeight = 1
-        , blockHash = EntityHash $ Hash "0x0000000000000000000000000000000000000000000000000000000000000001"
-        , blockTimestamp = now
-        , blockParentHash = EntityHash $ Hash "0x0000000000000000000000000000000000000000000000000000000000000000"
+        { bhHeight = 1
+        , bhMerkleRoot = Hash "0x0000000000000000000000000000000000000000000000000000000000000001"
+        , bhTimestamp = nowLamport
+        , bhPrevBlockHash = Just $ Hash "0x0000000000000000000000000000000000000000000000000000000000000000"
+        , bhTimeline = EntityHash $ Hash "mock-timeline"  -- TimelineId is an EntityHash "Timeline" type alias
         }
   
   return MockState
@@ -111,13 +120,12 @@ initialMockState = do
 -- | Create a mock timeline descriptor
 mockTimelineDescriptor :: TimelineId -> TimelineDescriptor
 mockTimelineDescriptor timelineId = TimelineDescriptor
-  { tdId = timelineId
-  , tdName = "Mock Blockchain"
-  , tdVmType = MockVM
-  , tdApiEndpoint = "http://localhost:8545"
-  , tdBlockTime = 15  -- 15 seconds per block
-  , tdEffectHandlers = Map.empty  -- Could be populated with mock handlers
-  , tdNetworkId = "mock-1"
+  { timelineId = timelineId
+  , timelineName = "Mock Blockchain"
+  , timelineVMType = CustomVM "MockVM"
+  , timelineEndpoints = ["http://localhost:8545"]
+  , timelineHandlers = []  -- Could be populated with mock handlers
+  , timelineExtraConfig = Map.fromList [("blockTime", "15"), ("networkId", "mock-1")]
   }
 
 -- | Create a mock adapter
@@ -212,7 +220,9 @@ mockExecuteEffect stateRef effect = do
       -- Check if any sub-effects failed
       let failures = [err | Left err <- results]
       if not (null failures)
-        then return $ Left $ head failures
+        then case safeHead failures of
+              Just firstError -> return $ Left firstError
+              Nothing -> error "Unexpected empty failures list"  -- This should never happen due to the null check
         else do
           -- Combine all successful results
           let successResults = [res | Right res <- results]
@@ -239,7 +249,7 @@ mockQueryState stateRef query = do
       
     Right ("block", height) -> do
       state <- readIORef stateRef
-      let block = find (\b -> blockHeight b == height) (mockBlocks state)
+      let block = find (\b -> bhHeight b == height) (mockBlocks state)
       case block of
         Nothing -> return $ Left $ ExecutionError $ "Block not found: " <> T.pack (show height)
         Just b -> return $ Right $ encode b
@@ -259,6 +269,11 @@ find :: (a -> Bool) -> [a] -> Maybe a
 find _ [] = Nothing
 find p (x:xs) = if p x then Just x else find p xs
 
+-- | Safe version of head that returns Maybe
+safeHead :: [a] -> Maybe a
+safeHead [] = Nothing
+safeHead (x:_) = Just x
+
 -- | Mock implementation of getting the latest block header
 mockGetLatestHead :: IORef MockState -> IO (Either AdapterError BlockHeader)
 mockGetLatestHead stateRef = do
@@ -266,28 +281,25 @@ mockGetLatestHead stateRef = do
   state <- readIORef stateRef
   
   -- Return the latest block header
-  case mockBlocks state of
-    [] -> return $ Left $ ExecutionError "No blocks in mock chain"
-    (header:_) -> return $ Right header
+  case safeHead (mockBlocks state) of
+    Nothing -> return $ Left $ ExecutionError "No blocks in mock chain"
+    Just header -> return $ Right header
 
--- | Advance the mock blockchain by creating a new block
+-- | Advance the blockchain with a new block
 advanceBlock :: IORef MockState -> IO BlockHeader
 advanceBlock stateRef = do
-  -- Get the current state
   state <- readIORef stateRef
-  
-  -- Get the current time
   now <- getCurrentTime
-  
-  -- Get the latest block
+  let nowLamport = LamportTime $ floor $ utcTimeToPOSIXSeconds now
   let latestBlock = head $ mockBlocks state
+  let txsInBlock = map tTxHash $ filter ((==) (latestBlock `txsFromBlock` mockTransactions state)) . mockTransactions $ state
   
-  -- Create a new block header
   let newHeader = BlockHeader
-        { blockHeight = blockHeight latestBlock + 1
-        , blockHash = EntityHash $ Hash $ "0x" <> T.pack (show $ blockHeight latestBlock + 1)
-        , blockTimestamp = now
-        , blockParentHash = blockHash latestBlock
+        { bhHeight = bhHeight latestBlock + 1
+        , bhMerkleRoot = Hash $ "0x" <> TE.encodeUtf8 (T.pack (show $ bhHeight latestBlock + 1))
+        , bhTimestamp = nowLamport
+        , bhPrevBlockHash = Just $ bhMerkleRoot latestBlock
+        , bhTimeline = bhTimeline latestBlock
         }
   
   -- Update the state with the new block
@@ -476,7 +488,9 @@ mockProof stateRef txData = do
   state <- readIORef stateRef
   
   -- Get the latest block
-  let latestBlock = head $ mockBlocks state
+  let latestBlock = case safeHead (mockBlocks state) of
+                      Just block -> block
+                      Nothing -> error "No blocks available"  -- Handle empty blocks case appropriately
   
   -- Generate a mock transaction index
   txIndex <- randomRIO (0, 100)

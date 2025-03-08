@@ -138,7 +138,7 @@ type Value = Text
 -- | Checkpoint for program state
 data Checkpoint = Checkpoint
   { checkpointTimestamp :: UTCTime
-  , checkpointHash :: EntityHash ()  -- Using unit as a placeholder type parameter
+  , checkpointHash :: EntityHash "Checkpoint"  -- Using a type-level string instead of unit
   , checkpointDescription :: Text
   }
   deriving stock (Eq, Show, Generic)

@@ -41,6 +41,8 @@ import Data.Serialize (Serialize)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Data.Time (UTCTime)
+import qualified Data.Text.Encoding as TE
+import qualified Data.Serialize as S
 
 -- Import from Core modules
 import Core.Common (EntityHash(..))
@@ -52,7 +54,7 @@ import Core.Types (LamportTime)
 data Program
 
 -- | Unique identifier for a Program
-type ProgramId = EntityHash Program
+type ProgramId = EntityHash "Program"
 
 -- | Program owner address
 type ProgramOwner = Address
@@ -60,7 +62,11 @@ type ProgramOwner = Address
 -- | A memory slot is a named container for resources within program memory
 newtype MemorySlot = MemorySlot Text
   deriving stock (Eq, Ord, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize MemorySlot where
+  put (MemorySlot t) = S.put (TE.encodeUtf8 t)
+  get = MemorySlot . TE.decodeUtf8 <$> S.get
 
 -- | Program memory tracks the runtime state of program-owned resources
 newtype ProgramMemory = ProgramMemory

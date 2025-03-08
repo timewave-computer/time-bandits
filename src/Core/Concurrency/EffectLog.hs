@@ -34,12 +34,12 @@ module Core.Concurrency.EffectLog
   , getContentAddressedEffects
   ) where
 
-import Control.Concurrent (MVar, newMVar, readMVar, modifyMVar, modifyMVar_, takeMVar, putMVar)
-import Control.Exception (catch, SomeException)
+import Prelude hiding (readMVar, newMVar)
+import Control.Exception (bracket, catch, SomeException)
 import Control.Monad (when, forM, filterM, foldM)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (UTCTime, TimeRange, getCurrentTime, diffUTCTime)
+import Data.Time (UTCTime, getCurrentTime, diffUTCTime)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -48,32 +48,58 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Crypto.Hash (SHA256, Digest, hash)
 import qualified Crypto.Hash as Hash
+import qualified Control.Concurrent as Concurrent
+import Control.Concurrent (MVar, newMVar, readMVar, modifyMVar, modifyMVar_, takeMVar, putMVar)
+import Data.List ((!!))  -- Import the (!!) operator explicitly
 
 -- Import from TimeBandits modules
 import Core.ResourceId (ResourceId)
-import Core.Types (EffectId, Effect, EffectType, Hash(..))
+import Core.Types (EffectId, Effect)
+import qualified Core.Types as CT
+import Types.EffectTypes (EffectType)
+
+-- | Our internal version of Hash to avoid conflicts
+data EffectHash = EffectHash { effectHashText :: Text }
+  deriving (Eq, Show)
+
+-- | Make EffectHash orderable for use in Maps
+instance Ord EffectHash where
+  compare (EffectHash t1) (EffectHash t2) = compare t1 t2
+
+-- | Convert between our EffectHash and Core.Types.Hash
+toExternalHash :: EffectHash -> CT.Hash
+toExternalHash (EffectHash txt) = CT.Hash $ BS.pack $ map (fromIntegral . fromEnum) $ T.unpack txt
+
+fromExternalHash :: CT.Hash -> EffectHash
+fromExternalHash (CT.Hash bs) = EffectHash $ T.pack $ map (toEnum . fromIntegral) $ BS.unpack bs
+
+-- | Time range for querying effects
+data TimeRange = TimeRange
+  { startTime :: UTCTime  -- ^ Start time (inclusive)
+  , endTime   :: UTCTime  -- ^ End time (inclusive)
+  } deriving (Eq, Show)
 
 -- | Effect log for a specific resource
 data EffectLog = EffectLog
   { resourceId :: ResourceId             -- ^ ID of the resource
   , effects :: MVar [EffectEntry]        -- ^ Append-only log of effects
-  , effectsByHash :: MVar (Map Hash Int) -- ^ Effect hash to index mapping
+  , effectsByHash :: MVar (Map EffectHash Int) -- ^ Effect hash to index mapping
   , effectsById :: MVar (Map EffectId Int) -- ^ Effect ID to index mapping
-  , latestHash :: MVar Hash              -- ^ Hash of the latest effect
+  , latestHash :: MVar EffectHash              -- ^ Hash of the latest effect
   }
 
 -- | Entry in the effect log
 data EffectEntry = EffectEntry
   { effect :: Effect          -- ^ The effect itself
   , appliedAt :: UTCTime      -- ^ When the effect was applied
-  , effectHash :: Hash        -- ^ Content-addressed hash of the effect
-  , previousHash :: Hash      -- ^ Hash of the previous effect (linkage)
+  , effectHash :: EffectHash        -- ^ Content-addressed hash of the effect
+  , previousHash :: EffectHash      -- ^ Hash of the previous effect (linkage)
   , entryIndex :: Int         -- ^ Position in the log
   }
 
 -- | Errors that can occur during effect log operations
 data EffectLogError
-  = HashMismatch Hash Hash             -- ^ Expected hash doesn't match actual
+  = HashMismatch EffectHash EffectHash             -- ^ Expected hash doesn't match actual
   | EffectNotFound EffectId            -- ^ Effect ID not found in log
   | InvalidEffectApplication Text       -- ^ Invalid effect application
   | LogCorruption Text                  -- ^ Log is corrupted
@@ -86,7 +112,7 @@ createEffectLog resId = do
   effectsVar <- newMVar []
   byHashVar <- newMVar Map.empty
   byIdVar <- newMVar Map.empty
-  latestHashVar <- newMVar $ Hash "initial"  -- Genesis hash
+  latestHashVar <- newMVar $ EffectHash "initial"  -- Genesis hash
   
   return EffectLog
     { resourceId = resId
@@ -147,13 +173,14 @@ getEffectHistory log maybeTimeRange = do
     Just timeRange ->
       return $ filter (isInTimeRange timeRange . appliedAt) allEffects
 
--- | Get the latest effect in the log
+-- | Get the latest effect from the log
 getLatestEffect :: EffectLog -> IO (Maybe EffectEntry)
 getLatestEffect log = do
   effectsList <- readMVar (effects log)
-  return $ if null effectsList
-             then Nothing
-             else Just $ last effectsList
+  -- Use reverse and head instead of last
+  return $ case reverse effectsList of
+    [] -> Nothing
+    (x:_) -> Just x
 
 -- | Get an effect by its ID
 getEffectById :: EffectLog -> EffectId -> IO (Either EffectLogError EffectEntry)
@@ -191,22 +218,22 @@ findEffectsByType log effectType = do
   return $ filter (hasEffectType effectType . effect) effectsList
 
 -- | Compute the hash of an effect
-computeEffectHash :: Effect -> Hash -> Either EffectLogError Hash
+computeEffectHash :: Effect -> EffectHash -> Either EffectLogError EffectHash
 computeEffectHash effect previousHash = do
-  -- In a real implementation, this would serialize the effect and compute a cryptographic hash
-  -- For now, this is a simplified version
-  
-  -- Get a simplified effect representation
-  let effectData = getSimplifiedEffectData effect
+  -- Get the serialized effect data
+  let effectData = getEffectData effect
+      -- Convert hash to ByteString
       previousHashBytes = getHashBytes previousHash
       combined = BS.append effectData previousHashBytes
       digest = hash combined :: Digest SHA256
-      hashBytes = Hash.digestToByteString digest
+      -- Convert digest to ByteString safely
+      hashBytes = BS.pack $ map (fromIntegral . fromEnum) $ show digest
   
-  return $ Hash $ T.pack $ show hashBytes
+  -- Create Hash from the digest converted to text
+  return $ EffectHash $ T.pack $ show $ BS.unpack hashBytes
 
 -- | Get content-addressed effects by hash
-getContentAddressedEffects :: EffectLog -> [Hash] -> IO (Map Hash (Either EffectLogError EffectEntry))
+getContentAddressedEffects :: EffectLog -> [EffectHash] -> IO (Map EffectHash (Either EffectLogError EffectEntry))
 getContentAddressedEffects log hashes = do
   byHashMap <- readMVar (effectsByHash log)
   effectsList <- readMVar (effects log)
@@ -214,7 +241,7 @@ getContentAddressedEffects log hashes = do
   -- For each hash, try to find the corresponding effect
   return $ Map.fromList $ map (\h -> (h, lookupByHash h byHashMap effectsList)) hashes
   where
-    lookupByHash :: Hash -> Map Hash Int -> [EffectEntry] -> Either EffectLogError EffectEntry
+    lookupByHash :: EffectHash -> Map EffectHash Int -> [EffectEntry] -> Either EffectLogError EffectEntry
     lookupByHash h byHash allEffects =
       case Map.lookup h byHash of
         Nothing -> Left $ InvalidEffectApplication $ "Hash not found: " <> T.pack (show h)
@@ -227,7 +254,8 @@ getContentAddressedEffects log hashes = do
 
 -- | Check if a time is within a time range
 isInTimeRange :: TimeRange -> UTCTime -> Bool
-isInTimeRange (start, end) time = time >= start && time <= end
+isInTimeRange timeRange time = 
+  time >= startTime timeRange && time <= endTime timeRange
 
 -- | Get the effect ID from an effect
 getEffectId :: Effect -> EffectId
@@ -242,5 +270,18 @@ getSimplifiedEffectData :: Effect -> ByteString
 getSimplifiedEffectData = error "Not implemented: getSimplifiedEffectData"
 
 -- | Get the bytes of a hash
-getHashBytes :: Hash -> ByteString
-getHashBytes (Hash h) = BS.pack $ map fromIntegral $ T.unpack h 
+getHashBytes :: EffectHash -> ByteString
+getHashBytes (EffectHash h) = 
+  -- Convert Text to ByteString
+  BS.pack $ map (fromIntegral . fromEnum) $ T.unpack h
+
+-- | Helper function to get the data from an effect
+getEffectData :: Effect -> ByteString
+getEffectData effect = 
+  -- In a real implementation, this would serialize the effect
+  -- For now, we'll use a simplified representation
+  BS.pack $ map (fromIntegral . fromEnum) $ show effect
+
+-- | Helper function to get the text representation of a hash
+getHashText :: EffectHash -> Text
+getHashText (EffectHash h) = h  -- h is already Text 

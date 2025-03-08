@@ -38,3 +38,17 @@ tags
 # cabal new-style
 .cabal/
 dist-newstyle/
+tests/bin/
+
+# GHC compilation artifacts
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+*.p_o
+*.p_hi
+
+# Compiled test executables
+test/bin/
+/mini_*_test
+/run_tests

@@ -10,14 +10,14 @@ dispatches to the appropriate functionality based on the specified command.
 -}
 module CLI.Main where
 
-import Control.Exception (catch, throwIO)
-import Control.Monad (when)
-import Data.Text qualified as T
+import Control.Exception ()
+import Control.Monad ()
+import Data.Text ()
 import Data.Version (Version, makeVersion, showVersion)
 import System.Directory (doesFileExist)
 import System.Environment qualified as Env
 import System.Exit qualified as Exit
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStrLn)
 
 -- | Command-line options
 data Options = Options
@@ -46,7 +46,7 @@ parseOptions args =
 main :: IO ()
 main = do
   -- Parse command-line arguments
-  args <- Env.getArgs
+  args <- getArgs
   let options = parseOptions args
   
   -- Execute the command

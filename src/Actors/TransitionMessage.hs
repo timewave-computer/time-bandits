@@ -116,15 +116,8 @@ import Programs.ProgramEffect
   , GuardedEffect(..)
   , effectToByteString
   )
-import Core.TimeMap
-  ( TimeMap
-  , TimeMapId
-  , TimeMapEntry(..)
-  , getTimelineState
-  , updateTimeMap
-  , isValidAdvancement
-  , verifyTimeMapConsistency
-  , advanceLamportClock
+import Programs.Types
+  ( TimeMap(..)
   )
 
 -- | Type alias for TransitionMessage ID
@@ -225,7 +218,7 @@ data LogEntry = LogEntry
   , appliedAt :: LamportTime          -- When the effect was applied (logical time)
   , resultState :: ByteString         -- Hash of resulting state
   , causalParent :: EntityHash LogEntry -- Previous log entry (causal link)
-  , metadata :: LogMetadata           -- Metadata about this log entry
+  , logMetadata :: LogMetadata        -- Metadata about this log entry
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
@@ -248,6 +241,42 @@ data LogVerificationResult
   | TemporalViolation LamportTime LamportTime
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
+
+-- | TimeMap entry for tracking timeline state
+data TimeMapEntry = TimeMapEntry
+  { entryTimeline :: TimelineHash
+  , entryBlock :: BlockHeader
+  , entryTimestamp :: UTCTime
+  }
+  deriving (Eq, Show, Generic)
+
+-- | Type alias for TimeMap ID
+type TimeMapId = EntityHash "TimeMap"
+
+-- | Get the state for a timeline from the TimeMap
+getTimelineState :: TimelineHash -> TimeMap -> Maybe Int
+getTimelineState timeline tm = Map.lookup timeline (timelines tm)
+
+-- | Update a TimeMap with a new timeline state
+updateTimeMap :: TimelineHash -> BlockHeader -> Int -> TimeMap -> TimeMap
+updateTimeMap timeline header time tm =
+  let newTimelines = Map.insert timeline time (timelines tm)
+      newHeads = Map.insert timeline header (observedHeads tm)
+  in tm { timelines = newTimelines, observedHeads = newHeads }
+
+-- | Check if a timeline advancement is valid
+isValidAdvancement :: Int -> Int -> Bool
+isValidAdvancement oldState newState = newState > oldState
+
+-- | Verify TimeMap consistency
+verifyTimeMapConsistency :: TimeMap -> Bool
+verifyTimeMapConsistency tm = 
+  -- For now, just check that there are no negative timeline values
+  all (>= 0) (Map.elems (timelines tm))
+
+-- | Advance Lamport clock
+advanceLamportClock :: LamportTime -> LamportTime
+advanceLamportClock (LamportTime t) = LamportTime (t + 1)
 
 -- | Create a transition message
 createTransitionMessage :: 
@@ -401,7 +430,7 @@ applyTransitionMessage msg progState timeMap = do
             , appliedAt = undefined  -- Should come from updated time map
             , resultState = encode effectResult
             , causalParent = undefined  -- Need to get from current log head
-            , metadata = logMetadata
+            , logMetadata = logMetadata
             }
       
       -- Return updated state, log entry, and updated time map
@@ -601,7 +630,7 @@ createLogEntry msg eff time parent resultHash = do
     , appliedAt = time
     , resultState = resultHash
     , causalParent = parent
-    , metadata = metadata
+    , logMetadata = metadata
     }
 
 -- | Append a log entry to the execution log
@@ -690,7 +719,7 @@ verifyLogConsistency log = do
                       , encode (appliedAt entry)
                       , encode (causalParent entry)
                       , resultState entry
-                      , encode (metadata entry)
+                      , encode (logMetadata entry)
                       ]
                 let expectedHash = EntityHash $ hashWithSHA256 entryContents
                 

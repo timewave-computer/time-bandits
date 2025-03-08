@@ -21,15 +21,16 @@ It defines the fundamental types needed for representing effects, their payload,
 guards, and the DAG structure that effects form.
 -}
 module Types.EffectTypes (
-    -- * Re-export from Types.Core
+    -- * Re-export from Types.EffectBase
     EffectId(..),
     FactId(..),
     FactValue(..),
     ObservationProof(..),
     ObservedFact(..),
-    FactSnapshot(..),
+    FactSnapshot,
     TimeMapId(..),
     emptyFactSnapshot,
+    Types.EffectBase.calculateEffectHash,
     
     -- * Effect Status
     EffectStatus(..),
@@ -40,8 +41,14 @@ module Types.EffectTypes (
     -- * Effect Type
     EffectType(..),
     
-    -- * Utility Functions
-    calculateEffectHash
+    -- * Type Aliases
+    ResourceKey,
+    Condition,
+    Capability,
+    Trigger,
+    Expiry,
+    FunctionName,
+    Value
 ) where
 
 import Data.Text (Text)
@@ -49,14 +56,21 @@ import Data.ByteString (ByteString)
 import Data.Serialize (Serialize)
 import GHC.Generics (Generic)
 import Data.Time.Clock (UTCTime)
-import Core.Common (Hash(..), EntityHash(..), computeHash)
-import Core.Schema (Schema, EvolutionResult)
-import Control.DeepSeq (NFData)
+import Core.Common (Hash(..), EntityHash(..), computeHash, LamportTime)
 import qualified Data.ByteString as BS
 import Data.Word (Word64)
 
--- Re-export from Types.Core
-import Types.Core
+-- Re-export from Types.EffectBase
+import Types.EffectBase
+
+-- Type aliases
+type ResourceKey = ByteString
+type Condition = Text
+type Capability = Text
+type Trigger = Text
+type Expiry = LamportTime
+type FunctionName = Text
+type Value = Text
 
 -- | Status of an effect
 data EffectStatus
@@ -92,16 +106,17 @@ data EffectType
     | BatchEffect                     -- ^ Execute multiple effects as batch
     | SystemEffect                    -- ^ System-level effect (upgrades, etc.)
     | EvolveSchema                    -- ^ Schema evolution effect
-        { oldSchema :: Schema         -- ^ Previous schema
-        , newSchema :: Schema         -- ^ New schema
-        , evolutionResult :: EvolutionResult -- ^ Result of evolution
+        { oldSchemaBytes :: ByteString   -- ^ Previous schema serialized
+        , newSchemaBytes :: ByteString   -- ^ New schema serialized
+        , evolutionSuccessful :: Bool    -- ^ Whether evolution succeeded
         }
     deriving (Eq, Show, Generic)
     deriving anyclass (Serialize)
 
--- | Calculate a hash for an effect based on its content
-calculateEffectHash :: ByteString -> [EffectId] -> ByteString -> Hash
-calculateEffectHash payload parentIds timestamp = 
+-- This function is now imported from Types.EffectBase
+-- | Calculate a hash for an effect based on its content with timestamp
+calculateEffectHashWithTimestamp :: ByteString -> [EffectId] -> ByteString -> Hash
+calculateEffectHashWithTimestamp payload parentIds timestamp = 
   let combinedBytes = mconcat 
         [ payload
         , mconcat (map (\(EffectId h) -> unHash h) parentIds)

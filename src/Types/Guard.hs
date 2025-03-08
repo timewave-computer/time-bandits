@@ -42,13 +42,15 @@ module Types.Guard
 
 import Data.Text (Text)
 import Data.ByteString (ByteString)
-import Data.Serialize (Serialize)
+import qualified Data.Text as T
+import Data.Serialize (Serialize, encode)
 import GHC.Generics (Generic)
 import Data.Time.Clock (UTCTime)
 
 -- Import from Types modules
 import Types.Effect (Effect)
 import Types.Core (FactId)
+import qualified Core.Types as CT
 
 -- | A condition that must be met for a guard to trigger
 data Condition
@@ -96,8 +98,33 @@ data GuardedEffect = GuardedEffect
   deriving anyclass (Serialize)
 
 -- | Create a guarded effect
-createGuardedEffect :: Guard -> Effect -> GuardedEffect
-createGuardedEffect g e = GuardedEffect
-  { effectGuard = g
-  , guardedEffect = e
-  } 
+createGuardedEffect :: Condition -> Trigger -> Maybe Expiry -> Effect -> GuardedEffect
+createGuardedEffect condition trigger expiry effect = 
+  let guardName = "Guard for " <> case effect of
+                    _ -> "effect" -- Replace with actual effect type identification if needed
+      guard = Guard 
+        { guardCondition = condition
+        , guardTrigger = trigger
+        , guardExpiry = expiry
+        }
+  in GuardedEffect guard effect
+
+-- | Helper to convert between the simplified and detailed Guard representations
+-- This would be used to create a more detailed guard from the simplified version
+-- that we get from Core.Types
+enrichGuard :: CT.Guard -> Condition -> Trigger -> Maybe Expiry -> DetailedGuard
+enrichGuard baseGuard condition trigger expiry = DetailedGuard
+  { detailedGuardBase = baseGuard
+  , detailedGuardCondition = condition
+  , detailedGuardTrigger = trigger
+  , detailedGuardExpiry = expiry
+  }
+
+-- | A more detailed guard representation for internal use
+data DetailedGuard = DetailedGuard
+  { detailedGuardBase :: CT.Guard        -- ^ The base guard from Core.Types
+  , detailedGuardCondition :: Condition        -- ^ The condition to check
+  , detailedGuardTrigger :: Trigger            -- ^ What to do when the condition is met
+  , detailedGuardExpiry :: Maybe Expiry        -- ^ When the guard expires
+  }
+  deriving stock (Eq, Show, Generic) 

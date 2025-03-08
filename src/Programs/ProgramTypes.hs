@@ -10,8 +10,7 @@ module Programs.ProgramTypes
     Program
   , ProgramId
   , MemorySlot(..)
-  , ProgramState(..)
-  , TimeMap(..)
+  , ProgramType
   ) where
 
 import Data.Map (Map)
@@ -20,8 +19,14 @@ import GHC.Generics (Generic)
 import Core.Common (TimelineHash, EntityHash(..))
 import Data.Serialize (Serialize)
 
+-- Import Serialize instance for Text
+import Types.EffectBase ()
+
+-- | Phantom type for programs
+data ProgramType
+
 -- | Unique identifier for a Program
-type ProgramId = EntityHash Program
+type ProgramId = EntityHash "Program"
 
 data Program
 
@@ -32,21 +37,5 @@ data MemorySlot = MemorySlot
   }
   deriving stock (Eq, Show, Generic)
 
--- | Program state
-data ProgramState = ProgramState
-  { programCounter :: Int
-  , programMemory :: Map Text MemorySlot
-  , timeMap :: TimeMap
-  }
-  deriving stock (Eq, Show, Generic)
-
--- | Time map tracking timeline states
-data TimeMap = TimeMap
-  { timelineStates :: Map TimelineHash Int
-  }
-  deriving stock (Eq, Show, Generic)
-
 -- Standalone deriving instances
 deriving instance Serialize MemorySlot
-deriving instance Serialize ProgramState
-deriving instance Serialize TimeMap

@@ -21,6 +21,37 @@
               packages = prev.haskell.packages // {
                 ghc963 = prev.haskell.packages.ghc963.override {
                   overrides = self: super: {
+                    # Create patched toml package
+                    patchedToml = pkgs.haskell.lib.appendPatch 
+                      (pkgs.haskell.lib.compose.doJailbreak super.toml)
+                      (pkgs.writeTextFile {
+                        name = "toml-parser-patch.patch";
+                        text = ''
+                          diff --git a/src/Text/TOML/Parser.hs b/src/Text/TOML/Parser.hs
+                          index 0123456..abcdef 100644
+                          --- a/src/Text/TOML/Parser.hs
+                          +++ b/src/Text/TOML/Parser.hs
+                          @@ -15,7 +15,7 @@ import qualified Data.Map.Strict as M
+                           import qualified Data.List as L
+                           import Data.Time.Format
+                           import Data.Time.Clock
+                          -import System.Locale
+                          +-- import System.Locale
+                           import Control.Applicative
+                           import Control.Monad
+                           import Data.Char
+                          @@ -60,7 +60,7 @@ timeP = do
+                                   char 'T'
+                                   char 'Z'
+                                   let dstr = dt <> "T" <> tm <> "Z"
+                          -        let mt = parseTime defaultTimeLocale (iso8601DateFormat (Just "%X")) (B.unpack dstr)
+                          +        let mt = parseTimeM True Data.Time.Format.defaultTimeLocale (iso8601DateFormat (Just "%X")) (B.unpack dstr)
+                                   case mt of
+                                     Just t -> return t
+                                     Nothing -> fail $ "could not parse time: " <> B.unpack dstr
+                        '';
+                      });
+                    
                     polysemy = pkgs.haskell.lib.compose.dontCheck (
                       pkgs.haskell.lib.compose.doJailbreak (
                         super.callCabal2nixWithOptions "polysemy" (pkgs.fetchFromGitHub {
@@ -39,6 +70,14 @@
                     polysemy-log = pkgs.haskell.lib.compose.dontCheck (
                       pkgs.haskell.lib.compose.doJailbreak (
                         super.callHackage "polysemy-log" "0.9.0.0" {}
+                      )
+                    );
+                    # Override toml to use our patched version
+                    toml = self.patchedToml;
+                    # Also jailbreak aeson-schema to handle dependency issues
+                    aeson-schema = pkgs.haskell.lib.markUnbroken (
+                      pkgs.haskell.lib.compose.doJailbreak (
+                        super.callHackage "aeson-schema" "0.3.0.0" {}
                       )
                     );
                   };
@@ -67,6 +106,12 @@
               pkgs.haskell.packages.ghc963.polysemy-plugin
             )
           );
+          toml = pkgs.haskell.packages.ghc963.toml;
+          aeson-schema = pkgs.haskell.lib.markUnbroken (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.callHackage "aeson-schema" "0.3.0.0" {}
+            )
+          );
         };
         
         # Add test suite
@@ -86,6 +131,12 @@
               pkgs.haskell.packages.ghc963.polysemy-plugin
             )
           );
+          toml = pkgs.haskell.packages.ghc963.toml;
+          aeson-schema = pkgs.haskell.lib.markUnbroken (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.callHackage "aeson-schema" "0.3.0.0" {}
+            )
+          );
         };
 
         # Add a check to run the test
@@ -100,6 +151,13 @@
               polysemy-plugin
               tasty
               tasty-hunit
+              # Include the overridden packages
+              toml
+              (pkgs.haskell.lib.markUnbroken (
+                pkgs.haskell.lib.compose.doJailbreak (
+                  pkgs.haskell.packages.ghc963.callHackage "aeson-schema" "0.3.0.0" {}
+                )
+              ))
             ]))
             ghcid
             stack

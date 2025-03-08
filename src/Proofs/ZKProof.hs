@@ -85,7 +85,7 @@ import Programs.ProgramEffect
   , Guard(..)
   , GuardedEffect(..)
   )
-import Core.TimeMap
+import Programs.Types
   ( TimeMap
   )
 

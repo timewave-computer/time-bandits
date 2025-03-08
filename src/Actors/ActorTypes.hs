@@ -16,16 +16,15 @@ module Actors.ActorTypes
   , ActorMessage(..)
   ) where
 
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Text (Text)
+import Data.Map.Strict ()
+import Data.Text ()
 import Data.Serialize (Serialize)
-import GHC.Generics (Generic)
+import GHC.Generics ()
 import Control.Concurrent (ThreadId)
 import System.Process (ProcessHandle)
 import Network.Socket (Socket)
 import Control.Concurrent.Chan (Chan)
-import Data.ByteString (ByteString)
+import Data.ByteString ()
 
 import Core.Common (SimulationMode(..))
 import Types.Actor

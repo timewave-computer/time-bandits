@@ -52,6 +52,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.ByteString.Lazy as LBS
 import Data.Foldable (foldl')
+import qualified Data.ByteString as BS
 
 -- Import shared types
 import Types.EffectTypes
@@ -87,8 +88,9 @@ createEffect payloadData parents facts timestamp =
         }
       -- Serialize the effect to a ByteString
       serialized = S.encode effectWithoutId
-      -- Calculate the effect ID
-      effectId' = EffectId (calculateEffectHash serialized [] (S.encode timestamp))
+      -- Calculate the effect ID by combining serialized effect with timestamp
+      combinedBytes = BS.append serialized (S.encode timestamp)
+      effectId' = EffectId (calculateEffectHash combinedBytes [])
       -- Update the effect with the calculated ID
       effectWithId = effectWithoutId { effectId = effectId' }
   in effectWithId

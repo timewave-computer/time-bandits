@@ -114,14 +114,14 @@ import qualified Data.ByteString as BS
 import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text as T
-
--- For instances
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Serialize qualified as S
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Serialize as S
 import Data.Text (Text)
 import Data.Time (Day (..), DiffTime, UTCTime (..))
 import GHC.Generics (Generic)
+import qualified Data.Vector as V
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 
 -- Import primitive types from Core.Common to avoid duplication
 import Core.Common (
@@ -141,7 +141,23 @@ import Core.Common (
 import Types.Core (EffectId(..), FactId(..), FactValue(..), ObservationProof(..), ObservedFact(..), FactSnapshot(..), TimeMapId(..), emptyFactSnapshot)
 import Types.Effect (Effect)
 import Types.EffectPayload (EffectPayload)
-import Types.Guard (Guard, GuardedEffect)
+
+-- Forward declarations for Guard types to break import cycle
+-- In a real solution, we would create a Types.Common module for shared types
+data Guard 
+  = Guard
+  { guardName :: Text
+  , guardDescription :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize)
+
+data GuardedEffect = GuardedEffect
+  { guardedEffectGuard :: Guard
+  , guardedEffectEffect :: ByteString
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize)
 
 -- | Represents an actor in the system.
 data ActorType = TimeTraveler | Validator | Observer
@@ -221,7 +237,7 @@ data ActorEvent = ActorEvent
   -- ^ The type of actor event
   , aeMetadata :: EventMetadata
   -- ^ Common event metadata
-  , aePreviousEvent :: Maybe (EntityHash ActorEvent)
+  , aePreviousEvent :: Maybe (EntityHash "ActorEvent")
   -- ^ Previous event in chain
   }
   deriving stock (Eq, Show)
@@ -234,8 +250,10 @@ data ResourceEvent = ResourceEvent
   -- ^ The type of resource event
   , reMetadata :: EventMetadata
   -- ^ Common event metadata
-  , rePreviousEvent :: Maybe (EntityHash ResourceEvent)
+  , rePreviousEvent :: Maybe (EntityHash "ResourceEvent")
   -- ^ Previous event in chain
+  , reActor :: ActorHash
+  -- ^ Actor who created this event
   }
   deriving stock (Eq, Show)
   deriving stock (Generic)
@@ -247,7 +265,7 @@ data TimelineEvent = TimelineEvent
   -- ^ The type of timeline event
   , teMetadata :: EventMetadata
   -- ^ Common event metadata
-  , tePreviousEvent :: Maybe (EntityHash TimelineEvent)
+  , tePreviousEvent :: Maybe (EntityHash "TimelineEvent")
   -- ^ Previous event in chain
   , teActor :: ActorHash
   -- ^ Actor who created this event

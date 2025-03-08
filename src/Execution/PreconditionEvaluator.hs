@@ -83,21 +83,25 @@ data ProposedEffect = ProposedEffect
   }
   deriving (Eq, Show, Generic)
 
--- | PreconditionEvaluator evaluates effect preconditions
-data PreconditionEvaluator = PreconditionEvaluator
-  { timelineAdapters :: Map.Map T.Text TimelineAdapter  -- ^ Adapters for external timelines
-  }
-  deriving (Show, Generic)
-
 -- | Placeholder for timeline adapter
 data TimelineAdapter = TimelineAdapter
-  { timelineId :: T.Text
+  { timelineId :: Text
   , queryBalance :: ProgramId -> ResourceId -> IO Integer
   , verifyProof :: BS.ByteString -> IO Bool
   }
 
-instance Show TimelineAdapter where
-  show adapter = "TimelineAdapter { timelineId = " ++ show (timelineId adapter) ++ " }"
+-- | Function to convert TimelineAdapter to String for display
+timelineAdapterToString :: TimelineAdapter -> String
+timelineAdapterToString adapter = "TimelineAdapter { timelineId = " ++ Prelude.show (timelineId adapter) ++ " }"
+
+-- | PreconditionEvaluator evaluates effect preconditions
+data PreconditionEvaluator = PreconditionEvaluator
+  { timelineAdapters :: Map.Map T.Text TimelineAdapter  -- ^ Adapters for external timelines
+  }
+
+-- | Function to convert PreconditionEvaluator to String for display
+preconditionEvaluatorToString :: PreconditionEvaluator -> String
+preconditionEvaluatorToString _ = "PreconditionEvaluator { ... }"
 
 -- | Create a new precondition evaluator
 createEvaluator :: [TimelineAdapter] -> PreconditionEvaluator

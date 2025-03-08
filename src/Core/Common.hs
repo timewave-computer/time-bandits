@@ -1,259 +1,192 @@
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE DataKinds #-}
 
-{- |
-Module: Core.Common
-Description: Common utility types for the Time Bandits system
-
-This module provides common utility types and functions that are used throughout
-the Time Bandits system. These include basic data types for cryptographic hashes,
-addresses, assets, and other primitive values.
-
-This is the canonical source for fundamental types like Hash, Signature,
-EntityHash, etc. to avoid duplication and import conflicts.
--}
-module Core.Common
-  ( -- * Cryptographic Primitives
-    Hash(..)
+-- | Common types and utilities used throughout the Time Bandits system
+module Core.Common 
+  ( 
+    -- * Simulation Types
+    SimulationMode(..)
+  , DeploymentMode
+    
+    -- * Hash Types
+  , Hash(..)
   , EntityHash(..)
-  , Signature(..)
-  , SignatureError(..)
-  , VerificationError(..)
-  , PubKey(..)
-  , PrivKey(..)
-  
-  -- * Entity Hash Type Aliases
   , ActorHash
   , ResourceHash
   , TimelineHash
-  
-  -- * Phantom Types for Entities
-  , Actor
-  , Resource
-  , Timeline
-  
-  -- * Asset Representation
-  , AssetType(..)
-  , AssetAmount(..)
-  , AssetId(..)
-  , Asset(..)
-  
-  -- * Time Representation
-  , LamportTime(..)
-  , TimeMapEntry(..)
-  , TimeMap(..)
-  , emptyTimeMap
-  
-  -- * Map Utility Functions
-  , getValueByMaxKey
-  , tryGetValueByKey
-  , findMapEntryByValue
-  
-  -- * Address Types
-  , Address(..)
-  , AddressType(..)
-  
-  -- * Simulation Modes
-  , SimulationMode(..)
-  
-  -- * Basic Utilities
   , computeHash
-  , computeSha256
-  , generateEntityHash
+  
+    -- * Cryptographic Types
+  , PubKey(..)
+  , PrivKey(..)
+  , Signature(..)
+  
+    -- * Time Types
+  , LamportTime(..)
+  
+    -- * Timeline Type
+  , Timeline(..)
+    
+    -- * Actor-related Types
+  , Actor(..)
+  , Address
+  , Asset(..)
   ) where
 
-import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Serialize (Serialize)
+import qualified Crypto.Hash as Hash
+import Crypto.Hash (SHA256, Digest)
 import qualified Data.Serialize as S
-import Data.String (IsString(..))
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import Data.Time (Day (..), DiffTime, UTCTime (..))
-import Prelude hiding (lookup)
-import qualified Data.Map.Strict as Map
-import Control.Monad (when)
-import Core.Serialize () -- Import Serialize instances
+import Data.Text (Text)
+import Data.Word (Word64)
+import Data.Proxy (Proxy(..))
+import GHC.TypeLits (Symbol, KnownSymbol, symbolVal)
+import qualified Data.Text.Encoding as TE
+import Control.DeepSeq (NFData)
 
--- | Instance for serializing UTCTime
-instance Serialize UTCTime where
-  put (UTCTime day time) = do
-    S.put (toModifiedJulianDay day)
-    S.put (realToFrac time :: Double)
-  get = do
-    day <- fmap ModifiedJulianDay (S.get :: S.Get Integer)
-    time <- fmap (realToFrac :: Double -> DiffTime) (S.get :: S.Get Double)
-    pure $ UTCTime day time
-
--- | Cryptographic hash for content-addressable data
-newtype Hash = Hash { unHash :: ByteString }
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
-instance IsString Hash where
-  fromString = Hash . TE.encodeUtf8 . T.pack
-
--- | A type-safe wrapper for hashes of different entities
--- This provides type safety when dealing with different entity hashes
-newtype EntityHash a = EntityHash { unEntityHash :: Hash }
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
--- | Phantom types for type-safe entity references
-
--- | Phantom type for Actor entity
-data Actor
-
--- | Phantom type for Resource entity
-data Resource
-
--- | Phantom type for Timeline entity
-data Timeline
-
--- | Type aliases for common entity hashes
-type ActorHash = EntityHash Actor
-type ResourceHash = EntityHash Resource
-type TimelineHash = EntityHash Timeline
-
--- | Represents a logical timestamp in a distributed system
-newtype LamportTime = LamportTime Int
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
--- | Represents a public key, which uniquely identifies actors.
-newtype PubKey = PubKey ByteString
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
--- | Represents a private key, used for signing messages.
-newtype PrivKey = PrivKey ByteString
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
--- | Digital signature for data authentication
-newtype Signature = Signature { unSignature :: ByteString }
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
--- | Types of errors that can occur during signature creation
-data SignatureError
-  = InvalidSigningKey Text
-  | SigningDataError Text
-  deriving (Show, Eq)
-
--- | Types of errors that can occur during signature verification
-data VerificationError
-  = InvalidVerificationKey Text
-  | VerificationDataError Text
-  | SignatureMismatch
-  deriving (Show, Eq)
-
--- | Types of assets in the system
-data AssetType
-  = NativeToken    -- ^ Native token of a timeline
-  | ERC20Token     -- ^ ERC-20 compatible token
-  | NFT            -- ^ Non-fungible token
-  | GenericAsset   -- ^ Generic asset type
-  deriving (Show, Eq, Generic, Serialize)
-
--- | Amount of an asset
-newtype AssetAmount = AssetAmount { unAssetAmount :: Integer }
-  deriving (Eq, Ord, Generic)
-  deriving anyclass (Serialize)
-  deriving stock (Show)
-
--- | Unique identifier for an asset
-type AssetId = ByteString
-
--- | An asset with metadata
-data Asset = Asset
-  { assetType :: AssetType       -- ^ Type of the asset
-  , assetId :: AssetId           -- ^ Unique identifier
-  , assetAmount :: AssetAmount   -- ^ Amount of the asset
-  }
-  deriving (Show, Eq, Generic, Serialize)
-
--- | Types of addresses in the system
-data AddressType
-  = EOA           -- ^ Externally Owned Account
-  | Contract      -- ^ Smart Contract
-  | Timelock      -- ^ Timelock address
-  | Multisig      -- ^ Multisignature address
-  deriving (Show, Eq, Generic, Serialize)
-
--- | An address in a timeline
-data Address = Address
-  { addressType :: AddressType        -- ^ Type of address
-  , addressBytes :: ByteString        -- ^ Raw address bytes
-  }
-  deriving (Show, Eq, Generic, Serialize)
-
--- | Simulation modes for the system
+-- | Simulation mode for the Time Bandits system
 data SimulationMode
-  = InMemory          -- ^ Run everything in memory (simplest mode)
-  | LocalProcesses    -- ^ Run actors as separate local processes
-  | GeoDistributed    -- ^ Run as geo-distributed system
-  deriving (Show, Eq, Generic, Serialize)
+  = InMemory      -- ^ All actors run in the same process 
+  | MultiProcess  -- ^ Actors run in separate processes
+  | Distributed   -- ^ Actors run on separate machines
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize)
 
--- | Compute a hash of a ByteString
+-- | Type alias for deployment mode
+type DeploymentMode = SimulationMode
+
+-- | Hash type for content-addressed data
+newtype Hash = Hash { unHash :: ByteString }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize, NFData)
+
+-- | Entity-specific hash type with phantom type for type safety
+newtype EntityHash (a :: Symbol) = EntityHash { unEntityHash :: Hash }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize, NFData)
+
+-- | Ord instance for EntityHash
+instance Ord (EntityHash a) where
+  compare (EntityHash h1) (EntityHash h2) = compare (unHash h1) (unHash h2)
+
+-- | Ord instance for Hash
+instance Ord Hash where
+  compare (Hash bs1) (Hash bs2) = compare bs1 bs2
+
+-- | Type alias for actor hash
+type ActorHash = EntityHash "Actor"
+
+-- | Type alias for resource hash
+type ResourceHash = EntityHash "Resource"
+
+-- | Type alias for timeline hash
+type TimelineHash = EntityHash "Timeline"
+
+-- | Compute a SHA-256 hash of a ByteString
 computeHash :: ByteString -> Hash
-computeHash = Hash . SHA256.hash
+computeHash bs = 
+  let digest = Hash.hash bs :: Digest SHA256
+      hashStr = show digest
+      hashBytes = BS.pack $ map (fromIntegral . fromEnum) hashStr
+  in Hash hashBytes
 
--- | Compute a SHA-256 hash directly returning ByteString
-computeSha256 :: ByteString -> ByteString
-computeSha256 = SHA256.hash
+-- | Public key for cryptographic operations
+newtype PubKey = PubKey { unPubKey :: ByteString }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize)
 
--- | Generate an entity hash for a serializable value
-generateEntityHash :: Serialize a => a -> EntityHash b
-generateEntityHash = EntityHash . computeHash . S.encode
+-- | Private key for cryptographic operations
+newtype PrivKey = PrivKey { unPrivKey :: ByteString }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize)
 
--- | Represents a time map entry
-data TimeMapEntry = TimeMapEntry
-  { timeMapEntryKey :: LamportTime
-  , timeMapEntryValue :: AssetAmount
+-- | Cryptographic signature
+newtype Signature = Signature { unSignature :: ByteString }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (S.Serialize)
+
+-- | Lamport logical clock timestamp
+newtype LamportTime = LamportTime { unLamportTime :: Word64 }
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving anyclass (S.Serialize)
+
+-- | Timeline type
+data Timeline = Timeline
+  { timelineId :: TimelineHash
+  , timelineName :: Text
+  , timelineCreator :: ActorHash
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving stock (Eq, Show, Generic)
 
--- | Represents a time map
-data TimeMap = TimeMap
-  { timeMapEntries :: Map.Map LamportTime TimeMapEntry }
-  deriving (Show, Eq, Generic, Serialize)
+-- Manual instance for Serialize Timeline since Text doesn't have a Serialize instance
+instance S.Serialize Timeline where
+  put (Timeline tid name creator) = do
+    S.put tid
+    S.put (TE.encodeUtf8 name)
+    S.put creator
+  
+  get = do
+    tid <- S.get
+    nameBytes <- S.get
+    creator <- S.get
+    return $ Timeline tid (TE.decodeUtf8 nameBytes) creator
 
--- | Represents an empty time map
-emptyTimeMap :: TimeMap
-emptyTimeMap = TimeMap Map.empty
+-- | Basic Actor representation for identification and routing
+data Actor = Actor
+  { actorId :: ActorHash     -- ^ Hash of the actor's public key
+  , actorRole :: Text        -- ^ The role this actor serves in the system
+  , actorEndpoint :: Text    -- ^ Network endpoint for the actor
+  }
+  deriving stock (Eq, Show, Generic)
 
--- | Gets the value associated with the maximum key in a time map
-getValueByMaxKey :: TimeMap -> Maybe AssetAmount
-getValueByMaxKey (TimeMap entries) =
-  case Map.lookupMax entries of
-    Nothing -> Nothing
-    Just (_, entry) -> Just (timeMapEntryValue entry)
+-- Manual instance for Actor since Text doesn't have a Serialize instance
+instance S.Serialize Actor where
+  put (Actor aid role endpoint) = do
+    S.put aid
+    S.put (TE.encodeUtf8 role)
+    S.put (TE.encodeUtf8 endpoint)
+  
+  get = do
+    aid <- S.get
+    roleBytes <- S.get
+    endpointBytes <- S.get
+    return $ Actor aid (TE.decodeUtf8 roleBytes) (TE.decodeUtf8 endpointBytes)
 
--- | Tries to get the value associated with a key in a time map
-tryGetValueByKey :: LamportTime -> TimeMap -> Maybe AssetAmount
-tryGetValueByKey key (TimeMap entries) = 
-  case Map.lookup key entries of
-    Nothing -> Nothing
-    Just entry -> Just (timeMapEntryValue entry)
+-- | Network address for actors
+type Address = Text
 
--- | Finds the map entry associated with a value in a time map
-findMapEntryByValue :: AssetAmount -> TimeMap -> Maybe TimeMapEntry
-findMapEntryByValue value (TimeMap entries) = 
-  case Map.toList (Map.filter (\entry -> timeMapEntryValue entry == value) entries) of
-    [] -> Nothing
-    (_, entry):_ -> Just entry
+-- | Asset representation
+data Asset = Asset
+  { assetId :: ResourceHash   -- ^ Unique identifier for the asset
+  , assetType :: Text         -- ^ Type of asset
+  , assetQuantity :: Integer  -- ^ Amount of the asset
+  }
+  deriving stock (Eq, Show, Generic)
+
+-- | Ordering instance for Asset, comparing by ID, then type, then quantity
+instance Ord Asset where
+  compare a1 a2 = 
+    case compare (assetId a1) (assetId a2) of
+      EQ -> case compare (assetType a1) (assetType a2) of
+              EQ -> compare (assetQuantity a1) (assetQuantity a2)
+              other -> other
+      other -> other
+
+-- Manual instance for Asset since Text doesn't have a Serialize instance
+instance S.Serialize Asset where
+  put (Asset aid atype quantity) = do
+    S.put aid
+    S.put (TE.encodeUtf8 atype)
+    S.put quantity
+  
+  get = do
+    aid <- S.get
+    typeBytes <- S.get
+    quantity <- S.get
+    return $ Asset aid (TE.decodeUtf8 typeBytes) quantity

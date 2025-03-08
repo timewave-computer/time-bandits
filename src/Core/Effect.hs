@@ -29,6 +29,7 @@ module Core.Effect
   ( -- * Core Effect Types
     Effect(..)
   , EffectId
+  , EffectID
   , EffectResult(..)
   , EffectDAG(..)
   , EffectNode(..)
@@ -75,9 +76,13 @@ import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
 import Data.Foldable (foldl)
 import GHC.Generics (Generic)
+import Data.Word (Word8)
+import qualified Data.Serialize as S
+import qualified Data.Text.Encoding as TE
 
 -- Import from Core modules only
-import Core.Common (Hash, computeHash, TimeMap)
+import Core.Common (Hash, computeHash)
+import Core.TimeMap (TimeMap(..))
 import Core.ProgramId (ProgramId)
 import Core.ResourceId (ResourceId)
 import Core.TimelineId (TimelineId)
@@ -87,13 +92,16 @@ import Core.AccountProgram (AccountMessage)
 -- | Unique identifier for effects
 type EffectId = Hash
 
+-- | Alias for EffectId to maintain backward compatibility
+type EffectID = EffectId
+
 -- | Status of an effect in the system
 data EffectStatus
   = EffectPending     -- ^ Effect has been created but not applied
   | EffectApplied     -- ^ Effect has been successfully applied
   | EffectRejected    -- ^ Effect application was rejected
   | EffectReverted    -- ^ Effect was applied but later reverted
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Metadata associated with an effect
 data EffectMetadata = EffectMetadata
@@ -105,7 +113,7 @@ data EffectMetadata = EffectMetadata
   , effectParentIds :: Set EffectId     -- ^ Parent effects in the DAG
   , effectObserved :: [FactSnapshot]    -- ^ Facts observed when effect was created
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Type of precondition for effect application
 data PreconditionType
@@ -115,14 +123,14 @@ data PreconditionType
   | LogicalCondition Text                   -- ^ Logical condition expressed as code
   | PriorEffectApplied EffectId             -- ^ Another effect must be applied first
   | FactObserved FactSnapshot               -- ^ A specific fact must have been observed
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Precondition that must be satisfied for an effect to be applied
 data Precondition = Precondition
   { preconditionType :: PreconditionType  -- ^ Type of precondition
   , preconditionDescription :: Text       -- ^ Human-readable description
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Source of an observed fact
 data FactSource
@@ -130,7 +138,7 @@ data FactSource
   | ProgramSource ProgramId     -- ^ Fact from a program's state
   | ResourceSource ResourceId   -- ^ Fact from a resource
   | SystemSource Text           -- ^ Fact from the system itself
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Method used to observe a fact
 data ObservationMethod
@@ -138,7 +146,7 @@ data ObservationMethod
   | IndirectObservation   -- ^ Fact was indirectly observed via another effect
   | ProvenObservation     -- ^ Fact was observed with cryptographic proof
   | ConsensusObservation  -- ^ Fact was observed via consensus mechanism
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Snapshot of an observed fact
 data FactSnapshot = FactSnapshot
@@ -149,14 +157,14 @@ data FactSnapshot = FactSnapshot
   , factMethod :: ObservationMethod    -- ^ How the fact was observed
   , factTimeMap :: TimeMap             -- ^ TimeMap at the moment of observation
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Result of attempting to apply an effect
 data EffectResult
   = EffectSuccess ByteString              -- ^ Effect was successfully applied with result data
   | EffectFailure Text                    -- ^ Effect application failed with error message
   | EffectDeferred UTCTime                -- ^ Effect will be applied at a later time
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | The core Effect type representing atomic operations
 data Effect
@@ -218,7 +226,81 @@ data Effect
   | CompositeEffect 
       { subEffects :: [Effect]
       }  -- ^ Composition of multiple effects
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
+
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize Effect where
+  put (ResourceEffect resId data') = do
+    S.put (0 :: Word8)  -- Tag for ResourceEffect
+    S.put resId
+    S.put data'
+  put (TimelineEffect tlId data') = do
+    S.put (1 :: Word8)  -- Tag for TimelineEffect
+    S.put tlId
+    S.put data'
+  put (ProgramEffect progId data') = do
+    S.put (2 :: Word8)  -- Tag for ProgramEffect
+    S.put progId
+    S.put data'
+  put (AccountMessageEffect actorId msg) = do
+    S.put (3 :: Word8)  -- Tag for AccountMessageEffect
+    S.put actorId
+    S.put msg
+  put (DepositEffect resId amt progId) = do
+    S.put (4 :: Word8)  -- Tag for DepositEffect
+    S.put resId
+    S.put amt
+    S.put progId
+  put (WithdrawEffect resId amt progId) = do
+    S.put (5 :: Word8)  -- Tag for WithdrawEffect
+    S.put resId
+    S.put amt
+    S.put progId
+  put (TransferEffect resId amt fromId toId) = do
+    S.put (6 :: Word8)  -- Tag for TransferEffect
+    S.put resId
+    S.put amt
+    S.put fromId
+    S.put toId
+  put (InvokeEffect progId entrypoint args) = do
+    S.put (7 :: Word8)  -- Tag for InvokeEffect
+    S.put progId
+    S.put (TE.encodeUtf8 entrypoint)
+    S.put args
+  put (ReceiveCallbackEffect progId payload) = do
+    S.put (8 :: Word8)  -- Tag for ReceiveCallbackEffect
+    S.put progId
+    S.put payload
+  put (InternalStateEffect key value) = do
+    S.put (9 :: Word8)  -- Tag for InternalStateEffect
+    S.put (TE.encodeUtf8 key)
+    S.put value
+  put (CompositeEffect effects) = do
+    S.put (10 :: Word8)  -- Tag for CompositeEffect
+    S.put effects
+    
+  get = do
+    tag <- S.get :: S.Get Word8
+    case tag of
+      0 -> ResourceEffect <$> S.get <*> S.get
+      1 -> TimelineEffect <$> S.get <*> S.get
+      2 -> ProgramEffect <$> S.get <*> S.get
+      3 -> AccountMessageEffect <$> S.get <*> S.get
+      4 -> DepositEffect <$> S.get <*> S.get <*> S.get
+      5 -> WithdrawEffect <$> S.get <*> S.get <*> S.get
+      6 -> TransferEffect <$> S.get <*> S.get <*> S.get <*> S.get
+      7 -> do
+        progId <- S.get
+        entrypointBs <- S.get
+        args <- S.get
+        return $ InvokeEffect progId (TE.decodeUtf8 entrypointBs) args
+      8 -> ReceiveCallbackEffect <$> S.get <*> S.get
+      9 -> do
+        keyBs <- S.get
+        value <- S.get
+        return $ InternalStateEffect (TE.decodeUtf8 keyBs) value
+      10 -> CompositeEffect <$> S.get
+      _ -> fail "Invalid Effect tag"
 
 -- | A node in the effect DAG
 data EffectNode = EffectNode
@@ -226,14 +308,14 @@ data EffectNode = EffectNode
   , nodeMetadata :: EffectMetadata  -- ^ Metadata for the effect
   , nodeChildren :: Set EffectId    -- ^ Child effects in the DAG
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Directed acyclic graph of effects representing causal relationships
 data EffectDAG = EffectDAG
   { dagNodes :: Map EffectId EffectNode  -- ^ Map of effect nodes
   , dagRoots :: Set EffectId             -- ^ Root effects (no parents)
   }
-  deriving (Show, Eq, Generic, Serialize)
+  deriving (Show, Eq, Generic)
 
 -- | Create a new effect with metadata
 createEffect :: ProgramId -> [Precondition] -> [FactSnapshot] -> Set EffectId -> Effect -> IO (Effect, EffectMetadata)
