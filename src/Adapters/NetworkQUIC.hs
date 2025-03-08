@@ -61,17 +61,20 @@ import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.STM (TVar, atomically, readTVar, modifyTVar)
 import Control.Concurrent.STM.TVar (newTVarIO)
 import Control.Exception (try, SomeException)
-import Control.Monad (void, forever, when)
+import Control.Monad (void, forever, when, unless, forM, forM_)
 import Crypto.PubKey.X509 (X509)
 import Crypto.Random (getRandomBytes)
 import Data.Binary (Binary, encode, decode)
+import Data.Bool (Bool(..))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text, pack, unpack)
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
+import Foreign.C.Types (CChar)
 import GHC.Generics (Generic)
 import Network.Socket (SockAddr(..), HostName, PortNumber)
 import Polysemy
@@ -81,6 +84,9 @@ import Polysemy.Trace qualified as PT
 import System.Directory (doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>))
 import System.Process (callCommand)
+import System.Random (randomIO)
+
+import Data.Aeson (FromJSON, ToJSON)
 
 import Core qualified as Core
 import Core.Types
@@ -653,13 +659,6 @@ randomRIO (lo, hi) = do
 nubPeersByHash :: [QuicPeer] -> [QuicPeer]
 nubPeersByHash peers =
   Map.elems $ Map.fromList [(qpId p, p) | p <- peers]
-
--- Missing imports (would be included in real implementation)
-import Data.Bool (Bool(..))
-import System.Random (randomIO)
-import Foreign.C.Types (CChar)
-import Data.List (sortOn)
-import Control.Monad (unless, forM, forM_)
 
 -- | QUIC network mode
 data QuicNetworkMode

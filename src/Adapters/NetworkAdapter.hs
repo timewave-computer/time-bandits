@@ -51,6 +51,12 @@ import Data.Time (UTCTime, getCurrentTime)
 
 -- Import from TimeBandits modules
 import Types.Network
+import Core.Common (PubKey, Actor)
+import Adapters.Network (P2PConfig, P2PNetwork)
+import Polysemy (Sem)
+
+-- | Natural transformation type
+type (~>) f g = forall x. f x -> g x
 
 -- | Core NetworkAdapter typeclass that defines the P2P communication interface
 class NetworkAdapter a where

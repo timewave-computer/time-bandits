@@ -151,14 +151,14 @@ parseTimelineDescriptor content = do
   timelineModule <- fromMaybe "" <$> findValue "timeline" "adapter_module"
   
   -- Extract other sections as maps
-  properties = extractSectionAsMap "properties" lines
-  clock = extractSectionAsMap "clock" lines
-  effectAdapters = extractSectionAsMap "effect_adapters" lines
-  proofAdapters = extractSectionAsMap "proof_adapters" lines
-  resourceMappings = extractSectionAsMap "resource_mappings" lines
-  rpcEndpoints = extractSectionAsMap "rpc_endpoints" lines
-  validationRules = Map.map parseBoolValue $ extractSectionAsMap "validation_rules" lines
-  stateQueries = extractSectionAsMap "state_queries" lines
+  let properties = extractSectionAsMap "properties" lines
+  let clock = extractSectionAsMap "clock" lines
+  let effectAdapters = extractSectionAsMap "effect_adapters" lines
+  let proofAdapters = extractSectionAsMap "proof_adapters" lines
+  let resourceMappings = extractSectionAsMap "resource_mappings" lines
+  let rpcEndpoints = extractSectionAsMap "rpc_endpoints" lines
+  let validationRules = Map.map parseBoolValue $ extractSectionAsMap "validation_rules" lines
+  let stateQueries = extractSectionAsMap "state_queries" lines
   
   -- Validate required fields
   when (T.null timelineId) $

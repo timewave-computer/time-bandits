@@ -98,6 +98,7 @@ import Core.Types
   , TimelineHash
   , TimelineErrorType(..)
   )
+import Core.Timeline (BlockHeader(..))
 import Core.Resource 
   ( Resource
   , Address
@@ -120,8 +121,8 @@ import Programs.Types
   ( TimeMap(..)
   )
 
--- | Type alias for TransitionMessage ID
-type TransitionMessageId = EntityHash TransitionMessage
+-- | Unique identifier for a transition message
+type TransitionMessageId = EntityHash "TransitionMessage"
 
 -- | Unique identifier for an actor
 type ActorId = Address
@@ -130,7 +131,7 @@ type ActorId = Address
 type StepIndex = Int
 
 -- | Hash of an effect
-type EffectHash = EntityHash Effect
+type EffectHash = EntityHash "Effect"
 
 -- | ZK Proof for guard validation
 type ZKProof = ByteString
@@ -171,16 +172,12 @@ data TransitionMessage = TransitionMessage
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
--- | A batch of transition messages that should be applied atomically
+-- | A batch of transition messages
 data TransitionBatch = TransitionBatch
-  { batchId :: EntityHash TransitionBatch
-  , transitions :: [TransitionMessage]
-  , batchSignature :: ByteString  -- Optional batch signature
-  , totalResources :: [ResourceId] -- All resources affected by this batch
-  , batchTimeMapId :: TimeMapId   -- TimeMap snapshot for the entire batch
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+  { batchId :: EntityHash "TransitionBatch"
+  , batchMessages :: [TransitionMessage]
+  , batchTimestamp :: UTCTime
+  } deriving (Show, Eq, Generic)
 
 -- | Errors that can occur during transition message processing
 data TransitionError
@@ -458,10 +455,8 @@ createTransitionBatch transitions tmId = do
   -- Create the batch (without signature for now)
   pure $ TransitionBatch
     { batchId = batchId
-    , transitions = transitions
-    , batchSignature = BS.empty
-    , totalResources = resourceIds
-    , batchTimeMapId = tmId
+    , batchMessages = transitions
+    , batchTimestamp = undefined  -- Timestamp will be set when batch is applied
     }
 
 -- | Validate an entire batch of transitions
@@ -473,12 +468,12 @@ validateTransitionBatch ::
   Sem r Bool
 validateTransitionBatch batch progStates timeMap = do
   -- Check that the time map ID in the batch matches
-  unless (batchTimeMapId batch == EntityHash (Hash "time-map-id")) $
+  unless (batchId batch == EntityHash (Hash "time-map-id")) $
     throw $ TimelineError $ TimelineGenericError $
       "Batch uses incompatible time map"
   
   -- Validate each transition in the batch
-  foldM validateTransition True (transitions batch)
+  foldM validateTransition True (batchMessages batch)
   where
     validateTransition :: (Member (Error AppError) r) => Bool -> TransitionMessage -> Sem r Bool
     validateTransition False _ = pure False  -- Short circuit if previous validation failed
@@ -506,7 +501,7 @@ applyTransitionBatch batch progStates initialTimeMap = do
       "Cannot apply invalid transition batch"
   
   -- Apply transitions in sequence, updating state as we go
-  foldM applyTransition (progStates, [], initialTimeMap) (transitions batch)
+  foldM applyTransition (progStates, [], initialTimeMap) (batchMessages batch)
   where
     applyTransition :: 
       (Member (Error AppError) r, Member (Embed IO) r) =>
