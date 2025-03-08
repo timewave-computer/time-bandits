@@ -1,0 +1,108 @@
+{
+  "ethereum": {
+    "block": {
+      "number": 18500000,
+      "hash": "0x8e38b4dbf6b11fcc3b9dee84fb7986e29ca0a02cecd8977c161ff7333329681e",
+      "timestamp": 1686245424,
+      "difficulty": "0x0",
+      "totalDifficulty": "0x0",
+      "size": 1337,
+      "gasUsed": 12500000,
+      "gasLimit": 30000000,
+      "extraData": "0x"
+    },
+    "account": {
+      "address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "balance": 2500000000000000000,
+      "nonce": 42,
+      "code": "0x",
+      "storage": {},
+      "last_updated": 1686245400
+    },
+    "transaction": {
+      "hash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "from": "0x1111111111111111111111111111111111111111",
+      "to": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "value": 1000000000000000000,
+      "gas": 21000,
+      "gasPrice": 20000000000,
+      "nonce": 123,
+      "input": "0x",
+      "blockNumber": 18500000,
+      "blockHash": "0x8e38b4dbf6b11fcc3b9dee84fb7986e29ca0a02cecd8977c161ff7333329681e",
+      "transactionIndex": 0,
+      "timestamp": 1686245424
+    },
+    "events": [
+      {
+        "address": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+        "topics": [
+          "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+          "0x0000000000000000000000001111111111111111111111111111111111111111",
+          "0x000000000000000000000000742d35cc6634c0532925a3b844bc454e4438f44e"
+        ],
+        "data": "0x0000000000000000000000000000000000000000000000000de0b6b3a7640000",
+        "blockNumber": 18500000,
+        "transactionHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+        "transactionIndex": 0,
+        "blockHash": "0x8e38b4dbf6b11fcc3b9dee84fb7986e29ca0a02cecd8977c161ff7333329681e",
+        "logIndex": 0,
+        "removed": false
+      }
+    ]
+  },
+  "bitcoin": {
+    "block": {
+      "hash": "0000000000000000000392c6cb7f4c8f7a53e39e9d1b0a0e3df6d1c1607c5c8a",
+      "height": 800000,
+      "version": 536870912,
+      "merkleroot": "a2eb7c2a78d48e32db6b3123726c9b6d1693a3201a78b7f3e1ec65b9c8daac68",
+      "time": 1686245000,
+      "nonce": 1234567890,
+      "bits": "170cf4e3",
+      "difficulty": 53911173001054.59,
+      "previousblockhash": "0000000000000000000392c6cb7f4c8f7a53e39e9d1b0a0e3df6d1c1607c5c89",
+      "nextblockhash": "0000000000000000000392c6cb7f4c8f7a53e39e9d1b0a0e3df6d1c1607c5c8b",
+      "confirmations": 10
+    },
+    "transaction": {
+      "txid": "a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d",
+      "hash": "a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d",
+      "version": 2,
+      "size": 225,
+      "vsize": 225,
+      "weight": 900,
+      "locktime": 0,
+      "vin": [
+        {
+          "txid": "b1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d",
+          "vout": 0,
+          "scriptSig": {
+            "asm": "304502210085fb71eecc4b65fd31f4ef2827bae5c6d2c5f6e0a8d1ad84a4c3308e459a395b02202c5c5fd50f35e3a5f0c3b2c1ca7df6f75dcc8e43407fc39f9d037b8921c99ef5[ALL] 03b24331ee77b6364b94b7ac4a4a0c989df575d2d8c8fab1199789c9c9e9123e44",
+            "hex": "48304502210085fb71eecc4b65fd31f4ef2827bae5c6d2c5f6e0a8d1ad84a4c3308e459a395b02202c5c5fd50f35e3a5f0c3b2c1ca7df6f75dcc8e43407fc39f9d037b8921c99ef5012103b24331ee77b6364b94b7ac4a4a0c989df575d2d8c8fab1199789c9c9e9123e44"
+          },
+          "sequence": 4294967295
+        }
+      ],
+      "vout": [
+        {
+          "value": 1.5,
+          "n": 0,
+          "scriptPubKey": {
+            "asm": "0 bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+            "hex": "0014b2b2380a1e486aff5ae5ae74c892e902e47d539f",
+            "reqSigs": 1,
+            "type": "witness_v0_keyhash",
+            "addresses": [
+              "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+            ]
+          }
+        }
+      ],
+      "amount": 150000000,
+      "fee": 10000,
+      "timestamp": 1686245100,
+      "confirmations": 8
+    }
+  }
+} 

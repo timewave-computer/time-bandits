@@ -6,222 +6,163 @@
 {-# LANGUAGE LambdaCase #-}
 
 {- |
-Module: Core.Log
-Description: Standardized logging system for Time Bandits
+Module      : Core.Log
+Description : Logging system for Time Bandits
+Copyright   : (c) Time Bandits, 2023-2024
+License     : MIT
+Maintainer  : time-bandits@example.com
 
-This module provides a unified, content-addressed logging system that:
-
-1. Records all effects, facts, and events in a standard format
-2. Ensures logs can be replayed deterministically
-3. Maintains causal relationships between log entries
-4. Works consistently across all simulation modes
-
-All actors in the Time Bandits system use this logging system to maintain
-a consistent record of their actions and observations.
+This module provides the primary interface to the Time Bandits logging system.
+It re-exports the standard logging functionality and provides additional
+convenience functions for integrating with other system components.
 -}
 module Core.Log
-  ( -- * Core Log Types
-    LogEntry(..)
-  , LogEntryType(..)
-  , LogID
-  , LogMetadata(..)
+  ( -- * Re-export StandardLog
+    module Core.Log.StandardLog
+    
+    -- * System Integration
+  , getSystemLogStore
+  , initializeLogging
+  , shutdownLogging
+  , withSystemLogging
   
-  -- * Log Operations
-  , writeLog
-  , readLog
-  , appendLogEntry
-  , getLogEntries
-  , getLatestLogEntry
+    -- * Context-based Logging
+  , logWithContext
+  , logComponentInfo
+  , logComponentWarning
+  , logComponentError
   
-  -- * Query Functions
-  , findLogEntriesByType
-  , findLogEntriesByActor
-  , findLogEntriesBetween
-  
-  -- * Replay Functions
-  , replayLogEntries
+    -- * Specialized Logging
+  , logNetworkEvent
+  , logSecurityEvent
+  , logPerformanceMetric
   ) where
 
-import Control.Exception (catch, throwIO, Exception)
-import Control.Monad (forM, unless, when, void)
-import Data.Aeson (FromJSON, ToJSON, eitherDecode, encode)
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as BL
-import Data.Foldable (traverse_)
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HM
-import Data.Serialize (Serialize)
+import Core.Log.StandardLog
+
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (UTCTime, getCurrentTime)
-import Data.UUID (UUID)
-import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
-import GHC.Generics (Generic)
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import System.IO.Unsafe (unsafePerformIO)
+import Control.Monad (when)
+import Data.Aeson (Value(..), object, (.=))
+import Data.Time (getCurrentTime, diffUTCTime)
+import System.Directory (getHomeDirectory)
 import System.FilePath ((</>))
-import System.IO (IOMode(..), withFile, hPutStrLn)
+import Control.Exception (bracket)
 
-import Core.Common (Hash, EntityHash, TimelineHash, hashEntity)
-import Core.Types (LamportTime(..), ActorId(..), ProgramId(..))
-import Core.Effect (Effect, EffectID)
+-- | Global log store for the application
+{-# NOINLINE globalLogStore #-}
+globalLogStore :: IORef (Maybe LogStore)
+globalLogStore = unsafePerformIO $ newIORef Nothing
 
--- | Unique identifier for a log entry
-type LogID = Hash
+-- | Get the system log store, initializing it if needed
+getSystemLogStore :: IO LogStore
+getSystemLogStore = do
+  mStore <- readIORef globalLogStore
+  case mStore of
+    Just store -> return store
+    Nothing -> do
+      store <- initializeLogging
+      return store
 
--- | Types of log entries
-data LogEntryType
-  = EffectEntry    -- ^ An effect was applied
-  | FactEntry      -- ^ A fact was observed
-  | EventEntry     -- ^ An event occurred
-  | ErrorEntry     -- ^ An error was recorded
-  | SystemEntry    -- ^ A system message (startup, shutdown, etc.)
-  deriving (Show, Eq, Generic, FromJSON, ToJSON, Serialize)
+-- | Initialize the logging system
+initializeLogging :: IO LogStore
+initializeLogging = do
+  mStore <- readIORef globalLogStore
+  case mStore of
+    Just store -> return store
+    Nothing -> do
+      -- Create log directory in user's home directory
+      homeDir <- getHomeDirectory
+      let logDir = homeDir </> ".time-bandits" </> "logs"
+      
+      -- Create log store
+      store <- createLogStore (Just logDir)
+      
+      -- Record creation in log
+      _ <- logInfo store "Logging system initialized"
+      
+      -- Store in global ref
+      writeIORef globalLogStore (Just store)
+      return store
 
--- | Metadata for log entries
-data LogMetadata = LogMetadata
-  { logTimestamp :: UTCTime        -- ^ Wall clock time
-  , logLamportTime :: LamportTime  -- ^ Logical clock time
-  , logActorId :: ActorId          -- ^ Actor that created the log
-  , logProgram :: Maybe ProgramId  -- ^ Program associated with the log (if any)
-  , logTimeline :: Maybe TimelineHash -- ^ Timeline associated with the log (if any)
-  , logParentEntries :: [LogID]    -- ^ Parent log entries (causal history)
-  }
-  deriving (Show, Eq, Generic, FromJSON, ToJSON, Serialize)
+-- | Shutdown the logging system
+shutdownLogging :: IO ()
+shutdownLogging = do
+  mStore <- readIORef globalLogStore
+  case mStore of
+    Just store -> do
+      -- Log shutdown
+      _ <- logInfo store "Logging system shutting down"
+      
+      -- Close store
+      closeLogStore store
+      
+      -- Clear global ref
+      writeIORef globalLogStore Nothing
+    Nothing -> 
+      return ()
 
--- | A single log entry
-data LogEntry = LogEntry
-  { logId :: LogID                 -- ^ Content-addressed ID
-  , logType :: LogEntryType        -- ^ Type of log entry
-  , logMetadata :: LogMetadata     -- ^ Metadata
-  , logContent :: ByteString       -- ^ Content (serialized effect, fact, etc.)
-  , logTags :: [Text]              -- ^ Optional tags for filtering
-  }
-  deriving (Show, Eq, Generic, FromJSON, ToJSON, Serialize)
+-- | Use the system logging within a scope
+withSystemLogging :: (LogStore -> IO a) -> IO a
+withSystemLogging action = bracket
+  initializeLogging
+  (\_ -> shutdownLogging)
+  action
 
--- | Write a log entry to the specified log file
-writeLog :: FilePath -> LogEntry -> IO ()
-writeLog logPath entry = do
-  -- Create log directory if it doesn't exist
-  createDirectoryIfMissing True (takeDirectory logPath)
+-- | Log with additional context
+logWithContext :: LogStore -> Text -> Text -> [(Text, Value)] -> IO LogID
+logWithContext store component message context = do
+  -- Create context object
+  let contextObj = object $ 
+        [ "component" .= component
+        , "message" .= message
+        ] ++ context
   
-  -- Append log entry to file
-  withFile logPath AppendMode $ \h -> do
-    BL.hPut h (encode entry)
-    BL.hPut h "\n"  -- Add newline for readability
-  where
-    takeDirectory :: FilePath -> FilePath
-    takeDirectory p = case break (== '/') (reverse p) of
-      (_, "")   -> "."
-      (_, _:ds) -> reverse ds
+  -- Log as event
+  logEvent store "ContextLog" (Just contextObj)
 
--- | Read all log entries from the specified log file
-readLog :: FilePath -> IO [LogEntry]
-readLog logPath = do
-  exists <- doesFileExist logPath
-  if exists
-    then do
-      contents <- BL.readFile logPath
-      let entries = map parseLine (BL.split 10 contents)  -- 10 is ASCII for newline
-      return $ concatMap (either (const []) pure) entries
-    else return []
-  where
-    parseLine :: ByteString -> Either String LogEntry
-    parseLine line 
-      | BL.null line = Left "Empty line"
-      | otherwise    = eitherDecode line
+-- | Log component info with context
+logComponentInfo :: LogStore -> Text -> Text -> IO LogID
+logComponentInfo store component message =
+  logWithContext store component message [("level", String "info")]
 
--- | Append a new log entry
-appendLogEntry :: FilePath -> LogEntryType -> ActorId -> ByteString -> IO LogEntry
-appendLogEntry logPath entryType actorId content = do
-  -- Generate metadata
-  timestamp <- getCurrentTime
-  let lamportTime = LamportTime 0  -- In a real implementation, this would be tracked
+-- | Log component warning with context
+logComponentWarning :: LogStore -> Text -> Text -> IO LogID
+logComponentWarning store component message =
+  logWithContext store component message [("level", String "warning")]
+
+-- | Log component error with context
+logComponentError :: LogStore -> Text -> Text -> IO LogID
+logComponentError store component message =
+  logWithContext store component message [("level", String "error")]
+
+-- | Log a network-related event
+logNetworkEvent :: LogStore -> Text -> Text -> Maybe Text -> IO LogID
+logNetworkEvent store eventType address details = do
+  -- Create network event object
+  let contextObj = object $ 
+        [ "type" .= eventType
+        , "address" .= address
+        ] ++ maybe [] (\d -> [("details", String d)]) details
   
-  -- Create log entry
-  let metadata = LogMetadata
-        { logTimestamp = timestamp
-        , logLamportTime = lamportTime
-        , logActorId = actorId
-        , logProgram = Nothing
-        , logTimeline = Nothing
-        , logParentEntries = []
-        }
-  
-  let entry = LogEntry
-        { logId = computeLogId entryType metadata content
-        , logType = entryType
-        , logMetadata = metadata
-        , logContent = content
-        , logTags = []
-        }
-  
-  -- Write to log
-  writeLog logPath entry
-  
-  return entry
-  where
-    computeLogId :: LogEntryType -> LogMetadata -> ByteString -> LogID
-    computeLogId entryType metadata content =
-      hashEntity (show entryType, show metadata, BL.toStrict content)
+  -- Log as event
+  logEvent store "NetworkEvent" (Just contextObj)
 
--- | Get all log entries from a log file
-getLogEntries :: FilePath -> IO [LogEntry]
-getLogEntries = readLog
+-- | Log a security-related event
+logSecurityEvent :: LogStore -> Text -> Text -> IO LogID
+logSecurityEvent store eventType details =
+  logEvent store "SecurityEvent" (Just $ object 
+    [ "type" .= eventType
+    , "details" .= details
+    ])
 
--- | Get the latest log entry from a log file
-getLatestLogEntry :: FilePath -> IO (Maybe LogEntry)
-getLatestLogEntry logPath = do
-  entries <- readLog logPath
-  return $ if null entries
-    then Nothing
-    else Just (last entries)
-
--- | Find all log entries of a specific type
-findLogEntriesByType :: LogEntryType -> [LogEntry] -> [LogEntry]
-findLogEntriesByType targetType = filter (\entry -> logType entry == targetType)
-
--- | Find all log entries from a specific actor
-findLogEntriesByActor :: ActorId -> [LogEntry] -> [LogEntry]
-findLogEntriesByActor actorId = filter (\entry -> logActorId (logMetadata entry) == actorId)
-
--- | Find all log entries between two logical times
-findLogEntriesBetween :: LamportTime -> LamportTime -> [LogEntry] -> [LogEntry]
-findLogEntriesBetween start end = filter inRange
-  where
-    inRange entry = 
-      let time = logLamportTime (logMetadata entry)
-      in time >= start && time <= end
-
--- | Replay a sequence of log entries (implementation depends on entry type)
-replayLogEntries :: [LogEntry] -> IO ()
-replayLogEntries entries = do
-  -- Sort by Lamport time to ensure causal order
-  let sortedEntries = sortByLamportTime entries
-  
-  -- In a real implementation, this would apply each entry to reconstruct state
-  traverse_ processEntry sortedEntries
-  where
-    sortByLamportTime :: [LogEntry] -> [LogEntry]
-    sortByLamportTime = sortOn (logLamportTime . logMetadata)
-    
-    sortOn :: Ord b => (a -> b) -> [a] -> [a]
-    sortOn f = map snd . sortBy (comparing fst) . map (\x -> (f x, x))
-    
-    comparing :: Ord b => (a -> b) -> a -> a -> Ordering
-    comparing f x y = compare (f x) (f y)
-    
-    sortBy :: (a -> a -> Ordering) -> [a] -> [a]
-    sortBy _ [] = []
-    sortBy cmp (x:xs) = sortBy cmp smaller ++ [x] ++ sortBy cmp larger
-      where
-        smaller = [y | y <- xs, cmp y x /= GT]
-        larger  = [y | y <- xs, cmp y x == GT]
-    
-    processEntry :: LogEntry -> IO ()
-    processEntry entry = case logType entry of
-      EffectEntry -> putStrLn $ "Replaying effect: " ++ show (logId entry)
-      FactEntry   -> putStrLn $ "Observing fact: " ++ show (logId entry)
-      EventEntry  -> putStrLn $ "Processing event: " ++ show (logId entry)
-      ErrorEntry  -> putStrLn $ "Handling error: " ++ show (logId entry)
-      SystemEntry -> putStrLn $ "System message: " ++ show (logId entry) 
+-- | Log a performance metric
+logPerformanceMetric :: LogStore -> Text -> Double -> Text -> IO LogID
+logPerformanceMetric store metricName value unit =
+  logEvent store "PerformanceMetric" (Just $ object 
+    [ "metric" .= metricName
+    , "value" .= value
+    , "unit" .= unit
+    ]) 

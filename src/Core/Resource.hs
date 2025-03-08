@@ -45,6 +45,11 @@ module Core.Resource
   , releaseResource
   , verifyEscrowStatus
   
+  -- * Effect Log Operations
+  , getResourceEffectLog
+  , applyEffectToResource
+  , getResourceEffectHistory
+  
   -- * Re-exports from Types
   , ResourceHash
   , ResourceEvent(..)
@@ -67,6 +72,8 @@ import Data.Text qualified as Text
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
+import Control.Concurrent (MVar, newMVar, readMVar, modifyMVar, modifyMVar_, takeMVar, putMVar)
+import Control.Monad (when, forM)
 
 -- Import from TimeBandits modules
 import Core.Core (Hash(..), EntityHash(..))
@@ -80,9 +87,14 @@ import Core.Types
   , ResourceErrorType(..)
   , ActorHash
   , TimelineHash
+  , EffectId, Effect, EffectType
   )
 
 import Core.Serialize ()  -- Import Serialize instances
+
+-- Import the new EffectLog module
+import Core.Concurrency.EffectLog
+import Core.Concurrency.ResourceLock
 
 -- | Unique identifier for a Resource
 type ResourceId = EntityHash Resource
@@ -150,6 +162,47 @@ data Escrow = Escrow
 
 -- Standalone deriving instance
 deriving instance Serialize Escrow
+
+-- | Resource effect log map (resource ID -> effect log)
+{-# NOINLINE resourceEffectLogs #-}
+resourceEffectLogs :: MVar (Map.Map ResourceId EffectLog)
+resourceEffectLogs = unsafePerformIO $ newMVar Map.empty
+
+-- | Get or create the effect log for a resource
+getResourceEffectLog :: ResourceId -> IO EffectLog
+getResourceEffectLog resId = do
+  logs <- readMVar resourceEffectLogs
+  case Map.lookup resId logs of
+    Just log -> return log
+    Nothing -> do
+      -- Create a new log
+      newLog <- createEffectLog resId
+      -- Add it to the map
+      modifyMVar_ resourceEffectLogs $ \logs' ->
+        return $ Map.insert resId newLog logs'
+      return newLog
+
+-- | Apply an effect to a resource
+applyEffectToResource :: ResourceId -> Effect -> IO (Either EffectLogError EffectEntry)
+applyEffectToResource resId effect = do
+  -- Get or create the resource's effect log
+  log <- getResourceEffectLog resId
+  
+  -- Append the effect to the log
+  result <- appendEffect log effect
+  
+  -- In a real implementation, this would also update the resource state
+  -- based on the effect, but for now we just return the result
+  return result
+
+-- | Get the effect history for a resource
+getResourceEffectHistory :: ResourceId -> Maybe TimeRange -> IO [EffectEntry]
+getResourceEffectHistory resId timeRange = do
+  -- Get the resource's effect log
+  log <- getResourceEffectLog resId
+  
+  -- Get the effect history
+  getEffectHistory log timeRange
 
 -- | Create a new resource
 createResource :: 

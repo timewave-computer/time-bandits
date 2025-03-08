@@ -81,6 +81,12 @@ common shared
     , stm
     , vector
     , http-client
+    , toml
+    , aeson-pretty
+    , aeson-schema
+    , x509
+    , zlib
+    , uuid
 
   default-language:   GHC2021
 
@@ -102,6 +108,7 @@ library
     Types.Deployment
     Types.Scenario
     Types.Core
+    Types.Network
     
     -- Actors directory
     Actors
@@ -123,6 +130,10 @@ library
     Adapters.NetworkAdapter
     Adapters.NetworkQUIC
     Adapters.TimelineAdapter
+    Adapters.Network.Protocol
+    Adapters.Network.Serialization
+    Adapters.Network.Discovery
+    Adapters.Network.TLS.Certificate
     
     -- CLI directory
     CLI
@@ -151,6 +162,15 @@ library
     Core.TimeMap
     Core.Types
     Core.Utils
+    Core.Concurrency.Lock
+    Core.Concurrency.ResourceLock
+    Core.Concurrency.EffectLog
+    Core.Concurrency.Distributed
+    Core.TECL.Concurrency
+    Core.FactObservation.Rules
+    Core.FactObservation.Schema
+    Core.FactObservation.TOMLParser
+    Core.FactObservation.Engine
     
     -- Execution directory
     Execution
@@ -201,6 +221,22 @@ executable time-bandits
     , time-bandits
     , utf8-string
 
+executable fact-observation-cli
+  import:          shared
+  hs-source-dirs:  app
+  main-is:         FactObservationCLI.hs
+  build-depends:
+    , time-bandits
+    , optparse-applicative
+    , directory
+    , filepath
+    , aeson
+    , aeson-pretty
+    , bytestring
+    , text
+    , containers
+    , time
+
 test-suite time-bandits-test
   default-language: GHC2021
   type:             exitcode-stdio-1.0
@@ -211,6 +247,11 @@ test-suite time-bandits-test
                    , ControllerTest
                    , TimelineDescriptorTest
                    , DistributedLogTest
+                   , Core.FactObservation.RulesSpec
+                   , Core.FactObservation.TOMLParserSpec
+                   , Core.FactObservation.EngineSpec
+                   , Core.FactObservation.IntegrationSpec
+                   , Core.FactObservation.CLISpec
   build-depends:    base >= 4.16 && < 5,
                    time-bandits,
                    polysemy,
@@ -221,4 +262,14 @@ test-suite time-bandits-test
                    bytestring,
                    containers,
                    time,
-                   network
+                   network,
+                   hspec,
+                   hspec-discover,
+                   QuickCheck,
+                   raw-strings-qq,
+                   temporary,
+                   aeson,
+                   text,
+                   directory,
+                   filepath,
+                   process

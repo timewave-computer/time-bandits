@@ -1,0 +1,36 @@
+[[rules]]
+rule_id = "btc-transaction-observation-1"
+fact_type = "TransactionObservation"
+proof = "InclusionProof"
+enabled = true
+description = "Observes Bitcoin transactions to a specific address with minimum value"
+
+path.source = "bitcoin"
+path.selector = "transaction"
+
+[path.parameters]
+address = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+network = "mainnet"
+min_confirmations = "6"
+
+[[conditions]]
+field = "amount"
+operator = ">="
+value = 100000000  # 1 BTC in satoshis
+
+[[conditions]]
+logical_op = "AND"
+
+[[conditions.sub_conditions]]
+field = "timestamp"
+operator = ">"
+value = 1672531200  # Jan 1, 2023 in Unix timestamp
+
+[[conditions.sub_conditions]]
+check_field = "fee"
+
+[metadata]
+version = "1.0.0"
+author = "Time Bandits Team"
+created_at = "2024-06-01"
+tags = "bitcoin,transaction,monitoring" 
