@@ -49,7 +49,8 @@ module Actors.ActorCommunication
   , broadcastMessage
   ) where
 
-import Control.Concurrent (MVar, newMVar, takeMVar, putMVar)
+import Control.Concurrent (MVar, newMVar)
+import qualified Control.Concurrent as Concurrent (takeMVar, putMVar)
 import Control.Concurrent.STM (TVar, atomically, readTVar, writeTVar, newTVarIO)
 import Control.Exception (IOException, try)
 import Control.Monad (when, void, forever, forM_)
@@ -65,8 +66,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 import GHC.Generics (Generic)
-import Network.Socket (Socket, SockAddr(..), SocketType(..), socket, bind, connect, close, 
-                      AF_INET, AF_INET6, AF_UNIX, AF_UNSPEC, Stream, defaultProtocol)
+import Network.Socket (Socket, SockAddr(..), SocketType(Stream), Family(AF_INET, AF_INET6, AF_UNIX, AF_UNSPEC), socket, bind, connect, close, defaultProtocol)
 import Network.Socket.ByteString (sendAll, recv)
 import System.IO (Handle, hPutStr, hGetLine, hFlush)
 import Polysemy (Member, Sem, embed)
@@ -79,8 +79,13 @@ import Core (Hash(..), EntityHash(..))
 import Core.Types
   ( AppError(..)
   , LamportTime(..)
-  , TransitionMessage(..)
+  )
+import Actors.Actor
+  ( ActorRole
   , Actor(..)
+  )
+import Actors.TransitionMessage
+  ( TransitionMessage(..)
   )
 import Core.Resource 
   ( Resource
@@ -93,9 +98,6 @@ import Programs.Program
   )
 import Core.TimeMap
   ( TimeMap
-  )
-import Actors.Actor
-  ( ActorRole
   )
 
 -- | Node identifier for network addressing
@@ -217,28 +219,28 @@ createLocalChannel localAddr remoteAddr = do
               Right bytes -> do
                 -- In a real implementation, this would use proper IPC
                 -- For now, just append to the queue
-                msgs <- takeMVar sendQueue
-                putMVar sendQueue (bytes : msgs)
+                msgs <- Concurrent.takeMVar sendQueue
+                Concurrent.putMVar sendQueue (bytes : msgs)
                 pure $ Right ()
         
         , channelReceive = do
-            msgs <- takeMVar recvQueue
+            msgs <- Concurrent.takeMVar recvQueue
             case msgs of
               [] -> do
-                putMVar recvQueue []
+                Concurrent.putMVar recvQueue []
                 pure $ Left $ MessageReceiveFailed "No messages available"
               (bytes:rest) -> do
-                putMVar recvQueue rest
+                Concurrent.putMVar recvQueue rest
                 case deserializeMessage bytes of
                   Left err -> pure $ Left $ DeserializationFailed $ T.pack $ show err
                   Right msg -> pure $ Right msg
         
         , channelClose = do
             -- Clear the queues
-            void $ takeMVar sendQueue
-            putMVar sendQueue []
-            void $ takeMVar recvQueue
-            putMVar recvQueue []
+            void $ Concurrent.takeMVar sendQueue
+            Concurrent.putMVar sendQueue []
+            void $ Concurrent.takeMVar recvQueue
+            Concurrent.putMVar recvQueue []
         
         , channelAddress = localAddr
         , channelRemoteAddress = remoteAddr
