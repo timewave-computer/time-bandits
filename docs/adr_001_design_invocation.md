@@ -212,6 +212,7 @@ Response:
 
 ## Summary Flow Diagram
 
+```
 +-----------------+
 | Time Traveler   |
 | (proposes)      |
@@ -239,8 +240,7 @@ Response:
 | Time Traveler   |
 | (polls inbox)   |
 +-----------------+
-
-
+```
 
 ## Replay and Auditability
 
