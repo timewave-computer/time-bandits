@@ -43,6 +43,7 @@ module Programs.Scenario
 
 import Control.Exception (try, SomeException)
 import Control.Monad (forM, forM_, void, when, unless)
+import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -112,21 +113,20 @@ loadScenario ::
   FilePath -> 
   Sem r Scenario
 loadScenario path = do
-  -- Read the TOML file
-  tomlResult <- liftIO $ try $ TIO.readFile path
-  tomlContent <- case tomlResult of
-    Left (e :: SomeException) -> throw $ ParseError $ "Failed to read file: " <> T.pack (show e)
-    Right content -> return content
-  
-  -- Parse the TOML content
-  config <- parseScenarioToml tomlContent
-  
-  -- Return the scenario
-  return Scenario
-    { scenarioConfig = config
-    , scenarioDeployment = Nothing
-    , scenarioResults = Nothing
-    }
+  -- Try to read the file
+  contentE <- embed $ try @SomeException $ readFile path
+  case contentE of
+    Right content -> do
+      -- Parse the TOML content
+      config <- parseScenarioToml (T.pack content)
+      
+      -- Return the scenario
+      return $ Scenario
+        { scenarioConfig = config
+        , scenarioDeployment = Nothing
+        , scenarioResults = Nothing
+        }
+    Left e -> throw $ ParseError $ "Failed to read file: " <> T.pack (show e)
 
 -- | Parse a scenario from TOML content
 parseScenarioToml :: 
@@ -135,10 +135,10 @@ parseScenarioToml ::
   Sem r ScenarioConfig
 parseScenarioToml content = do
   -- Parse the TOML content using a simple line-by-line approach
-  let lines = T.lines content
+  let contentLines = T.lines content
       
       -- Function to find key-value pairs
-      findValue key = T.strip <$> findValueInLines key lines
+      findValue key = T.strip <$> findValueInLines key contentLines
       
       -- Extract scenario name
       nameM = findValue "name"
@@ -152,15 +152,15 @@ parseScenarioToml content = do
       modeM = findValue "mode"
       mode = case modeM of
         Just "InMemory" -> InMemory
-        Just "LocalProcesses" -> LocalProcesses
-        Just "GeoDistributed" -> GeoDistributed
+        Just "LocalProcesses" -> MultiProcess
+        Just "GeoDistributed" -> Distributed
         _ -> InMemory  -- Default to InMemory
       
       -- For actors, we'll use a simplified approach
       -- In a real implementation with the toml package, we'd parse nested tables
-      timeTravelers = extractActorsByPrefix lines "time_travelers" TimeTravelerRole
-      timeKeepers = extractActorsByPrefix lines "time_keepers" TimeKeeperRole
-      timeBandits = extractActorsByPrefix lines "time_bandits" TimeBanditRole
+      timeTravelers = extractActorsByPrefix contentLines "time_travelers" TimeTravelerRole
+      timeKeepers = extractActorsByPrefix contentLines "time_keepers" TimeKeeperRole
+      timeBandits = extractActorsByPrefix contentLines "time_bandits" TimeBanditRole
       allActors = timeTravelers ++ timeKeepers ++ timeBandits
   
   -- Create the scenario configuration
@@ -186,7 +186,9 @@ findValueInLines key lines =
        (line:_) -> 
          let parts = T.splitOn "=" line
          in if length parts >= 2
-            then Just $ removeQuotes $ T.strip $ parts !! 1
+            then Just $ removeQuotes $ T.strip $ case parts of
+                                                   (_:value:_) -> value
+                                                   _ -> ""
             else Nothing
 
 -- | Remove quotes from a text value
@@ -207,31 +209,31 @@ extractActorsByPrefix lines prefix role =
       [ ActorSpec
         { actorSpecId = "alice"
         , actorSpecRole = TimeTravelerRole
-        , actorSpecCapabilities = [ResourceCreation, ResourceTransfer]
-        , actorSpecDescription = "Time Traveler Alice"
+        , actorSpecCapabilities = [CanCreateProgram, CanTransferResource]
+        , actorSpecInitialPrograms = []
         }
       ]
     TimeKeeperRole ->
       [ ActorSpec
         { actorSpecId = "ethereum_keeper"
         , actorSpecRole = TimeKeeperRole
-        , actorSpecCapabilities = [TimelineAccess]
-        , actorSpecDescription = "Ethereum Timeline Keeper"
+        , actorSpecCapabilities = [CanServeTimelineState]
+        , actorSpecInitialPrograms = []
         }
       ]
     TimeBanditRole ->
       [ ActorSpec
         { actorSpecId = "network_node_1"
         , actorSpecRole = TimeBanditRole
-        , actorSpecCapabilities = [ProofGeneration, NetworkCoordination]
-        , actorSpecDescription = "P2P Network Node"
+        , actorSpecCapabilities = [CanGenerateProof, CanValidateTransition]
+        , actorSpecInitialPrograms = []
         }
       ]
 
 -- | Generate TOML content from a scenario
 generateScenarioToml :: ScenarioConfig -> Text
 generateScenarioToml config =
-  T.unlines $
+  unlines $
     -- Scenario section
     [ "[scenario]"
     , "name = \"" <> scenarioName config <> "\""
@@ -272,11 +274,12 @@ capabilitiesToToml capabilities =
 
 -- | Convert a capability to a TOML string
 capabilityToToml :: ActorCapability -> Text
-capabilityToToml ResourceCreation = "\"ResourceCreation\""
-capabilityToToml ResourceTransfer = "\"ResourceTransfer\""
-capabilityToToml TimelineAccess = "\"TimelineAccess\""
-capabilityToToml ProofGeneration = "\"ProofGeneration\""
-capabilityToToml NetworkCoordination = "\"NetworkCoordination\""
+capabilityToToml CanCreateProgram = "\"CanCreateProgram\""
+capabilityToToml CanExecuteProgram = "\"CanExecuteProgram\""
+capabilityToToml CanTransferResource = "\"CanTransferResource\""
+capabilityToToml CanValidateTransition = "\"CanValidateTransition\""
+capabilityToToml CanGenerateProof = "\"CanGenerateProof\""
+capabilityToToml CanServeTimelineState = "\"CanServeTimelineState\""
 
 -- | Validate a scenario
 validateScenario :: 
@@ -309,20 +312,15 @@ runScenario scenario = do
   -- Validate the scenario
   validateScenario scenario
   
-  -- Create a deployment config from the scenario
-  let deploymentConfig = DeploymentConfig
-        { deploymentMode = scenarioMode (scenarioConfig scenario)
-        , deploymentLogPath = scenarioLogPath (scenarioConfig scenario)
-        , deploymentVerbose = True
-        , deploymentActors = scenarioActors (scenarioConfig scenario)
-        , deploymentInitialPrograms = scenarioInitialPrograms (scenarioConfig scenario)
-        }
+  -- Create a deployment configuration
+  let deploymentConfig = createDeploymentConfig scenario
   
-  -- Create and start the deployment
-  deploymentResult <- runError $ do
+  -- Run the deployment
+  deploymentResult <- runError @DeploymentError $ do
     deployment <- createDeployment deploymentConfig
     startDeployment deployment
   
+  -- Handle the deployment result
   deployment <- case deploymentResult of
     Left err -> throw $ ExecutionError $ T.pack $ show err
     Right d -> return d
@@ -358,25 +356,21 @@ exportScenarioResults scenario path = do
       liftIO $ createDirectoryIfMissing True dir
       
       -- Generate the results as text
-      let resultText = T.unlines
+      let resultText = unlines
             [ "# Scenario Results"
             , "Name: " <> scenarioName (scenarioConfig scenario)
             , "Success: " <> T.pack (show (resultSuccess results))
             , "Steps: " <> T.pack (show (resultSteps results))
             , ""
             , "## Errors"
-            , T.unlines (map ("- " <>) (resultErrors results))
+            , unlines (map ("- " <>) (resultErrors results))
             , ""
             , "## Execution Log"
-            , T.unlines (map ("- " <>) (resultExecutionLog results))
+            , unlines (map ("- " <>) (resultExecutionLog results))
             ]
       
       -- Write the results to the file
-      liftIO $ TIO.writeFile path resultText
-
--- | Helper function to lift IO actions into Sem
-liftIO :: Member (Embed IO) r => IO a -> Sem r a
-liftIO = embed 
+      liftIO $ writeFileText path resultText
 
 -- | Create a deployment from a deployment config
 -- This is a placeholder for the actual implementation
@@ -404,3 +398,19 @@ startDeployment ::
 startDeployment deployment = do
   -- In a real implementation, this would start the deployment
   return deployment 
+
+-- | Get a description for an actor spec
+actorSpecDescription :: ActorSpec -> Text
+actorSpecDescription actor = 
+  "Actor with role: " <> T.pack (show (actorSpecRole actor)) 
+
+-- | Create a deployment configuration from a scenario
+createDeploymentConfig :: Scenario -> DeploymentConfig
+createDeploymentConfig scenario = 
+  DeploymentConfig
+    { deploymentMode = scenarioMode (scenarioConfig scenario)
+    , deploymentLogPath = scenarioLogPath (scenarioConfig scenario)
+    , deploymentVerbose = True
+    , deploymentActors = scenarioActors (scenarioConfig scenario)
+    , deploymentInitialPrograms = scenarioInitialPrograms (scenarioConfig scenario)
+    } 

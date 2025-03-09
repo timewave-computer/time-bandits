@@ -64,6 +64,9 @@ module Core.Resource
   , adaptTransferResource
   , adaptConsumeResource
   , adaptVerifyResource
+
+  -- * Extract ResourceId from Resource
+  , getResourceId
   ) where
 
 import Data.ByteString (ByteString)
@@ -72,7 +75,7 @@ import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
 import qualified Data.Serialize as S
 import Data.Text (Text)
-import Data.Text qualified as Text
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
@@ -410,7 +413,7 @@ adaptCreateResource ::
   Sem r (Either AppError Resource)
 adaptCreateResource metadata owner timeline = do
   -- Create a resource based on metadata and owner
-  let resource = SyntheticInternalMarker (Text.pack $ BS.unpack metadata)
+  let resource = SyntheticInternalMarker (T.pack $ BS.unpack metadata)
   -- In a real implementation, this would create a resource appropriate for the metadata
   rid <- createResource resource
   -- Wrap the result with Right since the old interface returned Either
@@ -465,3 +468,22 @@ adaptVerifyResource resource = do
 -- | Convert a resource to a ByteString for serialization/hashing
 resourceToByteString :: Resource -> ByteString
 resourceToByteString = S.encode 
+
+-- | Extract the ResourceId from a Resource
+getResourceId :: Resource -> ResourceId
+getResourceId (TokenBalanceResource tid _ _) = 
+  case ResourceId.fromByteString (TE.encodeUtf8 $ T.pack $ show tid) of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID"
+getResourceId (EscrowReceiptResource eid) = 
+  case ResourceId.fromByteString (TE.encodeUtf8 $ T.pack $ show eid) of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID"
+getResourceId (ContractWitnessResource cid _) = 
+  case ResourceId.fromByteString (TE.encodeUtf8 $ T.pack $ show cid) of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID"
+getResourceId (SyntheticInternalMarker txt) = 
+  case ResourceId.fromText txt of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID" 

@@ -21,6 +21,7 @@ module Core.Concurrency.ResourceLock
   , acquireLock
   , releaseLock
   , withResourceLock
+  , tryAcquireLock
   
     -- * Lock Utilities
   , isLockOwner

@@ -54,6 +54,9 @@ module Programs.ProgramState
   -- * Execution log
   , logExecution
   , getExecutionLog
+  
+  -- * Authorization
+  , isAuthorizedCaller
   ) where
 
 import Control.Monad (unless, when)
@@ -175,6 +178,10 @@ data ProgramState = ProgramState
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
+
+-- | Check if an actor is authorized to call this program
+isAuthorizedCaller :: ProgramState -> Address -> Bool
+isAuthorizedCaller state caller = caller `elem` programAuthorizedCallers state
 
 -- | Create a new program state
 createProgramState :: ProgramId -> UTCTime -> ProgramState

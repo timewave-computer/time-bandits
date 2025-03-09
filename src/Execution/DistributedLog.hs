@@ -48,15 +48,20 @@ module Execution.DistributedLog
 
 import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.MVar (MVar, newMVar, modifyMVar, readMVar)
-import Control.Exception (SomeException, catch, try)
+import Control.Exception (SomeException)
+import Control.Exception qualified as Exception
 import Control.Monad (forever, void, when)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Char8 as BS8
+import Data.List (find)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Serialize (Serialize, encode, decode)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
+import Data.Serialize (Serialize, encode, decode, put, get)
+import qualified Data.Serialize as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -64,6 +69,7 @@ import Data.Time.Clock (UTCTime, getCurrentTime)
 import GHC.Generics (Generic)
 import Polysemy (Embed, Member, Sem, embed, interpret, makeSem)
 import Polysemy.Error (Error, throw)
+import Polysemy.Error qualified as Error
 import Polysemy.State (State)
 import Polysemy.Trace (Trace)
 import qualified Polysemy.Trace as Trace
@@ -72,50 +78,57 @@ import System.FilePath ((</>))
 import System.IO (IOMode(..), hClose, hPutStrLn, withFile)
 
 import Core (Hash(..), EntityHash(..), ActorHash)
-import Core.Crypto (PubKey(..), PrivKey(..), signMessage, verifySignature)
-import Core.Error (AppError(..))
-import Core.Types (LamportTime(..))
+import Core.Types (LamportTime(..), PubKey(..), AppError(NetworkError))
+import Core.Common (PrivKey(..), Signature(..))
+import Core.Utils (signMessage, localVerifySignature)
 import qualified Adapters.Network as Network
 import qualified Adapters.NetworkQUIC as NetworkQUIC
 
 -- | Log storage type
 data LogStorageType
-  = MemoryStorage       -- ^ In-memory storage (volatile)
-  | FileStorage         -- ^ File-based storage (persistent)
-  | DatabaseStorage     -- ^ Database storage (persistent)
+  = MemoryStorage      -- ^ In-memory storage (volatile)
+  | FileStorage        -- ^ File-based storage (persistent)
+  | DatabaseStorage    -- ^ Database storage (persistent and queryable)
   | BlockchainStorage   -- ^ Blockchain storage (persistent and verifiable)
-  deriving (Show, Eq, Generic)
-  deriving anyclass (FromJSON, ToJSON, Serialize)
+  deriving (Show, Eq, Generic, FromJSON, ToJSON)
+
+-- | Serialize instance for LogStorageType
+instance Serialize LogStorageType
 
 -- | Log replication mode
 data LogReplicationMode
-  = NoReplication       -- ^ No replication (single node)
-  | SyncReplication     -- ^ Synchronous replication (wait for all replicas)
-  | AsyncReplication    -- ^ Asynchronous replication (background replication)
+  = NoReplication      -- ^ No replication (single node)
+  | AsyncReplication   -- ^ Asynchronous replication (fire and forget)
+  | SyncReplication    -- ^ Synchronous replication (wait for ack)
   | QuorumReplication   -- ^ Quorum-based replication (wait for quorum)
-  deriving (Show, Eq, Generic)
-  deriving anyclass (FromJSON, ToJSON, Serialize)
+  deriving (Show, Eq, Generic, FromJSON, ToJSON)
+
+-- | Serialize instance for LogReplicationMode
+instance Serialize LogReplicationMode
 
 -- | Log consistency level
 data LogConsistencyLevel
-  = EventualConsistency -- ^ Eventually consistent (may have temporary inconsistencies)
-  | StrongConsistency   -- ^ Strongly consistent (always consistent)
+  = EventualConsistency  -- ^ Eventually consistent (no ordering guarantees)
+  | SequentialConsistency -- ^ Sequentially consistent (respects global ordering)
+  | StrongConsistency    -- ^ Strongly consistent (linearizable)
   | CausalConsistency   -- ^ Causally consistent (respects causal ordering)
-  deriving (Show, Eq, Generic)
-  deriving anyclass (FromJSON, ToJSON, Serialize)
+  deriving (Show, Eq, Generic, FromJSON, ToJSON)
+
+-- | Serialize instance for LogConsistencyLevel
+instance Serialize LogConsistencyLevel
 
 -- | Log configuration
 data LogConfig = LogConfig
-  { lcStorageType :: LogStorageType           -- ^ Storage type
-  , lcStoragePath :: FilePath                 -- ^ Path for file-based storage
-  , lcReplicationMode :: LogReplicationMode   -- ^ Replication mode
-  , lcReplicationFactor :: Int                -- ^ Number of replicas
-  , lcConsistencyLevel :: LogConsistencyLevel -- ^ Consistency level
-  , lcCompactionInterval :: Int               -- ^ Compaction interval in seconds
-  , lcMaxLogSize :: Int                       -- ^ Maximum log size in bytes
+  { lcStorageType :: LogStorageType             -- ^ Storage type
+  , lcReplicationMode :: LogReplicationMode     -- ^ Replication mode
+  , lcConsistencyLevel :: LogConsistencyLevel   -- ^ Consistency level
+  , lcReplicationFactor :: Int                  -- ^ Number of replicas
+  , lcStoragePath :: FilePath                   -- ^ Path for file-based storage
   , lcEncrypted :: Bool                       -- ^ Whether the log is encrypted
-  } deriving (Show, Eq, Generic)
-  deriving anyclass (FromJSON, ToJSON, Serialize)
+  } deriving (Show, Eq, Generic, FromJSON, ToJSON)
+
+-- | Serialize instance for LogConfig
+instance Serialize LogConfig
 
 -- | Default log configuration
 defaultLogConfig :: LogConfig
@@ -125,8 +138,6 @@ defaultLogConfig = LogConfig
   , lcReplicationMode = AsyncReplication
   , lcReplicationFactor = 3
   , lcConsistencyLevel = CausalConsistency
-  , lcCompactionInterval = 3600  -- 1 hour
-  , lcMaxLogSize = 1024 * 1024 * 100  -- 100 MB
   , lcEncrypted = True
   }
 
@@ -137,11 +148,13 @@ data LogEntry a = LogEntry
   , leContent :: a                 -- ^ Entry content
   , lePrevHash :: Maybe Hash       -- ^ Previous entry hash
   , leHash :: Hash                 -- ^ Entry hash
-  , leSignature :: ByteString      -- ^ Entry signature
+  , leSignature :: Signature       -- ^ Entry signature
   , leSigner :: PubKey             -- ^ Signer's public key
   , leReplicated :: Bool           -- ^ Whether the entry has been replicated
   } deriving (Show, Eq, Generic)
-  deriving anyclass (FromJSON, ToJSON, Serialize)
+
+-- | Serialize instance for LogEntry
+instance (Serialize a) => Serialize (LogEntry a)
 
 -- | Distributed log
 data DistributedLog a = DistributedLog
@@ -152,7 +165,30 @@ data DistributedLog a = DistributedLog
   , dlOwner :: ActorHash           -- ^ Log owner
   , dlPeers :: [Network.P2PNode]   -- ^ Replication peers
   } deriving (Show, Eq, Generic)
-  deriving anyclass (FromJSON, ToJSON, Serialize)
+
+-- | Custom serialization function for DistributedLog
+serializeLog :: (Serialize a) => DistributedLog a -> ByteString
+serializeLog log = encode (
+  dlConfig log,
+  dlEntries log,
+  dlLastHash log,
+  dlLastTimestamp log,
+  dlOwner log
+  )
+
+-- | Custom deserialization function for DistributedLog
+deserializeLog :: (Serialize a) => ByteString -> Either String (DistributedLog a)
+deserializeLog bs = case decode bs of
+  Left err -> Left err
+  Right (config, entries, lastHash, lastTimestamp, owner) ->
+    Right $ DistributedLog
+      { dlConfig = config
+      , dlEntries = entries
+      , dlLastHash = lastHash
+      , dlLastTimestamp = lastTimestamp
+      , dlOwner = owner
+      , dlPeers = []  -- Initialize with empty peers list
+      }
 
 -- | Create a new distributed log
 createLog :: 
@@ -163,7 +199,7 @@ createLog ::
   ) => 
   LogConfig -> ActorHash -> Sem r (DistributedLog a)
 createLog config owner = do
-  Trace.trace $ "Creating distributed log for owner " <> T.pack (show owner)
+  Trace.trace $ "Creating distributed log for owner " <> show owner
   
   -- Create the log directory if needed
   when (lcStorageType config == FileStorage) $ do
@@ -200,11 +236,11 @@ appendToLog log content privKey = do
   let timestamp = LamportTime $ unLamportTime (dlLastTimestamp log) + 1
       prevHash = dlLastHash log
       contentBytes = encode content
-      entryHash = Hash $ BS.concat [encode timestamp, contentBytes]
+      entryHash = Hash $ BS.concat [contentBytes, encode timestamp]
   
   -- Sign the entry
   signResult <- case signMessage privKey contentBytes of
-    Left err -> throw $ AppError $ "Failed to sign log entry: " <> err
+    Left err -> throw (NetworkError ("Failed to sign log entry: " <> err))
     Right sig -> return sig
   
   -- Create the log entry
@@ -215,7 +251,7 @@ appendToLog log content privKey = do
         , lePrevHash = prevHash
         , leHash = entryHash
         , leSignature = signResult
-        , leSigner = PubKey $ BS.pack "dummy-public-key"  -- In a real implementation, this would be derived from privKey
+        , leSigner = PubKey $ BS8.pack "dummy-public-key"  -- In a real implementation, this would be derived from privKey
         , leReplicated = False
         }
   
@@ -234,7 +270,7 @@ appendToLog log content privKey = do
   when (lcReplicationMode (dlConfig log) /= NoReplication) $ do
     void $ replicateLog updatedLog
   
-  Trace.trace $ "Entry appended to log with hash " <> T.pack (show entryHash)
+  Trace.trace $ "Entry appended to log with hash " <> show entryHash
   return (updatedLog, entry)
 
 -- | Read entries from the log
@@ -254,7 +290,7 @@ readFromLog log startTime endTime = do
         (maybe True (\st -> leTimestamp entry >= st) startTime) &&
         (maybe True (\et -> leTimestamp entry <= et) endTime)
   
-  Trace.trace $ "Read " <> T.pack (show (length filteredEntries)) <> " entries from log"
+  Trace.trace $ "Read " <> show (length filteredEntries) <> " entries from log"
   return filteredEntries
 
 -- | Replicate the log to peers
@@ -273,7 +309,7 @@ replicateLog log = do
   let updatedEntries = map (\e -> e { leReplicated = True }) (dlEntries log)
       updatedLog = log { dlEntries = updatedEntries }
   
-  Trace.trace $ "Replicated log to " <> T.pack (show (length (dlPeers log))) <> " peers"
+  Trace.trace $ "Replicated log to " <> show (length (dlPeers log)) <> " peers"
   return updatedLog
 
 -- | Compact the log by removing old entries
@@ -302,7 +338,7 @@ syncWithPeers ::
   ) => 
   DistributedLog a -> [Network.P2PNode] -> Sem r (DistributedLog a)
 syncWithPeers log peers = do
-  Trace.trace $ "Synchronizing log with " <> T.pack (show (length peers)) <> " peers"
+  Trace.trace $ "Synchronizing log with " <> show (length peers) <> " peers"
   
   -- In a real implementation, this would sync the log with peers
   -- For now, just update the peers list
@@ -320,7 +356,7 @@ resolveConflicts ::
   ) => 
   DistributedLog a -> [DistributedLog a] -> Sem r (DistributedLog a)
 resolveConflicts localLog remoteLogs = do
-  Trace.trace $ "Resolving conflicts between " <> T.pack (show (length remoteLogs + 1)) <> " log versions"
+  Trace.trace $ "Resolving conflicts between " <> show (length remoteLogs + 1) <> " log versions"
   
   -- In a real implementation, this would resolve conflicts
   -- For now, just return the local log
@@ -340,7 +376,7 @@ verifyLogIntegrity log = do
   Trace.trace "Verifying log integrity"
   
   -- Verify each entry's hash and signature
-  let verifyEntry :: LogEntry a -> Bool
+  let verifyEntry :: (Serialize a) => LogEntry a -> Bool
       verifyEntry entry =
         -- Verify the hash
         let contentBytes = encode (leContent entry)
@@ -348,7 +384,7 @@ verifyLogIntegrity log = do
             hashValid = leHash entry == expectedHash
             
             -- Verify the signature
-            sigValid = verifySignature (leSigner entry) contentBytes (leSignature entry)
+            sigValid = localVerifySignature (leSigner entry) contentBytes (leSignature entry)
         in hashValid && sigValid
   
   -- Verify the chain of hashes
@@ -361,7 +397,7 @@ verifyLogIntegrity log = do
   let entriesValid = all verifyEntry (dlEntries log)
       chainValid = verifyChain (dlEntries log)
       
-  Trace.trace $ "Log integrity verification result: " <> T.pack (show (entriesValid && chainValid))
+  Trace.trace $ "Log integrity verification result: " <> show (entriesValid && chainValid)
   return (entriesValid && chainValid)
 
 -- | Persist the log to disk
@@ -375,21 +411,20 @@ persistLogToDisk ::
 persistLogToDisk log = do
   Trace.trace "Persisting log to disk"
   
-  -- Create the log directory if needed
-  embed $ createDirectoryIfMissing True (lcStoragePath (dlConfig log))
-  
-  -- Serialize the log
-  let serializedLog = encode log
-      logPath = lcStoragePath (dlConfig log) </> show (dlOwner log) <> ".log"
-  
-  -- Write the log to disk
-  result <- embed $ try @SomeException $ BS.writeFile logPath serializedLog
-  case result of
-    Left err -> do
-      Trace.trace $ "Failed to persist log: " <> T.pack (show err)
-      throw $ AppError $ "Failed to persist log: " <> T.pack (show err)
-    Right _ -> 
-      Trace.trace "Log persisted successfully"
+  -- Only proceed if using file storage
+  when (lcStorageType (dlConfig log) == FileStorage) $ do
+    -- Create the log directory if it doesn't exist
+    embed $ createDirectoryIfMissing True (lcStoragePath (dlConfig log))
+    
+    -- Serialize the log
+    let serializedLog = serializeLog log
+        logPath = lcStoragePath (dlConfig log) </> "log.bin"
+    
+    -- Write to disk
+    result <- embed $ Exception.try @SomeException $ BS.writeFile logPath serializedLog
+    case result of
+      Left err -> throw (NetworkError ("Failed to persist log: " <> T.pack (show err)))
+      Right _ -> Trace.trace "Log persisted to disk successfully"
 
 -- | Load the log from disk
 loadLogFromDisk :: 
@@ -398,34 +433,35 @@ loadLogFromDisk ::
   , Member (Error AppError) r
   , Serialize a
   ) => 
-  LogConfig -> ActorHash -> Sem r (Maybe (DistributedLog a))
+  LogConfig -> ActorHash -> Sem r (DistributedLog a)
 loadLogFromDisk config owner = do
-  Trace.trace $ "Loading log from disk for owner " <> T.pack (show owner)
+  Trace.trace "Loading log from disk"
   
-  -- Check if the log file exists
-  let logPath = lcStoragePath config </> show owner <> ".log"
-  logExists <- embed $ doesFileExist logPath
-  
-  if not logExists
-    then do
-      Trace.trace "Log file does not exist"
-      return Nothing
+  -- Only proceed if using file storage
+  if lcStorageType config /= FileStorage
+    then createLog config owner
     else do
-      -- Read the log file
-      result <- embed $ try @SomeException $ BS.readFile logPath
+      let logPath = lcStoragePath config </> "log.bin"
+      
+      -- Check if the log file exists
+      result <- embed $ Exception.try @SomeException $ do
+        fileExists <- doesFileExist logPath
+        if fileExists
+          then do
+            serializedLog <- BS.readFile logPath
+            case deserializeLog serializedLog of
+              Left err -> return $ Left $ NetworkError ("Failed to decode log: " <> T.pack err)
+              Right decodedLog -> return $ Right decodedLog
+          else return $ Left $ NetworkError "Log file not found"
+      
       case result of
-        Left err -> do
-          Trace.trace $ "Failed to load log: " <> T.pack (show err)
-          throw $ AppError $ "Failed to load log: " <> T.pack (show err)
-        Right serializedLog -> 
-          -- Deserialize the log
-          case decode serializedLog of
-            Left err -> do
-              Trace.trace $ "Failed to deserialize log: " <> T.pack err
-              throw $ AppError $ "Failed to deserialize log: " <> T.pack err
-            Right log -> do
-              Trace.trace "Log loaded successfully"
-              return $ Just log
+        Left _ -> do
+          Trace.trace "No existing log file found, creating new log"
+          createLog config owner
+        Right (Left err) -> throw err
+        Right (Right log) -> do
+          Trace.trace $ "Loaded log with " <> show (length (dlEntries log)) <> " entries"
+          return log
 
 -- | Export the log to a timeline
 exportLogToTimeline :: 
@@ -436,7 +472,7 @@ exportLogToTimeline ::
   ) => 
   DistributedLog a -> EntityHash timeline -> Sem r ()
 exportLogToTimeline log timeline = do
-  Trace.trace $ "Exporting log to timeline " <> T.pack (show timeline)
+  Trace.trace $ "Exporting log to timeline " <> show timeline
   
   -- In a real implementation, this would export the log to a timeline
   -- For now, just log the action

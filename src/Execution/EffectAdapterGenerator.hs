@@ -39,12 +39,14 @@ module Execution.EffectAdapterGenerator
 
 import Control.Monad (forM_, when)
 import Control.Exception (try, SomeException)
+import Control.Monad.IO.Class (liftIO)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem, Embed, embed)
 import Polysemy.Error (Error, throw, runError, fromEither)
@@ -144,11 +146,11 @@ parseTimelineDescriptor content = do
       findValue section key = T.strip <$> findValueInSection section key lines
   
   -- Extract timeline section
-  timelineId <- fromMaybe "" <$> findValue "timeline" "id"
-  timelineName <- fromMaybe "" <$> findValue "timeline" "name"
-  timelineType <- fromMaybe "" <$> findValue "timeline" "type"
-  timelineDesc <- fromMaybe "" <$> findValue "timeline" "description"
-  timelineModule <- fromMaybe "" <$> findValue "timeline" "adapter_module"
+  let timelineId = fromMaybe "" (findValue "timeline" "id")
+  let timelineName = fromMaybe "" (findValue "timeline" "name")
+  let timelineType = fromMaybe "" (findValue "timeline" "type")
+  let timelineDesc = fromMaybe "" (findValue "timeline" "description")
+  let timelineModule = fromMaybe "" (findValue "timeline" "adapter_module")
   
   -- Extract other sections as maps
   let properties = extractSectionAsMap "properties" lines
@@ -172,7 +174,7 @@ parseTimelineDescriptor content = do
   
   -- Create the timeline descriptor
   return TimelineDescriptor
-    { descriptorId = EntityHash $ Hash $ T.encodeUtf8 timelineId
+    { descriptorId = EntityHash $ Hash $ TE.encodeUtf8 timelineId
     , descriptorName = timelineName
     , descriptorType = timelineType
     , descriptorDescription = timelineDesc
@@ -299,7 +301,7 @@ writeAdapterModule descriptor adapters outputPath = do
   -- Create the module content
   let moduleName = descriptorAdapterModule descriptor
       imports = generateImports $ concatMap adapterImports adapters
-      adapterCode = T.unlines $ map adapterCode adapters
+      generatedAdapterCode = T.unlines $ map (\adapter -> adapterCode adapter) adapters
       
       moduleContent = T.unlines
         [ "{-# LANGUAGE BlockArguments #-}"
@@ -318,7 +320,7 @@ writeAdapterModule descriptor adapters outputPath = do
         , "-- | " <> descriptorName descriptor <> " (" <> descriptorType descriptor <> ")"
         , "-- | " <> descriptorDescription descriptor
         , ""
-        , adapterCode
+        , generatedAdapterCode
         ]
   
   -- Ensure the output directory exists
@@ -343,8 +345,9 @@ findValueInSection :: Text -> Text -> [Text] -> Maybe Text
 findValueInSection section key allLines = 
   let sectionStart = "[" <> section <> "]"
       inSection = dropWhile (\l -> not $ T.strip l == sectionStart) allLines
-      sectionLines = takeWhile (\l -> not $ T.isPrefixOf "[" (T.strip l) && not (T.strip l == sectionStart)) $ 
-                     if null inSection then [] else tail inSection
+      sectionLines = case inSection of
+                       [] -> []
+                       (_:rest) -> takeWhile (\l -> not $ T.isPrefixOf "[" (T.strip l) && not (T.strip l == sectionStart)) rest
       keyPrefix = key <> " = "
       matchingLines = filter (\l -> keyPrefix `T.isPrefixOf` T.strip l) sectionLines
   in case matchingLines of
@@ -352,7 +355,9 @@ findValueInSection section key allLines =
        (line:_) -> 
          let parts = T.splitOn "=" line
          in if length parts >= 2
-            then Just $ removeQuotes $ T.strip $ parts !! 1
+            then Just $ removeQuotes $ T.strip $ case parts of
+                                                  (_:value:_) -> value
+                                                  _ -> ""
             else Nothing
 
 -- | Remove quotes from a text value
@@ -368,8 +373,9 @@ extractSectionAsMap :: Text -> [Text] -> Map Text Text
 extractSectionAsMap section allLines = 
   let sectionStart = "[" <> section <> "]"
       inSection = dropWhile (\l -> not $ T.strip l == sectionStart) allLines
-      sectionLines = takeWhile (\l -> not $ T.isPrefixOf "[" (T.strip l) && not (T.strip l == sectionStart)) $ 
-                     if null inSection then [] else tail inSection
+      sectionLines = case inSection of
+                       [] -> []
+                       (_:rest) -> takeWhile (\l -> not $ T.isPrefixOf "[" (T.strip l) && not (T.strip l == sectionStart)) rest
       keyValuePairs = mapMaybe extractKeyValue sectionLines
   in Map.fromList keyValuePairs
 
@@ -388,10 +394,6 @@ parseBoolValue :: Text -> Bool
 parseBoolValue t =
   let lower = T.toLower $ T.strip t
   in lower == "true" || lower == "yes" || lower == "1"
-
--- | Helper function to lift IO actions into Sem
-liftIO :: Member (Embed IO) r => IO a -> Sem r a
-liftIO = embed
 
 -- | Apply an effect to a timeline using the appropriate adapter
 applyTimelineEffect :: 

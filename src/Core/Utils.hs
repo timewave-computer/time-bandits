@@ -27,6 +27,7 @@ module Core.Utils (
   -- ** Key Management
   derivePubKeyFromPrivKey,
   generateSecureEd25519KeyPair,
+  signMessage,
   
   -- ** Hashing Operations
   computeContentHash,
@@ -38,6 +39,7 @@ module Core.Utils (
   
   -- ** Event Validation
   verifyEventSignature,
+  localVerifySignature,
   
   -- ** Timeline Constants
   rootTimelineHash,
@@ -233,8 +235,7 @@ verifyMessageSignatureWithKey ::
   ByteString -> 
   Signature -> 
   Bool
-verifyMessageSignatureWithKey pubKey content signature =
-  localVerifySignature pubKey content signature 
+verifyMessageSignatureWithKey = localVerifySignature
 
 -- | Helper function to verify a message signature
 verifyMessageSignature ::

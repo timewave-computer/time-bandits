@@ -161,88 +161,97 @@ mockExecuteEffect stateRef effect = do
           return $ Left $ DecodingError $ "Failed to decode timeline effect: " <> T.pack err
         
         -- Standardize all patterns to use (String, ByteString) format for consistency
-        Right ("deposit", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode deposit data: " <> T.pack err
-            Right (resourceId, amount, address) -> do
-              result <- mockDeposit stateRef resourceId amount address
-              return $ Right $ encode result
-          
-        Right ("withdraw", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode withdraw data: " <> T.pack err
-            Right (resourceId, amount, address) -> do
-              result <- mockWithdraw stateRef resourceId amount address
-              return $ Right $ encode result
-          
-        Right ("transfer", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode transfer data: " <> T.pack err
-            Right (resourceId, amount, fromAddress, toAddress) -> do
-              result <- mockTransfer stateRef resourceId amount fromAddress toAddress
-              return $ Right $ encode result
-          
-        Right (effectName, _) ->
-          return $ Left $ ExecutionError $ "Unknown timeline effect: " <> T.pack (show effectName)
+        Right (command :: String, effectData :: ByteString) -> case command of
+          "deposit" -> do
+            -- Decode the effect data
+            case decode effectData of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode deposit data: " <> T.pack err
+              Right (resourceId :: ResourceId, amount :: Integer, address :: Address) -> do
+                result <- mockDeposit stateRef resourceId amount address
+                return $ Right $ encode result
+            
+          "withdraw" -> do
+            -- Decode the effect data
+            case decode effectData of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode withdraw data: " <> T.pack err
+              Right (resourceId :: ResourceId, amount :: Integer, address :: Address) -> do
+                result <- mockWithdraw stateRef resourceId amount address
+                return $ Right $ encode result
+            
+          "transfer" -> do
+            -- Decode the effect data
+            case decode effectData of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode transfer data: " <> T.pack err
+              Right (resourceId :: ResourceId, amount :: Integer, fromAddress :: Address, toAddress :: Address) -> do
+                result <- mockTransfer stateRef resourceId amount fromAddress toAddress
+                return $ Right $ encode result
+                
+          "query_balance" -> do
+            -- Decode the effect data
+            case decode effectData of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode query data: " <> T.pack err
+              Right (address :: Address, asset :: Asset) -> do
+                balance <- mockQuery stateRef address asset
+                return $ Right $ encode balance
+                
+          "proof" -> do
+            -- Decode the effect data
+            case decode effectData of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode proof data: " <> T.pack err
+              Right (txHash :: ByteString) -> do
+                result <- mockProof stateRef txHash
+                return $ Right $ encode result
+                
+          _ -> return $ Left $ ExecutionError $ "Unknown timeline effect: " <> T.pack command
     
     -- Handle resource effects
     ResourceEffect resourceId encodedEffect -> do
-      case decode encodedEffect of
-        Left err -> 
+      case decode (encodedEffect :: ByteString) of
+        Left err ->
           return $ Left $ DecodingError $ "Failed to decode resource effect: " <> T.pack err
         
-        -- Standardize patterns to use (String, ByteString) for consistency
-        Right ("update", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode update data: " <> T.pack err
-            Right newValue -> do
-              -- Mock updating a resource's state
-              return $ Right $ encode ("resource-updated", resourceId, newValue)
-          
-        Right ("create", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode create data: " <> T.pack err
-            Right initialValue -> do
-              -- Mock creating a new resource
-              return $ Right $ encode ("resource-created", resourceId, initialValue)
-          
-        Right ("delete", _) -> do
-          -- Mock deleting a resource
-          return $ Right $ encode ("resource-deleted", resourceId)
-          
-        Right (effectName, _) ->
-          return $ Left $ ExecutionError $ "Unknown resource effect: " <> T.pack (show effectName)
+        Right (effectName :: String, effectData :: ByteString) -> case effectName of
+          "update" -> do
+            -- Decode the effect data for the update
+            case decode (effectData :: ByteString) of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode update data: " <> T.pack err
+              Right (newValue :: ByteString) -> do
+                return $ Right $ encode (("resource-updated" :: String), resourceId, newValue)
+                
+          "create" -> do
+            -- Decode the effect data for the create
+            case decode (effectData :: ByteString) of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode create data: " <> T.pack err
+              Right (initialValue :: ByteString) -> do
+                return $ Right $ encode (("resource-created" :: String), resourceId, initialValue)
+                
+          "delete" -> do
+            return $ Right $ encode (("resource-deleted" :: String), resourceId)
+            
+          _ -> return $ Left $ ExecutionError $ "Unknown resource effect: " <> T.pack (show effectName)
       
     -- Handle program effects  
     ProgramEffect programId encodedEffect -> do
-      case decode encodedEffect of
-        Left err -> 
+      case decode (encodedEffect :: ByteString) of
+        Left err ->
           return $ Left $ DecodingError $ "Failed to decode program effect: " <> T.pack err
         
-        -- Standardize patterns to use (String, ByteString) for consistency
-        Right ("invoke", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode invoke data: " <> T.pack err
-            Right (functionName, args) -> do
-              -- Mock invoking a program function
-              return $ Right $ encode ("function-invoked", programId, functionName, args)
-          
-        Right ("update", effectData) -> do
-          -- Decode the effect data
-          case decode effectData of
-            Left err -> return $ Left $ DecodingError $ "Failed to decode update data: " <> T.pack err
-            Right newCode -> do
-              -- Mock updating a program's code
-              return $ Right $ encode ("program-updated", programId, newCode)
-          
-        Right (effectName, _) ->
-          return $ Left $ ExecutionError $ "Unknown program effect: " <> T.pack (show effectName)
+        Right (effectName :: String, effectData :: ByteString) -> case effectName of
+          "invoke" -> do
+            -- Decode the effect data
+            case decode (effectData :: ByteString) of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode invoke data: " <> T.pack err
+              Right (functionName :: String, args :: ByteString) -> do
+                return $ Right $ encode (("function-invoked" :: String), programId, functionName, args)
+            
+          "update" -> do
+            -- Decode the effect data
+            case decode (effectData :: ByteString) of
+              Left err -> return $ Left $ DecodingError $ "Failed to decode update data: " <> T.pack err
+              Right (newCode :: ByteString) -> do
+                return $ Right $ encode (("program-updated" :: String), programId, newCode)
+                
+          _ -> return $ Left $ ExecutionError $ "Unknown program effect: " <> T.pack (show effectName)
       
     -- Handle composite effects by recursively processing each sub-effect
     CompositeEffect subEffects -> do
@@ -265,52 +274,53 @@ mockExecuteEffect stateRef effect = do
 -- | Mock implementation of querying state
 mockQueryState :: IORef MockState -> ByteString -> IO (Either AdapterError ByteString)
 mockQueryState stateRef query = do
-  -- Parse the query
-  case decode query of
+  case decode (query :: ByteString) of
     Left err -> return $ Left $ DecodingError $ T.pack err
     
-    -- All queries will now use the same pattern type (String, ByteString) for consistency
-    -- We'll extract and convert the values as needed in each handler
-    
-    Right ("balance", queryData) -> do
-      -- Extract address and asset from queryData
-      case decode queryData of
-        Left err -> return $ Left $ DecodingError $ "Failed to decode balance query: " <> T.pack err
-        Right (address, asset) -> do
-          balance <- mockQuery stateRef address asset
-          return $ Right $ encode balance
+    Right (queryType :: String, queryData :: ByteString) -> case queryType of
+      "balance" -> do
+        -- Decode the query data
+        case decode queryData of
+          Left err -> return $ Left $ DecodingError $ "Failed to decode balance query data: " <> T.pack err
+          Right (address :: Address, asset :: Asset) -> do
+            state <- readIORef stateRef
+            -- Get the balance for the address and asset
+            let balance = Map.findWithDefault 0 asset $ 
+                          Map.findWithDefault Map.empty address $ 
+                          mockBalances state
+            return $ Right $ encode balance
       
-    Right ("nonce", queryData) -> do
-      -- Extract address from queryData
-      case decode queryData of
-        Left err -> return $ Left $ DecodingError $ "Failed to decode nonce query: " <> T.pack err
-        Right address -> do
-          state <- readIORef stateRef
-          let nonce = Map.findWithDefault 0 address (mockNonce state)
-          return $ Right $ encode nonce
+      "nonce" -> do
+        -- Extract address from queryData
+        case decode queryData of
+          Left err -> return $ Left $ DecodingError $ "Failed to decode nonce query: " <> T.pack err
+          Right address -> do
+            state <- readIORef stateRef
+            let nonce = Map.findWithDefault 0 address (mockNonce state)
+            return $ Right $ encode nonce
       
-    Right ("block", queryData) -> do
-      -- Extract height from queryData
-      case decode queryData of
-        Left err -> return $ Left $ DecodingError $ "Failed to decode block query: " <> T.pack err
-        Right height -> do
-          state <- readIORef stateRef
-          let block = find (\b -> bhHeight b == height) (mockBlocks state)
-          case block of
-            Nothing -> return $ Left $ ExecutionError $ "Block not found: " <> T.pack (show height)
-            Just b -> return $ Right $ encode b
+      "block" -> do
+        -- Extract height from queryData
+        case decode queryData of
+          Left err -> return $ Left $ DecodingError $ "Failed to decode block query: " <> T.pack err
+          Right height -> do
+            state <- readIORef stateRef
+            let block = find (\b -> bhHeight b == height) (mockBlocks state)
+            case block of
+              Nothing -> return $ Left $ ExecutionError $ "Block not found: " <> T.pack (show height)
+              Just b -> return $ Right $ encode b
         
-    Right ("transaction", queryData) -> do
-      -- Use txHash directly from queryData
-      let txHash = queryData
-      state <- readIORef stateRef
-      let tx = find (\(_, result) -> txHash `BS.isInfixOf` result) (mockTransactions state)
-      case tx of
-        Nothing -> return $ Left $ ExecutionError $ "Transaction not found: " <> T.pack (show txHash)
-        Just t -> return $ Right $ encode t
+      "transaction" -> do
+        -- Use txHash directly from queryData
+        let txHash = queryData
+        state <- readIORef stateRef
+        let tx = find (\(_, result) -> txHash `BS.isInfixOf` result) (mockTransactions state)
+        case tx of
+          Nothing -> return $ Left $ ExecutionError $ "Transaction not found: " <> T.pack (show txHash)
+          Just t -> return $ Right $ encode t
         
-    Right (queryType, _) ->
-      return $ Left $ ExecutionError $ "Unknown query type: " <> T.pack (show queryType)
+      _ ->
+        return $ Left $ ExecutionError $ "Unknown query type: " <> T.pack (show queryType)
 
 -- Helper function for list search
 find :: (a -> Bool) -> [a] -> Maybe a
@@ -374,139 +384,120 @@ mockDeposit :: IORef MockState -> ResourceId -> Integer -> Address -> IO ByteStr
 mockDeposit stateRef resourceId amount address = do
   -- Get the current state
   state <- readIORef stateRef
-  
-  -- Update the balances
   let asset = resourceIdToAsset resourceId
       currentBalance = Map.findWithDefault 0 asset $ 
-                        Map.findWithDefault Map.empty address $ 
-                        mockBalances state
+                      Map.findWithDefault Map.empty address $ 
+                      mockBalances state
+      
+      -- Update the balances
       newAccountBalances = Map.insert asset (currentBalance + amount) $ 
-                            Map.findWithDefault Map.empty address $ 
-                            mockBalances state
+                          Map.findWithDefault Map.empty address $ 
+                          mockBalances state
       newBalances = Map.insert address newAccountBalances $ mockBalances state
-  
-  -- Create the updated state
-  let newState = state { mockBalances = newBalances }
-  
-  -- Update the state
+      
+      -- Update the state
+      newState = state { mockBalances = newBalances }
+      
+  -- Write the updated state
   writeIORef stateRef newState
   
-  -- Generate a mock transaction hash
-  txHash <- generateMockTxHash
-  
   -- Record the transaction
-  let txData = encode ("deposit", resourceId, amount, address)
-      txResult = encode ("success", txHash)
+  txHash <- generateMockTxHash
+  let txData = encode (("deposit" :: String), resourceId, amount, address)
+      txResult = encode (("success" :: String), txHash)
   recordTransaction stateRef txData txResult
   
-  -- Advance the block to simulate blockchain progress
-  _ <- advanceBlock stateRef
-  
-  -- Return the transaction result
+  -- Return the result
   return txResult
 
--- | Mock implementation of a withdrawal
+-- | Mock implementation of a withdraw operation
 mockWithdraw :: IORef MockState -> ResourceId -> Integer -> Address -> IO ByteString
 mockWithdraw stateRef resourceId amount address = do
-  -- Get the current state
-  state <- readIORef stateRef
-  
   -- Check if the account has enough balance
+  state <- readIORef stateRef
   let asset = resourceIdToAsset resourceId
       currentBalance = Map.findWithDefault 0 asset $ 
-                        Map.findWithDefault Map.empty address $ 
-                        mockBalances state
+                      Map.findWithDefault Map.empty address $ 
+                      mockBalances state
   
+  -- If insufficient balance, return an error
   if currentBalance < amount
     then do
-      -- Not enough balance
-      let txData = encode ("withdraw", resourceId, amount, address)
-          txResult = encode ("failure", "insufficient balance")
+      -- Record the failed transaction
+      let txData = encode (("withdraw" :: String), resourceId, amount, address)
+          txResult = encode (("failure" :: String), ("insufficient balance" :: String))
       recordTransaction stateRef txData txResult
       return txResult
     else do
       -- Update the balances
       let newAccountBalances = Map.insert asset (currentBalance - amount) $ 
-                                Map.findWithDefault Map.empty address $ 
-                                mockBalances state
+                              Map.findWithDefault Map.empty address $ 
+                              mockBalances state
           newBalances = Map.insert address newAccountBalances $ mockBalances state
+          
+          -- Update the state
+          newState = state { mockBalances = newBalances }
       
-      -- Create the updated state
-      let newState = state { mockBalances = newBalances }
-      
-      -- Update the state
+      -- Write the updated state
       writeIORef stateRef newState
       
-      -- Generate a mock transaction hash
-      txHash <- generateMockTxHash
-      
       -- Record the transaction
-      let txData = encode ("withdraw", resourceId, amount, address)
-          txResult = encode ("success", txHash)
+      txHash <- generateMockTxHash
+      let txData = encode (("withdraw" :: String), resourceId, amount, address)
+          txResult = encode (("success" :: String), txHash)
       recordTransaction stateRef txData txResult
       
-      -- Advance the block to simulate blockchain progress
-      _ <- advanceBlock stateRef
-      
-      -- Return the transaction result
+      -- Return the result
       return txResult
 
 -- | Mock implementation of a transfer
 mockTransfer :: IORef MockState -> ResourceId -> Integer -> Address -> Address -> IO ByteString
 mockTransfer stateRef resourceId amount fromAddress toAddress = do
-  -- Get the current state
+  -- Check if the source account has enough balance
   state <- readIORef stateRef
-  
-  -- Check if the account has enough balance
   let asset = resourceIdToAsset resourceId
       fromBalance = Map.findWithDefault 0 asset $ 
-                     Map.findWithDefault Map.empty fromAddress $ 
-                     mockBalances state
+                   Map.findWithDefault Map.empty fromAddress $ 
+                   mockBalances state
   
+  -- If insufficient balance, return an error
   if fromBalance < amount
     then do
-      -- Not enough balance
-      let txData = encode ("transfer", resourceId, amount, fromAddress, toAddress)
-          txResult = encode ("failure", "insufficient balance")
+      -- Record the failed transaction
+      let txData = encode (("transfer" :: String), resourceId, amount, fromAddress, toAddress)
+          txResult = encode (("failure" :: String), ("insufficient balance" :: String))
       recordTransaction stateRef txData txResult
       return txResult
     else do
-      -- Update the from balance
+      -- Update the balances
       let newFromAccountBalances = Map.insert asset (fromBalance - amount) $ 
-                                   Map.findWithDefault Map.empty fromAddress $ 
-                                   mockBalances state
-          
-          -- Update the to balance
+                                  Map.findWithDefault Map.empty fromAddress $ 
+                                  mockBalances state
           toBalance = Map.findWithDefault 0 asset $ 
-                       Map.findWithDefault Map.empty toAddress $ 
-                       mockBalances state
+                     Map.findWithDefault Map.empty toAddress $ 
+                     mockBalances state
           newToAccountBalances = Map.insert asset (toBalance + amount) $ 
-                                 Map.findWithDefault Map.empty toAddress $ 
-                                 mockBalances state
+                                Map.findWithDefault Map.empty toAddress $ 
+                                mockBalances state
           
-          -- Update both balances
-          newBalances = Map.insert toAddress newToAccountBalances $ 
-                        Map.insert fromAddress newFromAccountBalances $ 
-                        mockBalances state
+          -- Update the balances in the state
+          newBalances = Map.insert fromAddress newFromAccountBalances $ 
+                       Map.insert toAddress newToAccountBalances $ 
+                       mockBalances state
+          
+          -- Update the state
+          newState = state { mockBalances = newBalances }
       
-      -- Create the updated state
-      let newState = state { mockBalances = newBalances }
-      
-      -- Update the state
+      -- Write the updated state
       writeIORef stateRef newState
       
-      -- Generate a mock transaction hash
-      txHash <- generateMockTxHash
-      
       -- Record the transaction
-      let txData = encode ("transfer", resourceId, amount, fromAddress, toAddress)
-          txResult = encode ("success", txHash)
+      txHash <- generateMockTxHash
+      let txData = encode (("transfer" :: String), resourceId, amount, fromAddress, toAddress)
+          txResult = encode (("success" :: String), txHash)
       recordTransaction stateRef txData txResult
       
-      -- Advance the block to simulate blockchain progress
-      _ <- advanceBlock stateRef
-      
-      -- Return the transaction result
+      -- Return the result
       return txResult
 
 -- | Mock implementation of a balance query

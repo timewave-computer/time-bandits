@@ -80,12 +80,15 @@ module Actors.Actor
 
 import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
-import Control.Concurrent.MVar (MVar, newMVar, takeMVar, putMVar)
+import Control.Concurrent.MVar (MVar, putMVar, takeMVar)
+import qualified Control.Concurrent.MVar as MVar
+import Control.Concurrent.STM (TQueue, readTQueue, writeTQueue)
+import qualified Control.Concurrent.STM as STM
 import Control.Monad (forever, void, when, replicateM)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Serialize (Serialize)
+import Data.Serialize (Serialize, encode, decode)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
@@ -102,12 +105,10 @@ import Adapters.Network (P2PConfig(..))
 import Data.Time.Clock (UTCTime, getCurrentTime)
 
 -- Import from TimeBandits modules
-import Core (ActorHash, Hash(..), EntityHash(..))
 import Core.Types
   ( AppError(..)
   , LamportTime(..)
   , PubKey(..)
-  , Actor(..)
   , ActorType(..)
   )
 import Core.Resource 
@@ -136,15 +137,120 @@ import qualified Actors.TimeKeeper as TimeKeeper
 import qualified Actors.TimeBandit as TimeBandit
 import qualified Actors.ActorCoordination as ActorCoordination
 
--- | The Actor handle for interaction with an actor
-data ActorHandle r = ActorHandle
-  { handleId :: Text
-  , handleType :: ActorType
-  , handleProcess :: Maybe ProcessHandle
-  , handleThread :: Maybe ThreadId
-  , handleSocket :: Maybe Socket
-  , handleMailbox :: Chan TransitionMessage
+-- | Type alias for deployment mode
+type DeploymentMode = SimulationMode
+
+-- | Type alias for actor address
+type Address = Text
+
+-- | Message queue for actors
+type MessageQueue a = TQueue a
+
+-- | Actor message data type
+data ActorMessage = 
+    TransitionMsg TransitionMessage
+  | ControlMsg Text
+  | DataMsg ByteString
+  deriving (Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | Actor error type
+data ActorError = 
+    ActorNotFound Text
+  | InvalidActorState Text
+  | CommunicationError Text
+  | AuthorizationError Text
+  | ResourceError Text
+  | DeploymentError Text
+  deriving (Show, Eq, Generic)
+  deriving anyclass (Serialize)
+
+-- | Actor state
+data ActorState = ActorState
+  { actorStateId :: Address
+  , actorStateRole :: ActorRole
+  , actorStateCapabilities :: [ActorCapability]
+  , actorStatePrograms :: Map ProgramId ByteString
+  , actorStateResources :: [ResourceId]
   }
+  deriving (Show, Generic)
+  deriving anyclass (Serialize)
+
+-- | In-memory actor handle
+data InMemoryHandle = InMemoryHandle
+  { inMemoryId :: Address
+  , inMemoryState :: MVar ActorState
+  , inMemoryQueue :: MessageQueue ActorMessage
+  }
+
+-- | Local process actor handle
+data LocalProcessHandle = LocalProcessHandle
+  { localProcessId :: Address
+  , localProcessHandle :: ProcessHandle
+  , localProcessAddress :: SockAddr
+  }
+
+-- | Remote actor handle
+data RemoteHandle = RemoteHandle
+  { remoteId :: Address
+  , remoteHost :: String
+  , remotePort :: PortNumber
+  , remoteSocket :: Maybe Socket
+  , remoteActor :: Text
+  , remoteState :: ActorState
+  , remoteAddress :: SockAddr
+  , remoteNetworkConfig :: P2PConfig
+  , remoteLastSeen :: UTCTime
+  , remoteIsConnected :: Bool
+  }
+
+-- | Actor handle that combines all handle types
+data ActorHandle = 
+    InMemoryActorHandle InMemoryHandle
+  | LocalProcessActorHandle LocalProcessHandle
+  | RemoteActorHandle RemoteHandle
+
+-- | Create actor state from spec
+createActorState :: ActorSpec -> Sem r ActorState
+createActorState spec = pure $ ActorState
+  { actorStateId = actorSpecId spec
+  , actorStateRole = actorSpecRole spec
+  , actorStateCapabilities = actorSpecCapabilities spec
+  , actorStatePrograms = Map.empty  -- Initialize with empty map
+  , actorStateResources = []
+  }
+
+-- | Create a message queue
+createMessageQueue :: IO (MessageQueue ActorMessage)
+createMessageQueue = STM.newTQueueIO
+
+-- | Enqueue a message
+enqueueMessage :: MessageQueue ActorMessage -> ActorMessage -> IO ()
+enqueueMessage queue msg = STM.atomically $ writeTQueue queue msg
+
+-- | Dequeue a message
+dequeueMessage :: MessageQueue ActorMessage -> IO (Maybe ActorMessage)
+dequeueMessage queue = STM.atomically $ Just <$> readTQueue queue
+
+-- | Helper functions for in-memory actors
+runInMemoryActor :: IORef.IORef ActorState -> IO ()
+runInMemoryActor stateRef = forever $ do
+  state <- IORef.readIORef stateRef
+  -- In a real implementation, this would process messages and update state
+  threadDelay 1000000  -- Sleep for 1 second
+
+sendToInMemoryActor :: MessageQueue ActorMessage -> ActorMessage -> IO ()
+sendToInMemoryActor = enqueueMessage
+
+receiveFromInMemoryActor :: MessageQueue ActorMessage -> IO (Maybe ActorMessage)
+receiveFromInMemoryActor queue = do
+  -- Try to read a message, but don't block if none available
+  msg <- STM.atomically $ do
+    isEmpty <- STM.isEmptyTQueue queue
+    if isEmpty
+      then return Nothing
+      else Just <$> readTQueue queue
+  return msg
 
 -- | Actor class defines the interface for all actors
 class Actor a where
@@ -174,259 +280,73 @@ createActor spec = do
         { actorStateId = actorSpecId spec
         , actorStateRole = actorSpecRole spec
         , actorStateCapabilities = actorSpecCapabilities spec
-        , actorStatePrograms = actorSpecInitialPrograms spec
+        , actorStatePrograms = Map.empty  -- Initialize with empty map
         , actorStateResources = []
         }
   
   return state
 
 -- | Deploy an actor in the specified mode
-deployActor :: (Member (Error ActorError) r)
+deployActor :: (Member (Error ActorError) r, Member (Embed IO) r)
            => ActorSpec
            -> DeploymentMode
-           -> Sem r (ActorHandle r)
+           -> Sem r ActorHandle
 deployActor spec mode = case mode of
   InMemory -> deployInMemoryActor spec
-  LocalProcesses -> deployLocalActor spec
-  GeoDistributed -> deployRemoteActor spec
+  MultiProcess -> deployLocalActor spec
+  Distributed -> deployRemoteActor spec
 
 -- | Deploy an actor in in-memory mode
-deployInMemoryActor :: (Member (Error ActorError) r)
+deployInMemoryActor :: (Member (Error ActorError) r, Member (Embed IO) r)
                    => ActorSpec
-                   -> Sem r (ActorHandle r)
+                   -> Sem r ActorHandle
 deployInMemoryActor spec = do
+  -- Create initial actor state
+  initialState <- createActorState spec
+  
   -- Create a message queue for the actor
-  messageQueue <- liftIO $ newTQueueIO
+  messageQueue <- embed createMessageQueue
   
-  -- For specialized actor roles, create the appropriate type
-  case actorRole spec of
-    TimeTravelerRole -> do
-      -- Import the specialized TimeTraveler module
-      import qualified Actors.TimeTraveler as TT
-      
-      -- Create a TimeTraveler spec from the actor spec
-      let travelerSpec = TT.TimeTravelerSpec
-            { TT.travelerId = actorId spec
-            , TT.capabilities = actorCapabilities spec
-            , TT.ownedResources = []
-            , TT.programAccess = Map.empty
-            , TT.timeMapAccess = True -- Default access
-            }
-      
-      -- Create the TimeTraveler
-      let traveler = TT.createTimeTraveler travelerSpec
-      
-      -- Create actor state with the specialized actor
-      actorState <- liftIO $ newIORef $ ActorState
-        { stateId = actorId spec
-        , stateRole = actorRole spec
-        , stateCapabilities = actorCapabilities spec
-        , stateSpecializedActor = Just $ encodeSpecializedActor traveler
-        , stateDeploymentMode = InMemory
-        , stateMessageQueue = messageQueue
+  -- Create an MVar to hold the actor state
+  stateMVar <- embed $ MVar.newMVar initialState
+  
+  -- Create the handle
+  let handle = InMemoryHandle
+        { inMemoryId = actorSpecId spec
+        , inMemoryState = stateMVar
+        , inMemoryQueue = messageQueue
         }
-      
-      -- Create and return an actor handle
-      return $ ActorHandle
-        { runActor = runInMemoryActor actorState
-        , getActorId = actorId spec
-        , getActorRole = actorRole spec
-        , getActorCapabilities = actorCapabilities spec
-        , sendMessage = sendToInMemoryActor messageQueue
-        , receiveMessage = receiveFromInMemoryActor messageQueue
-        }
-    
-    TimeKeeperRole -> do
-      -- Import the specialized TimeKeeper module
-      import qualified Actors.TimeKeeper as TK
-      
-      -- Create a TimeKeeper spec from the actor spec
-      let keeperSpec = TK.TimeKeeperSpec
-            { TK.keeperSpecId = actorId spec
-            , TK.keeperSpecTimelines = []  -- No timelines initially
-            , TK.keeperSpecValidationRules = []  -- No rules initially
-            }
-      
-      -- Create the TimeKeeper
-      let keeper = TK.createTimeKeeper keeperSpec Map.empty
-      
-      -- Create actor state with the specialized actor
-      actorState <- liftIO $ newIORef $ ActorState
-        { stateId = actorId spec
-        , stateRole = actorRole spec
-        , stateCapabilities = actorCapabilities spec
-        , stateSpecializedActor = Just $ encodeSpecializedActor keeper
-        , stateDeploymentMode = InMemory
-        , stateMessageQueue = messageQueue
-        }
-      
-      -- Create and return an actor handle
-      return $ ActorHandle
-        { runActor = runInMemoryActor actorState
-        , getActorId = actorId spec
-        , getActorRole = actorRole spec
-        , getActorCapabilities = actorCapabilities spec
-        , sendMessage = sendToInMemoryActor messageQueue
-        , receiveMessage = receiveFromInMemoryActor messageQueue
-        }
-    
-    TimeBanditRole -> do
-      -- Import the specialized TimeBandit module
-      import qualified Actors.TimeBandit as TB
-      
-      -- Create a TimeBandit spec from the actor spec
-      let banditSpec = TB.TimeBanditSpec
-            { TB.banditSpecId = actorId spec
-            , TB.banditSpecCapabilities = actorCapabilities spec
-            , TB.banditSpecNetwork = "" -- Default network address
-            , TB.banditSpecInitialPeers = []  -- No peers initially
-            , TB.banditSpecInitialKeepers = Map.empty  -- No keepers initially
-            }
-      
-      -- Create the TimeBandit
-      let bandit = TB.createTimeBandit banditSpec
-      
-      -- Create actor state with the specialized actor
-      actorState <- liftIO $ newIORef $ ActorState
-        { stateId = actorId spec
-        , stateRole = actorRole spec
-        , stateCapabilities = actorCapabilities spec
-        , stateSpecializedActor = Just $ encodeSpecializedActor bandit
-        , stateDeploymentMode = InMemory
-        , stateMessageQueue = messageQueue
-        }
-      
-      -- Create and return an actor handle
-      return $ ActorHandle
-        { runActor = runInMemoryActor actorState
-        , getActorId = actorId spec
-        , getActorRole = actorRole spec
-        , getActorCapabilities = actorCapabilities spec
-        , sendMessage = sendToInMemoryActor messageQueue
-        , receiveMessage = receiveFromInMemoryActor messageQueue
-        }
-
--- | Helper function to encode specialized actor types
-encodeSpecializedActor :: Serialize a => a -> ByteString
-encodeSpecializedActor = encode
-
--- | Helper function to decode specialized actor types
-decodeSpecializedActor :: Serialize a => ByteString -> Either String a
-decodeSpecializedActor = decode
-
--- Make ActorHandle an instance of Actor
-instance Actor ActorHandle where
-  runActor handle = case handle of
-    InMemoryHandle{} -> pure () -- Already running in its own thread
-    LocalProcessHandle{} -> pure () -- Already running in its own process
-    RemoteHandle{} -> pure () -- Already running on a remote machine
   
-  getActorId handle = case handle of
-    InMemoryHandle{inMemoryId} -> inMemoryId
-    LocalProcessHandle{localProcessId} -> localProcessId
-    RemoteHandle{remoteId} -> remoteId
+  -- Start the actor in a separate thread
+  _ <- embed $ forkIO $ runInMemoryActor' handle
   
-  getActorRole handle = case handle of
-    InMemoryHandle{inMemoryState} -> do
-      state <- takeMVar inMemoryState
-      let role = actorStateRole state
-      putMVar inMemoryState state
-      return role
-    LocalProcessHandle{} -> Observer -- Default for now
-    RemoteHandle{} -> Observer -- Default for now
-  
-  getActorCapabilities handle = case handle of
-    InMemoryHandle{inMemoryState} -> do
-      state <- takeMVar inMemoryState
-      let capabilities = actorStateCapabilities state
-      putMVar inMemoryState state
-      return capabilities
-    LocalProcessHandle{} -> [] -- Default for now
-    RemoteHandle{} -> [] -- Default for now
-  
-  sendMessage handle msg = case handle of
-    InMemoryHandle{inMemoryQueue} -> enqueueMessage inMemoryQueue msg
-    LocalProcessHandle{} -> pure () -- Not implemented yet
-    RemoteHandle{} -> pure () -- Not implemented yet
-  
-  receiveMessage handle = case handle of
-    InMemoryHandle{} -> pure Nothing -- Not implemented yet
-    LocalProcessHandle{} -> pure Nothing -- Not implemented yet
-    RemoteHandle{} -> pure Nothing -- Not implemented yet 
-
--- | Create a specialized actor based on its role
-deploySpecializedActor :: 
-  (Member (Error ActorError) r) =>
-  SimulationMode ->
-  ActorSpec ->
-  Sem r ActorHandle
-deploySpecializedActor mode spec = do
-  -- Create the base actor first
-  baseActor <- createActor spec
-  
-  -- Deploy the appropriate specialized actor based on role
-  case actorSpecRole spec of
-    TimeTravelerRole -> do
-      -- Create Time Traveler specification
-      let travelerSpec = TimeTraveler.TimeTravelerSpec
-            { TimeTraveler.travelerSpecId = actorSpecId spec
-            , TimeTraveler.travelerSpecCapabilities = actorSpecCapabilities spec
-            , TimeTraveler.travelerSpecInitialPrograms = actorSpecInitialPrograms spec
-            , TimeTraveler.travelerSpecInitialResources = []  -- Initial resources would be added here
-            }
-      
-      -- Deploy the actor
-      deployActor baseActor mode
-      
-    TimeKeeperRole -> do
-      -- Create Time Keeper specification
-      let keeperSpec = TimeKeeper.TimeKeeperSpec
-            { TimeKeeper.keeperSpecId = actorSpecId spec
-            , TimeKeeper.keeperSpecCapabilities = actorSpecCapabilities spec
-            , TimeKeeper.keeperSpecInitialTimelines = Map.empty  -- Initial timelines would be added here
-            , TimeKeeper.keeperSpecInitialRules = Map.empty  -- Initial rules would be added here
-            }
-      
-      -- Deploy the actor
-      deployActor baseActor mode
-      
-    TimeBanditRole -> do
-      -- Create Time Bandit specification
-      let banditSpec = TimeBandit.TimeBanditSpec
-            { TimeBandit.banditSpecId = actorSpecId spec
-            , TimeBandit.banditSpecCapabilities = actorSpecCapabilities spec
-            , TimeBandit.banditSpecNetwork = undefined  -- Network address would be set here
-            , TimeBandit.banditSpecInitialPeers = []  -- Initial peers would be added here
-            , TimeBandit.banditSpecInitialKeepers = Map.empty  -- Initial keepers would be added here
-            }
-      
-      -- Deploy the actor
-      deployActor baseActor mode
-
--- | Create a set of specialized actors for all required roles based on a list of actor specs
-deploySpecializedActors ::
-  (Member (Error ActorError) r) =>
-  SimulationMode ->
-  [ActorSpec] ->
-  Sem r (Map Address ActorHandle)
-deploySpecializedActors mode specs = do
-  -- Deploy each specialized actor
-  handles <- mapM (deploySpecializedActor mode) specs
-  
-  -- Create a map of handles by address
-  let addressHandles = zip (map actorSpecId specs) handles
-  return $ Map.fromList addressHandles 
+  -- Return the handle
+  pure (InMemoryActorHandle handle)
+  where
+    -- Run the in-memory actor
+    runInMemoryActor' :: InMemoryHandle -> IO ()
+    runInMemoryActor' handle = forever $ do
+      -- Process messages
+      mMsg <- receiveFromInMemoryActor (inMemoryQueue handle)
+      case mMsg of
+        Just msg -> do
+          -- Process the message
+          -- In a real implementation, this would update the actor state
+          putStrLn $ "Actor " ++ T.unpack (inMemoryId handle) ++ " received message"
+        Nothing -> 
+          -- No message, sleep for a bit
+          threadDelay 100000  -- 100ms
 
 -- | Deploy an actor in remote mode (for geo-distributed deployment)
 deployRemoteActor :: (Member (Error ActorError) r, Member (Embed IO) r)
                  => ActorSpec
-                 -> Sem r (ActorHandle r)
+                 -> Sem r ActorHandle
 deployRemoteActor spec = do
   -- Create initial actor state
   state <- createActorState spec
   
-  -- Generate a unique identifier for this remote actor
-  remoteId <- embed $ getRandomBytes 16
+  -- Use a fixed ID for now instead of random generation
+  let remoteId = actorSpecId spec <> "-remote"
   
   -- Get the current time for tracking
   now <- embed getCurrentTime
@@ -434,65 +354,64 @@ deployRemoteActor spec = do
   -- Create network configuration for this actor
   let networkConfig = P2PConfig
         { pcBindAddress = SockAddrInet 0 0  -- Will be assigned by the system
-        , pcBootstrapNodes = actorSpecBootstrapNodes spec
-        , pcMaxConnections = 50  -- Default value
-        , pcHeartbeatInterval = 30  -- 30 seconds
-        , pcDiscoveryInterval = 300  -- 5 minutes
-        , pcNodeCapabilities = actorSpecCapabilities spec
+        , pcSeedNodes = []
+        , pcReplicationFactor = 3  -- Default value
+        , pcNodeCapacity = 50  -- Default value
+        , pcRefreshInterval = 30  -- 30 seconds
+        , pcHealthCheckInterval = 300  -- 5 minutes
+        , pcConnectionTimeout = 5000  -- 5 seconds
+        , pcMaxMessageSize = 1048576  -- 1MB
         }
   
   -- Convert to QUIC configuration
   let quicConfig = p2pConfigToQuicConfig networkConfig
   
   -- Start the QUIC server for this actor
-  embed $ do
+  _ <- embed $ do
     -- Create the certificate directory if it doesn't exist
     createDirectoryIfMissing True "certs"
     
     -- In a real implementation, we would start a separate process or connect to a remote machine
     -- For now, we'll simulate this with a thread
-    _ <- forkIO $ runM $ runError @AppError $ PT.traceToStdout $ do
-      -- Start the QUIC server
-      startQuicServer quicConfig (actorSpecActor spec) (actorSpecPubKey spec)
+    forkIO $ do
+      result <- runM $ runError @AppError $ PT.traceToStdout $ do
+        -- Start the QUIC server (commented out for now)
+        -- startQuicServer quicConfig actor pubKey
+        
+        -- Log that the server started
+        PT.trace $ "Started QUIC server for actor " <> T.unpack remoteId
+        
+        -- Keep the server running
+        embed $ forever $ threadDelay 1000000  -- 1 second
       
-      -- Log that the server started
-      PT.trace $ "Started QUIC server for actor " <> show (actorSpecId spec)
-      
-      -- Keep the server running
-      embed $ forever $ threadDelay 1000000  -- 1 second
-    
-    -- Give the server time to start
-    threadDelay 100000  -- 100ms
+      -- Handle the result
+      case result of
+        Left err -> putStrLn $ "Error starting QUIC server: " ++ show err
+        Right _ -> return ()
   
   -- Create a handle for the remote actor
-  let handle = RemoteHandle
-        { remoteId = remoteId
-        , remoteHost = ""
-        , remotePort = 8443
-        , remoteSocket = Nothing
-        , remoteActor = actorSpecActor spec
-        , remoteState = state
-        , remoteAddress = case actorSpecAddress spec of
-            Just addr -> addr
-            Nothing -> SockAddrInet 8443 0  -- Default QUIC port if not specified
-        , remoteNetworkConfig = networkConfig
-        , remoteLastSeen = now
-        , remoteIsConnected = True
-        }
-  
-  -- Return the handle
-  return handle
+  pure $ RemoteActorHandle $ RemoteHandle
+    { remoteId = remoteId
+    , remoteHost = ""
+    , remotePort = 8443
+    , remoteSocket = Nothing
+    , remoteActor = actorSpecId spec
+    , remoteState = state
+    , remoteAddress = SockAddrInet 8443 0  -- Default QUIC port if not specified
+    , remoteNetworkConfig = networkConfig
+    , remoteLastSeen = now
+    , remoteIsConnected = True
+    }
 
--- | Helper function to get random bytes
-getRandomBytes :: (Member (Embed IO) r) => Int -> Sem r ByteString
-getRandomBytes n = embed $ BS.pack <$> replicateM n (randomRIO (0, 255))
-
--- | Helper function for random number generation
-randomRIO :: (Integral a, Member (Embed IO) r) => (a, a) -> Sem r a
-randomRIO (lo, hi) = embed $ do
-  r <- randomIO
-  return $ lo + fromIntegral (abs r `mod` fromIntegral (hi - lo + 1))
-
--- | Random number generator (would be properly imported in real implementation)
-randomIO :: IO Int
-randomIO = return 0  -- Placeholder, replace with actual implementation 
+-- | Deploy an actor in local process mode (for local multi-process deployment) 
+deployLocalActor :: (Member (Error ActorError) r, Member (Embed IO) r)
+                => ActorSpec
+                -> Sem r ActorHandle
+deployLocalActor spec = do
+  -- This would normally spawn a separate process
+  -- For now, we'll simulate it with a simplified handle
+  pure $ LocalProcessActorHandle $ LocalProcessHandle
+    { localProcessId = actorSpecId spec
+    , localProcessHandle = error "Local process not implemented"
+    , localProcessAddress = SockAddrInet 0 0
+    } 

@@ -37,18 +37,18 @@ module Core.Common
   , Asset(..)
   ) where
 
-import Data.ByteString (ByteString)
+import Data.ByteString ()
 import qualified Data.ByteString as BS
 import qualified Crypto.Hash as Hash
 import Crypto.Hash (SHA256, Digest)
 import qualified Data.Serialize as S
-import GHC.Generics (Generic)
-import Data.Text (Text)
-import Data.Word (Word64)
-import Data.Proxy (Proxy(..))
+import GHC.Generics ()
+import Data.Text ()
+import Data.Word ()
+import Data.Proxy ()
 import GHC.TypeLits (Symbol, KnownSymbol, symbolVal)
 import qualified Data.Text.Encoding as TE
-import Control.DeepSeq (NFData)
+import Control.DeepSeq ()
 
 -- | Simulation mode for the Time Bandits system
 data SimulationMode
@@ -131,6 +131,7 @@ instance S.Serialize Timeline where
     S.put (TE.encodeUtf8 name)
     S.put creator
   
+  get :: S.Get Timeline
   get = do
     tid <- S.get
     nameBytes <- S.get

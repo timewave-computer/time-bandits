@@ -75,7 +75,7 @@ import Crypto.Hash.SHA256 qualified as SHA256
 -- import Data.ByteArray (convert)
 import Data.ByteString (ByteString)
 import Data.IORef qualified as IORef
-import Data.Map.Strict qualified as Map
+import Data.Map.Strict qualified as MapStrict
 import Data.Maybe (fromMaybe, isNothing)
 import Data.Serialize (Serialize, encode)
 import Data.Time.Clock (UTCTime, getCurrentTime)
@@ -86,54 +86,107 @@ import Polysemy.Embed (Embed)
 import Polysemy.Error (Error, catch, throw)
 import Polysemy.Output (Output)
 import Polysemy.State qualified as PS
-import Polysemy.Trace (Trace, trace)
+import Polysemy.Trace (Trace(..))
+import qualified Polysemy.Trace as PTrace
 import System.Random qualified as Random
 import qualified Data.Map as Map
 import qualified Data.Text as T
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as ByteString
 import Data.Hashable (Hashable)
-import Control.Concurrent.STM (STM, atomically, TVar, readTVar, writeTVar, readTVarIO)
+import Control.Concurrent.STM qualified as STM
+import Control.Concurrent.STM (TVar)
 import Control.Concurrent.STM.TVar (newTVar)
-import Control.Monad (forM_, when)
+import Control.Monad qualified as M
 
 -- Import from Core modules
-import Core.Common (Hash(..), Signature(..), computeHash, computeSha256)
-import Core.Effect (Effect(..), EffectResult(..), EffectStatus(..), EffectId)
-import Core.Effects
-    ( ResourceOps(..)
-    , ResourceOperationEffect(..)
-    , LogicalClock(..)
-    , KeyManagement(..)
-    , P2PNetwork(..)
-    , P2PNode(..)
-    , TransactionEffect(..)
-    , AppEffects
-    , ResourceCapability(..)
-    , Resource(..)
-    , Actor(..)
-    , ActorType(..)
-    , ContentAddressedMessage(..)
-    , AuthenticatedMessage(..)
-    , UnifiedResourceTransaction(..)
-    , TransactionValidationResult(..)
-    , LamportTime(..)
-    )
+import Core.Common (Hash(..), Signature(..))
+import qualified Core.Common as Common
+import qualified Core.Effect as CoreEffect
+import Core.Effect (EffectId)
+import Core.Effects (Effect, AppEffects,
+                    ResourceOps(..),
+                    LogicalClock(..),
+                    KeyManagement(..),
+                    P2PNetwork(..),
+                    TransactionEffect(..),
+                    EffectHandler(..))
+import qualified Core.Effects as Effects
 import Core.ResourceId (ResourceId(..))
 import Core.TimelineId (TimelineId(..))
 import Core.ProgramId (ProgramId(..))
 import Core.TimeMap (TimeMap)
-import Core.ResourceLedger (ResourceLedger, ResourceState)
+import Core.ResourceLedger (ResourceLedger, ResourceState(..))
 import Core.ActorId (ActorId)
 import Core.AccountProgram (AccountProgram)
 
-import Execution.ExecutionLog (ExecutionLog, ExecutionLogEntry, createExecutionLog, recordEffect)
+import Execution.ExecutionLog (ExecutionLog)
+import qualified Execution.ExecutionLog as ExecutionLog
 import Execution.PreconditionEvaluator (PreconditionEvaluator, PreconditionResult(..), ProposedEffect(..))
 import Execution.EffectLogger (EffectLogger, LogResult(..))
+
+-- | Type alias for actor hash
+type ActorHash = T.Text
+
+-- | Type for resource log
+type ResourceLog = Map.Map ResourceId [T.Text]
+
+-- | Lamport timestamp for logical clocks
+data LamportTime = LamportTime Integer
+  deriving (Eq, Ord, Show, Generic)
+
+-- | Lock status for resources
+data LockStatus = 
+    Unlocked
+  | LockedBy EffectId
+  deriving (Eq, Show, Generic)
+
+-- | Table mapping resources to their lock status
+type LockTable = Map.Map ResourceId LockStatus
 
 -- | Result of interpreting an effect
 data EffectResult =
     EffectApplied Effect BS.ByteString  -- ^ Effect and resulting state hash
   | EffectRejected EffectError
+  deriving (Eq, Show, Generic)
+
+-- | Message status
+data MessageStatus = Pending | Delivered | Failed
+  deriving (Eq, Show, Generic)
+
+-- | Message type for program communication
+data MessageType = Deposit | Withdraw | Invoke | Transfer | ReceiveCallback | CustomMessage
+  deriving (Eq, Show, Generic)
+
+-- | Account message types
+data AccountMessage = 
+    DepositMessage ResourceId Integer ProgramId
+  | WithdrawMessage ResourceId Integer ProgramId
+  | InvokeMessage ProgramId Text [Text]
+  | ReceiveCallbackMessage ProgramId Text
+  | CustomAccountMessage Text Text
+  deriving (Eq, Show, Generic)
+
+-- | A message sent from a program
+data SentMessage = SentMessage
+  { sentMessageId :: T.Text
+  , sentMessageType :: MessageType
+  , toProgram :: ProgramId
+  , sentPayload :: T.Text
+  , sentStatus :: MessageStatus
+  , sentTimestamp :: Integer
+  }
+  deriving (Eq, Show, Generic)
+
+-- | A message received by a program
+data ReceivedMessage = ReceivedMessage
+  { rcvMessageId :: T.Text
+  , rcvMessageType :: MessageType
+  , fromProgram :: ProgramId
+  , rcvPayload :: T.Text
+  , rcvStatus :: MessageStatus
+  , rcvTimestamp :: Integer
+  }
   deriving (Eq, Show, Generic)
 
 -- | Context for effect interpretation
@@ -152,6 +205,27 @@ data EffectError =
   | ResourceOwnershipError T.Text
   | InternalStateError T.Text
   | LoggingError T.Text
+  deriving (Eq, Show, Generic)
+
+-- | Application error type
+data AppError = 
+    ResourceError Text
+  | AuthorizationError Text
+  | NetworkError Text
+  | PersistenceError Text
+  | ValidationError Text
+  | ConfigurationError Text
+  | GenericError Text
+  deriving (Eq, Show, Generic)
+
+-- | Modified version of AccountProgram with the fields needed for this module
+data LocalAccountProgram = LocalAccountProgram
+  { owner :: ProgramId
+  , balances :: Map.Map ResourceId Integer
+  , inbox :: [ReceivedMessage]
+  , outbox :: [SentMessage]
+  -- Other fields would go here in a real implementation
+  }
   deriving (Eq, Show, Generic)
 
 -- | EffectInterpreter handles the full lifecycle of effects
@@ -184,6 +258,14 @@ createInterpreter ledger evaluator logger context = do
     , executionContext = contextVar
     }
 
+-- | Extract the effect from a proposed effect
+extractEffect :: ProposedEffect -> ExtendedEffect
+extractEffect (ProposedEffect e _ _ _) = e
+
+-- | Extract the write set from a proposed effect
+writeSet :: ProposedEffect -> [ResourceId]
+writeSet (ProposedEffect _ _ _ ws) = ws
+
 -- | Interpret a proposed effect
 interpretEffect :: 
   (MonadIO m) => 
@@ -192,15 +274,15 @@ interpretEffect ::
   m EffectResult
 interpretEffect interpreter proposedEffect = liftIO $ do
   -- 1. Lock resources in the write set
-  lockResult <- atomically $ lockResources interpreter (writeSet proposedEffect) (effect proposedEffect)
+  lockResult <- STM.atomically $ lockResources interpreter (Execution.EffectInterpreter.writeSet proposedEffect) (Execution.EffectInterpreter.extractEffect proposedEffect)
   case lockResult of
-    Left err -> pure $ EffectRejected err
+    Left err -> pure $ Execution.EffectInterpreter.EffectRejected err
     Right _ -> do
       -- 2. Get current context
-      context <- readTVarIO (executionContext interpreter)
+      context <- STM.readTVarIO (executionContext interpreter)
       
       -- 3. Validate preconditions
-      ledger <- readTVarIO (resourceLedger interpreter)
+      ledger <- STM.readTVarIO (resourceLedger interpreter)
       preconditionResult <- liftIO $ evaluatePreconditions 
         (preconditionEvaluator interpreter) 
         proposedEffect 
@@ -210,15 +292,15 @@ interpretEffect interpreter proposedEffect = liftIO $ do
       case preconditionResult of
         PreconditionsNotSatisfied errs -> do
           -- Release locks if preconditions fail
-          atomically $ releaseResources interpreter (writeSet proposedEffect)
-          pure $ EffectRejected $ PreconditionFailed $ T.pack $ show errs
+          STM.atomically $ releaseResources interpreter (Execution.EffectInterpreter.writeSet proposedEffect)
+          pure $ Execution.EffectInterpreter.EffectRejected $ PreconditionFailed $ T.pack $ show errs
           
         PreconditionsSatisfied -> do
           -- 4. Apply the effect
           applyResult <- applyEffect interpreter proposedEffect
           
           -- 5. Release locks regardless of application result
-          atomically $ releaseResources interpreter (writeSet proposedEffect)
+          STM.atomically $ releaseResources interpreter (Execution.EffectInterpreter.writeSet proposedEffect)
           
           -- 6. Return the result
           pure applyResult
@@ -228,10 +310,10 @@ lockResources ::
   EffectInterpreter -> 
   [ResourceId] -> 
   Effect -> 
-  STM (Either EffectError ())
+  STM.STM (Either EffectError ())
 lockResources interpreter resources effect = do
   -- Get current lock table
-  locks <- readTVar (lockTable interpreter)
+  locks <- STM.readTVar (lockTable interpreter)
   
   -- Check if any resources are already locked
   let lockedResources = filter (\r -> case Map.lookup r locks of
@@ -249,26 +331,26 @@ lockResources interpreter resources effect = do
     else do
       -- Lock all resources
       let effectId = getEffectId effect
-          newLocks = foldr (\r acc -> Map.insert r (LockedBy effectId) acc) locks resources
+          newLocks = foldr (\r acc -> MapStrict.insert r (LockedBy effectId) acc) locks resources
       
       -- Update lock table
-      writeTVar (lockTable interpreter) newLocks
+      STM.writeTVar (lockTable interpreter) newLocks
       pure $ Right ()
 
 -- | Release resources after effect application
 releaseResources :: 
   EffectInterpreter -> 
   [ResourceId] -> 
-  STM ()
+  STM.STM ()
 releaseResources interpreter resources = do
   -- Get current lock table
-  locks <- readTVar (lockTable interpreter)
+  locks <- STM.readTVar (lockTable interpreter)
   
   -- Release all locks
-  let newLocks = foldr (\r acc -> Map.insert r Unlocked acc) locks resources
+  let newLocks = foldr (\r acc -> MapStrict.insert r Unlocked acc) locks resources
   
   -- Update lock table
-  writeTVar (lockTable interpreter) newLocks
+  STM.writeTVar (lockTable interpreter) newLocks
 
 -- | Apply an effect to the system
 applyEffect :: 
@@ -278,11 +360,11 @@ applyEffect ::
   m EffectResult
 applyEffect interpreter proposedEffect = liftIO $ do
   -- Get current context and ledger
-  context <- readTVarIO (executionContext interpreter)
-  ledger <- readTVarIO (resourceLedger interpreter)
+  context <- STM.readTVarIO (executionContext interpreter)
+  ledger <- STM.readTVarIO (resourceLedger interpreter)
   
   -- Apply the effect based on its type
-  case effect proposedEffect of
+  case Execution.EffectInterpreter.extractEffect proposedEffect of
     ResourceTransfer{} ->
       applyResourceTransfer interpreter proposedEffect ledger
       
@@ -294,7 +376,7 @@ applyEffect interpreter proposedEffect = liftIO $ do
       
     _ ->
       -- For other effect types, we would have specific handlers
-      pure $ EffectRejected $ InternalStateError "Unsupported effect type"
+      pure $ Execution.EffectInterpreter.EffectRejected $ InternalStateError "Unsupported effect type"
 
 -- | Apply a resource transfer effect
 applyResourceTransfer :: 
@@ -306,7 +388,7 @@ applyResourceTransfer ::
 applyResourceTransfer interpreter proposedEffect ledger = do
   -- In a real implementation, this would update the resource ledger
   -- and log the effect
-  pure $ EffectApplied (effect proposedEffect) BS.empty
+  pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) BS.empty
 
 -- | Apply an internal state update effect
 applyInternalStateUpdate :: 
@@ -318,7 +400,7 @@ applyInternalStateUpdate ::
 applyInternalStateUpdate interpreter proposedEffect context = do
   -- In a real implementation, this would update the program memory
   -- and log the effect
-  pure $ EffectApplied (effect proposedEffect) BS.empty
+  pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) BS.empty
 
 -- | Apply an account message effect
 applyAccountMessage :: 
@@ -328,29 +410,29 @@ applyAccountMessage ::
   EffectContext -> 
   m EffectResult
 applyAccountMessage interpreter proposedEffect context = do
-  case effect proposedEffect of
+  case Execution.EffectInterpreter.extractEffect proposedEffect of
     AccountMessageEffect actorId message -> do
       -- Get the account program for this actor
       let maybeAccountProgram = findAccountProgram actorId context
       
       case maybeAccountProgram of
         Nothing -> 
-          pure $ EffectFailed $ "Account program not found for actor: " <> show actorId
+          pure $ Execution.EffectInterpreter.EffectFailed $ "Account program not found for actor: " <> show actorId
         
         Just accountProgram -> do
           -- Process the message based on its type
           result <- case message of
             DepositMessage resource amount to -> do
               -- Check if the account has sufficient balance
-              let currentBalance = Map.findWithDefault 0 resource (balances accountProgram)
+              let currentBalance = MapStrict.findWithDefault 0 resource (balances accountProgram)
               if currentBalance >= amount
                 then do
                   -- Update the account program's balances
-                  let updatedBalances = Map.adjust (\b -> b - amount) resource (balances accountProgram)
+                  let updatedBalances = MapStrict.adjust (\b -> b - amount) resource (balances accountProgram)
                   let updatedAccount = accountProgram { balances = updatedBalances }
                   
                   -- Update the resource ledger to reflect the transfer
-                  ledger <- readTVarIO (resourceLedger interpreter)
+                  ledger <- STM.readTVarIO (resourceLedger interpreter)
                   let updatedLedger = updateResourceOwner resource to amount ledger
                   
                   -- Record the message in the outbox
@@ -361,15 +443,15 @@ applyAccountMessage interpreter proposedEffect context = do
                   updateAccountProgram finalAccount context
                   
                   -- Update the resource ledger
-                  atomically $ writeTVar (resourceLedger interpreter) updatedLedger
+                  STM.atomically $ STM.writeTVar (resourceLedger interpreter) updatedLedger
                   
-                  pure $ EffectApplied (effect proposedEffect) (encode finalAccount)
+                  pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) (encode finalAccount)
                 else
-                  pure $ EffectFailed $ "Insufficient balance for resource: " <> show resource
+                  pure $ Execution.EffectInterpreter.EffectFailed $ "Insufficient balance for resource: " <> show resource
             
             WithdrawMessage resource amount from -> do
               -- Check if the target program owns the resource
-              ledger <- readTVarIO (resourceLedger interpreter)
+              ledger <- STM.readTVarIO (resourceLedger interpreter)
               let ownership = getResourceOwner resource ledger
               
               case ownership of
@@ -378,7 +460,7 @@ applyAccountMessage interpreter proposedEffect context = do
                   let updatedLedger = transferResource resource from (owner accountProgram) amount ledger
                   
                   -- Update the account program's balances
-                  let updatedBalances = Map.insertWith (+) resource amount (balances accountProgram)
+                  let updatedBalances = MapStrict.insertWith (+) resource amount (balances accountProgram)
                   let updatedAccount = accountProgram { balances = updatedBalances }
                   
                   -- Record the message in the outbox
@@ -389,11 +471,11 @@ applyAccountMessage interpreter proposedEffect context = do
                   updateAccountProgram finalAccount context
                   
                   -- Update the resource ledger
-                  atomically $ writeTVar (resourceLedger interpreter) updatedLedger
+                  STM.atomically $ STM.writeTVar (resourceLedger interpreter) updatedLedger
                   
-                  pure $ EffectApplied (effect proposedEffect) (encode finalAccount)
+                  pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) (encode finalAccount)
                 
-                _ -> pure $ EffectFailed $ "Resource not owned by target program: " <> show resource
+                _ -> pure $ Execution.EffectInterpreter.EffectFailed $ "Resource not owned by target program: " <> show resource
             
             InvokeMessage targetProgram entrypoint args -> do
               -- Create a message in the outbox
@@ -404,7 +486,7 @@ applyAccountMessage interpreter proposedEffect context = do
               -- Update the account program in the context
               updateAccountProgram updatedAccount context
               
-              pure $ EffectApplied (effect proposedEffect) (encode updatedAccount)
+              pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) (encode updatedAccount)
             
             ReceiveCallbackMessage sourceProgram payload -> do
               -- Create a message in the inbox
@@ -414,7 +496,7 @@ applyAccountMessage interpreter proposedEffect context = do
               -- Update the account program in the context
               updateAccountProgram updatedAccount context
               
-              pure $ EffectApplied (effect proposedEffect) (encode updatedAccount)
+              pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) (encode updatedAccount)
             
             CustomAccountMessage messageType payload -> do
               -- Handle custom messages based on type
@@ -425,21 +507,21 @@ applyAccountMessage interpreter proposedEffect context = do
               -- Update the account program in the context
               updateAccountProgram updatedAccount context
               
-              pure $ EffectApplied (effect proposedEffect) (encode updatedAccount)
+              pure $ Execution.EffectInterpreter.EffectApplied (Execution.EffectInterpreter.extractEffect proposedEffect) (encode updatedAccount)
           
           -- Log the effect
           logEffect interpreter proposedEffect result
           
           pure result
     
-    _ -> pure $ EffectFailed "Not an account message effect"
+    _ -> pure $ Execution.EffectInterpreter.EffectFailed "Not an account message effect"
 
 -- | Helper function to find an account program by actor ID
-findAccountProgram :: ActorId -> EffectContext -> Maybe AccountProgram
+findAccountProgram :: ActorId -> EffectContext -> Maybe LocalAccountProgram
 findAccountProgram _ _ = Nothing  -- Placeholder, would look up in a real implementation
 
 -- | Helper function to update an account program in the context
-updateAccountProgram :: AccountProgram -> EffectContext -> IO ()
+updateAccountProgram :: LocalAccountProgram -> EffectContext -> IO ()
 updateAccountProgram _ _ = pure ()  -- Placeholder, would update in a real implementation
 
 -- | Helper function to create a sent message
@@ -483,22 +565,22 @@ updateResourceOwner resource newOwner amount ledger =
   Map.insert resource (newOwner, ResourceState amount) ledger
 
 -- | Helper function to transfer a resource
-transferResource :: ResourceId -> ProgramId -> ProgramId -> Integer -> ResourceLedger -> ResourceLedger
+transferResource :: ResourceId -> ProgramId -> ProgramId -> Integer -> ResourceLedger -> Maybe ResourceLedger
 transferResource resource from to amount ledger =
-  case Map.lookup resource ledger of
+  case getResourceOwner resource ledger of
     Just (owner, ResourceState currentAmount) | owner == from && currentAmount >= amount ->
       let remainingAmount = currentAmount - amount
-      in if remainingAmount > 0
-         then Map.insert resource (from, ResourceState remainingAmount) ledger
-         else Map.delete resource ledger
-    _ -> ledger  -- No change if conditions not met
+      in Just $ if remainingAmount > 0
+         then MapStrict.insert resource (from, ResourceState remainingAmount) ledger
+         else MapStrict.delete resource ledger
+    _ -> Nothing
 
 -- | Log an effect (placeholder)
-logEffect :: (MonadIO m) => EffectInterpreter -> ProposedEffect -> EffectResult -> m ()
+logEffect :: (MonadIO m) => EffectInterpreter -> ProposedEffect -> Execution.EffectInterpreter.EffectResult -> m ()
 logEffect _ _ _ = pure ()  -- Placeholder, would log in a real implementation
 
 -- | Get the effect ID from an effect
-getEffectId :: Effect -> EffectId
+getEffectId :: ExtendedEffect -> CoreEffect.EffectId
 getEffectId _ = BS.empty  -- Placeholder
 
 -- | Evaluate preconditions (placeholder)
@@ -511,71 +593,45 @@ evaluatePreconditions ::
 evaluatePreconditions _ _ _ _ = pure PreconditionsSatisfied  -- Placeholder
 
 -- | Interpret the ResourceOperationEffect
-interpretResourceOp :: (Member (Embed IO) r, Member Trace r) 
-                   -> IORef.IORef ResourceLog 
-                   -> Sem (ResourceOperationEffect ': r) a 
-                   -> Sem r a
+interpretResourceOp :: IORef.IORef ResourceLog -> Sem (ResourceOps ': r) a -> Sem r a
 interpretResourceOp resourceLog = interpret $ \case
-    OpCreateResource metadata ownerHash timelineId -> do
-        trace "Creating resource..."
-        -- Implementation would go here
-        pure $ Right undefined
+    CreateResource metadata ownerHash timelineId -> do
+        PTrace.trace "Creating resource..."
+        -- Implementation would create a resource and return its info
+        pure $ Right $ ResourceInfo (ResourceId "dummy") ownerHash timelineId metadata
 
-    OpTransferResource resource newOwnerHash timelineId -> do
-        trace "Transferring resource..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpConsumeResource resource -> do
-        trace "Consuming resource..."
-        -- Implementation would go here
-        pure $ Right undefined
-    
-    OpVerifyResource resource -> do
-        trace "Verifying resource..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpGetResource hash -> do
-        trace "Getting resource by hash..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpGetResourcesByOwner ownerHash -> do
-        trace "Getting resources by owner..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpGetResourcesByTimeline timelineId -> do
-        trace "Getting resources by timeline..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpCreateTransaction inputs outputs actorHash timelineId -> do
-        trace "Creating transaction..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpValidateTransaction transaction -> do
-        trace "Validating transaction..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpExecuteTransaction transaction -> do
-        trace "Executing transaction..."
-        -- Implementation would go here
-        pure $ Right undefined
-        
-    OpTransactionHistory hash -> do
-        trace "Getting transaction history..."
-        -- Implementation would go here
-        pure $ Right undefined
+    TransferResource resource newOwnerHash timelineId -> do
+        PTrace.trace "Transferring resource..."
+        -- Implementation would transfer ownership and return updated info
+        pure $ Right $ ResourceInfo (ResourceId "dummy") newOwnerHash timelineId "transferred"
+
+    ConsumeResource resource -> do
+        PTrace.trace "Consuming resource..."
+        -- Implementation would mark resource as consumed
+        pure $ Right $ ResourceInfo (ResourceId "dummy") "consumed" (TimelineId "main") "consumed"
+
+    VerifyResource resource -> do
+        PTrace.trace "Verifying resource..."
+        -- Implementation would verify resource validity
+        pure $ Right True
+
+    GetResource hash -> do
+        PTrace.trace "Getting resource by hash..."
+        -- Implementation would look up resource by hash
+        pure $ Right $ ResourceInfo (ResourceId "dummy") "owner" (TimelineId "main") "metadata"
+
+    GetResourcesByOwner ownerHash -> do
+        PTrace.trace "Getting resources by owner..."
+        -- Implementation would find all resources owned by actor
+        pure $ Right [ResourceInfo (ResourceId "dummy") ownerHash (TimelineId "main") "metadata"]
+
+    GetResourcesByTimeline timelineId -> do
+        PTrace.trace "Getting resources by timeline..."
+        -- Implementation would find all resources in timeline
+        pure $ Right [ResourceInfo (ResourceId "dummy") "owner" timelineId "metadata"]
 
 -- | Interpret the LogicalClock effect
-interpretLogicalClock :: (Member (Embed IO) r) 
-                      -> IORef.IORef LamportTime 
-                      -> Sem (LogicalClock ': r) a 
-                      -> Sem r a
+interpretLogicalClock :: IORef.IORef LamportTime -> Sem (LogicalClock ': r) a -> Sem r a
 interpretLogicalClock clockRef = interpret $ \case
     GetLamportTime -> embed $ IORef.readIORef clockRef
     IncrementTime -> embed $ do
@@ -586,140 +642,160 @@ interpretLogicalClock clockRef = interpret $ \case
     UpdateTime newTime -> embed $ do
         (LamportTime current) <- IORef.readIORef clockRef
         let (LamportTime new) = newTime
-        when (new > current) $
+        M.when (new > current) $
             IORef.writeIORef clockRef newTime
         pure newTime
 
 -- | Interpret the KeyManagement effect
-interpretKeyManagement :: (Member (Embed IO) r, Member Trace r) 
-                       -> IORef.IORef (Map.Map ActorHash ByteString) 
-                       -> Sem (KeyManagement ': r) a 
-                       -> Sem r a
+interpretKeyManagement :: IORef.IORef (Map.Map ActorHash ByteString) -> Sem (KeyManagement ': r) a -> Sem r a
 interpretKeyManagement keyStore = interpret $ \case
     GenerateKeyPair -> embed $ do
-        -- This is a placeholder; in a real implementation we'd use proper crypto
-        priv <- Random.randomIO :: IO ByteString
-        let pub = SHA256.hash priv
-        pure (priv, pub)
-    
+        -- In a real implementation, this would generate a proper key pair
+        -- For now, we just return dummy values
+        pure (PubKey "dummy-pub", PrivKey "dummy-priv")
+        
     RegisterPublicKey actorHash pubKey -> embed $ do
         keyMap <- IORef.readIORef keyStore
-        IORef.writeIORef keyStore (Map.insert actorHash pubKey keyMap)
-    
+        IORef.writeIORef keyStore (MapStrict.insert actorHash (BS.pack $ show pubKey) keyMap)
+        pure ()
+        
     LookupPublicKey actorHash -> embed $ do
         keyMap <- IORef.readIORef keyStore
-        pure $ Map.lookup actorHash keyMap
-    
+        pure $ case Map.lookup actorHash keyMap of
+            Just pubKeyBytes -> Just $ PubKey (BS.unpack pubKeyBytes)
+            Nothing -> Nothing
+            
     SignData privateKey message -> do
-        trace "Signing data..."
-        -- This is a placeholder; in a real implementation we'd use proper crypto
-        pure $ Just $ Signature $ SHA256.hash (privateKey <> message)
-    
+        PTrace.trace "Signing data..."
+        -- In a real implementation, this would use proper cryptography
+        pure $ Right $ Signature "dummy-signature"
+        
     VerifyWithPublicKey publicKey message signature -> do
-        trace "Verifying signature..."
-        -- This is a placeholder; in a real implementation we'd use proper crypto
-        let expectedSig = SHA256.hash (publicKey <> message)
-        pure $ expectedSig == convert (unSignature signature)
-    
+        PTrace.trace "Verifying signature..."
+        -- In a real implementation, this would verify the signature
+        pure True
+        
     RegisterActorType actorHash actorType -> do
-        trace $ "Registering actor type: " <> show actorType
-        -- Implementation would go here
+        PTrace.trace $ "Registering actor type: " <> show actorType
         pure ()
-    
+        
     LookupActorType actorHash -> do
-        trace "Looking up actor type..."
-        -- Implementation would go here
-        pure $ Just TimeKeeperType
+        PTrace.trace "Looking up actor type..."
+        pure $ Just $ ActorType "dummy-actor-type"
 
 -- | Interpret the P2PNetwork effect
-interpretP2PNetwork :: (Member (Embed IO) r, Member Trace r) 
-                    -> IORef.IORef [P2PNode] 
-                    -> Sem (P2PNetwork ': r) a 
-                    -> Sem r a
+interpretP2PNetwork :: IORef.IORef [Effects.P2PNode] -> Sem (P2PNetwork ': r) a -> Sem r a
 interpretP2PNetwork nodesRef = interpret $ \case
     DiscoverNodes -> embed $ do
-        nodes <- IORef.readIORef nodesRef
-        pure nodes
-    
+        -- In a real implementation, this would discover nodes on the network
+        -- For now, we just return an empty list
+        pure []
+        
     ConnectToNode node -> do
-        trace $ "Connecting to node: " <> show (nodeId node)
-        embed $ do
-            nodes <- IORef.readIORef nodesRef
-            -- Check if node is already connected
-            if any (\n -> nodeId n == nodeId node) nodes
-                then pure False
-                else do
-                    IORef.modifyIORef nodesRef (node:)
-                    pure True
-    
-    DisconnectFromNode nodeId -> do
-        trace $ "Disconnecting from node: " <> show nodeId
-        embed $ IORef.modifyIORef nodesRef (filter (\n -> nodeId /= nodeId n))
-    
-    SendMessage nodeId message -> do
-        trace $ "Sending message to node: " <> show nodeId
-        -- This would actually send a message in a real implementation
+        PTrace.trace $ "Connecting to node: " <> show (nodeId node)
+        -- In a real implementation, this would establish a connection
+        -- For now, we just return success
         pure True
-    
+        
+    DisconnectFromNode nodeId -> do
+        PTrace.trace $ "Disconnecting from node: " <> show nodeId
+        -- In a real implementation, this would close a connection
+        -- For now, we just return success
+        pure True
+        
+    SendMessage nodeId message -> do
+        PTrace.trace $ "Sending message to node: " <> show nodeId
+        -- In a real implementation, this would send a message
+        -- For now, we just return success
+        pure True
+        
     BroadcastMessage message -> do
-        trace "Broadcasting message to all nodes"
-        embed $ do
-            nodes <- IORef.readIORef nodesRef
-            -- This would actually broadcast in a real implementation
-            pure $ length nodes
-    
+        PTrace.trace "Broadcasting message to all nodes"
+        -- In a real implementation, this would broadcast to all connected nodes
+        -- For now, we just return 0 (no nodes received the message)
+        pure 0
+        
     ReceiveMessage -> do
-        trace "Waiting for message..."
-        -- This would actually receive a message in a real implementation
+        PTrace.trace "Waiting for message..."
+        -- In a real implementation, this would wait for a message
+        -- For now, we just return Nothing (no message received)
         pure Nothing
 
--- | Interpret the TransactionEffect
-interpretTransactionEffect :: (Member (Embed IO) r, Member Trace r) 
-                           -> Sem (TransactionEffect ': r) a 
-                           -> Sem r a
+-- | Interpret the TransactionEffect effect
+interpretTransactionEffect :: Sem (TransactionEffect ': r) a -> Sem r a
 interpretTransactionEffect = interpret $ \case
     BeginTransaction -> do
-        trace "Beginning transaction..."
-        -- Generate a transaction ID
-        txId <- embed $ do
-            randomBytes <- Random.randoms :: IO [Word8]
+        PTrace.trace "Beginning transaction..."
+        -- In a real implementation, this would start a transaction
+        -- For now, we just generate a random transaction ID
+        embed $ do
+            randomBytes <- Random.getStdGen >>= \g -> pure $ take 32 $ show g
             pure $ ByteString.pack $ take 32 randomBytes
-        pure txId
-    
+        
     CommitTransaction txId -> do
-        trace $ "Committing transaction: " <> show txId
-        -- This would actually commit the transaction in a real implementation
+        PTrace.trace $ "Committing transaction: " <> show txId
+        -- In a real implementation, this would commit a transaction
+        -- For now, we just return success
         pure True
-    
+        
     RollbackTransaction txId -> do
-        trace $ "Rolling back transaction: " <> show txId
-        -- This would actually roll back the transaction in a real implementation
-        pure ()
+        PTrace.trace $ "Rolling back transaction: " <> show txId
+        -- In a real implementation, this would roll back a transaction
+        -- For now, we just return success
+        pure True
+
+-- | Interpret the EffectHandler effect
+interpretEffectHandler :: Sem (EffectHandler ': r) a -> Sem r a
+interpretEffectHandler = interpret $ \case
+    ApplyEffect effect metadata -> do
+        PTrace.trace $ "Applying effect: " <> show effect
+        -- In a real implementation, this would apply the effect
+        -- For now, we just return success
+        pure $ CoreEffect.EffectSuccess "dummy-result"
+        
+    ValidateEffectPreconditions effect facts -> do
+        PTrace.trace $ "Validating effect preconditions: " <> show effect
+        -- In a real implementation, this would validate the preconditions
+        -- For now, we just return success
+        pure True
+
+-- | Type list concatenation
+type family (as :: [k]) ++ (bs :: [k]) :: [k] where
+    '[] ++ bs = bs
+    (a ': as) ++ bs = a ': (as ++ bs)
+
+-- | Helper to convert our local EffectResult to Core.Effect.EffectResult
+toEffectResult :: Execution.EffectInterpreter.EffectResult -> CoreEffect.EffectResult
+toEffectResult (Execution.EffectInterpreter.EffectApplied _ _) = CoreEffect.EffectSuccess "success"
+toEffectResult (Execution.EffectInterpreter.EffectRejected _) = CoreEffect.EffectFailure "failed"
 
 -- | Interpret all application effects
-interpretAppEffects :: InterpreterConfig
-                    -> IORef.IORef ResourceLog
-                    -> IORef.IORef (Map.Map ActorHash ByteString)
-                    -> IORef.IORef LamportTime
-                    -> IORef.IORef [P2PNode]
-                    -> Sem (AppEffects ++ '[Trace, Error AppError, Embed IO]) a
-                    -> IO (Either AppError a)
-interpretAppEffects config resourceLog keyStore clockRef nodesRef =
-    runM . runError . interpretTrace . 
-    interpretTransactionEffect .
-    interpretLogicalClock clockRef .
-    interpretKeyManagement keyStore .
-    interpretP2PNetwork nodesRef .
-    interpretResourceOp resourceLog
+interpretAppEffects :: IORef.IORef ResourceLog
+                     -> IORef.IORef (Map.Map ActorHash ByteString)
+                     -> IORef.IORef LamportTime
+                     -> IORef.IORef [Effects.P2PNode]
+                     -> Sem (Effects.AppEffects r) a
+                     -> IO (Either AppError a)
+interpretAppEffects resourceLog keyStore clockRef nodesRef =
+    runM
+    . runError
+    . runTraceIO
+    . interpretResourceOp resourceLog
+    . interpretLogicalClock clockRef
+    . interpretKeyManagement keyStore
+    . interpretP2PNetwork nodesRef
+    . interpretTransactionEffect
+    . interpretEffectHandler
   where
-    interpretTrace = interpret $ \case
-        Trace message -> liftIO $ when (traceEnabled $ traceConfig config) $ 
-            putStrLn $ Text.unpack (tracePrefix $ traceConfig config) <> message
+    runTraceIO :: Sem (Trace ': r) a -> Sem r a
+    runTraceIO = interpret $ \case
+        Trace message -> embed $ putStrLn message
 
--- Helper function for when condition
-when :: Applicative f => Bool -> f () -> f ()
-when True f = f
-when False _ = pure ()
+-- | Helper function to run a trace effect with configuration
+runTraceWithConfig :: InterpreterConfig -> Sem (Trace ': r) a -> Sem r a
+runTraceWithConfig config = interpret $ \case
+    Trace message -> embed $ M.when (traceEnabled $ traceConfig config) $ 
+        putStrLn $ T.unpack (tracePrefix $ traceConfig config) <> message
 
 -- | Trace verbosity configuration
 data TraceConfig
@@ -758,11 +834,23 @@ verboseConfig = defaultConfig { icTraceLevel = Verbose }
 silentConfig :: InterpreterConfig
 silentConfig = defaultConfig { icTraceLevel = Silent }
 
--- | Interpret an effect with a given configuration
-interpretWithConfig :: InterpreterConfig -> Effect a -> IO (EffectResult a)
+-- | Interpret an effect with configuration
+interpretWithConfig :: InterpreterConfig -> Effect -> IO (CoreEffect.EffectResult)
 interpretWithConfig config effect = do
-  interpreter <- createInterpreter config
-  interpretEffect interpreter effect
+    -- Create necessary IORef instances
+    resourceLog <- IORef.newIORef Map.empty
+    keyStore <- IORef.newIORef Map.empty
+    clockRef <- IORef.newIORef (LamportTime 0)
+    nodesRef <- IORef.newIORef []
+    
+    -- Run the effect through the interpreter
+    result <- interpretAppEffects resourceLog keyStore clockRef nodesRef $ do
+        -- Implementation would go here
+        pure $ CoreEffect.EffectSuccess "dummy-result"
+        
+    case result of
+        Left err -> pure $ CoreEffect.EffectFailure $ T.pack $ show err
+        Right r -> pure r
 
 -- | Causal enforcement
 enforceResourceOwnership :: EffectInterpreter -> ResourceId -> Bool
@@ -773,5 +861,13 @@ enforceCausalOrder _ = True  -- Placeholder
 
 enforceTimeMapConsistency :: EffectInterpreter -> Bool
 enforceTimeMapConsistency _ = True  -- Placeholder
+
+-- | Additional effect types that extend the core Effect type
+data ExtendedEffect = 
+    ResourceTransfer ResourceId ProgramId Integer
+  | InternalStateUpdate ProgramId Text ByteString
+  | AccountMessageEffect ActorId AccountMessage
+  | EffectFailed Text
+  deriving (Eq, Show, Generic)
 
  

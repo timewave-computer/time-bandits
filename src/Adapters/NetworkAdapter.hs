@@ -52,8 +52,10 @@ import Data.Time (UTCTime, getCurrentTime)
 -- Import from TimeBandits modules
 import Types.Network
 import Core.Common (PubKey, Actor)
+import Polysemy (Sem, Member, Embed, interpret, makeSem)
+import Polysemy.Error (Error, throw)
+import Adapters.NetworkQUIC (QuicConfig)
 import Adapters.Network (P2PConfig, P2PNetwork)
-import Polysemy (Sem)
 
 -- | Natural transformation type
 type (~>) f g = forall x. f x -> g x
@@ -76,10 +78,41 @@ class NetworkAdapter a where
   startAdapter :: a -> IO ()
   stopAdapter :: a -> IO ()
 
+  -- | Get the network configuration
+  getNetworkConfig :: a -> NetworkConfig
+  
+  -- | Connect to a peer
+  connectToPeer :: a -> PeerId -> IO (Either Text ())
+  
+  -- | Disconnect from a peer
+  disconnectFromPeer :: a -> PeerId -> IO ()
+  
+  -- | Send a message to a specific peer
+  sendMessage :: a -> PeerId -> ByteString -> IO (Either Text ())
+  
+  -- | Subscribe to messages of a specific type
+  subscribe :: a -> Text -> (PeerId -> ByteString -> IO ()) -> IO ()
+  
+  -- | Unsubscribe from messages of a specific type
+  unsubscribe :: a -> Text -> IO ()
+  
+  -- | Get all connected peers
+  getConnectedPeers :: a -> IO [PeerId]
+  
+  -- | Get the local peer ID
+  getLocalPeerId :: a -> IO PeerId
+  
+  -- | Get the public key for a peer
+  getPeerPublicKey :: a -> PeerId -> IO (Maybe PubKey)
+
+-- | Basic adapter implementation to use as a concrete type
+data BasicNetworkAdapter = BasicNetworkAdapter 
+  { adapterConfig :: NetworkConfig
+  }
+
 -- | Create a network adapter with the given configuration
--- This function will be implemented by specific adapter implementations
-createNetworkAdapter :: NetworkConfig -> IO (forall a. NetworkAdapter a => a)
-createNetworkAdapter = error "createNetworkAdapter must be implemented by specific adapter"
+createNetworkAdapter :: NetworkConfig -> IO BasicNetworkAdapter
+createNetworkAdapter config = pure $ BasicNetworkAdapter { adapterConfig = config }
 
 -- | Helper function to create a new message ID
 newMessageId :: IO MessageId
@@ -108,12 +141,8 @@ createMessage sender recipient msgType payload = do
 -- These functions will be updated or removed in future iterations
 
 -- | Adapt the P2P Network effect to use QUIC transport (backward compatibility)
-adaptNetworkToQuic ::
-  P2PConfig ->
-  Actor ->
-  PubKey ->
-  (P2PNetwork ~> Sem r)
-adaptNetworkToQuic = error "Deprecated: Use NetworkAdapter instead"
+adaptNetworkToQuic :: P2PConfig -> Actor -> PubKey -> a -> a
+adaptNetworkToQuic _ _ _ a = a  -- Simplified implementation, marked as deprecated
 
 -- | Convert a P2P network configuration to a QUIC configuration (backward compatibility)
 p2pConfigToQuicConfig :: P2PConfig -> QuicConfig
@@ -125,4 +154,8 @@ quicConfigToP2pConfig = error "Deprecated: Use NetworkAdapter instead"
 
 -- | Interpret network for geo-distributed mode (backward compatibility)
 interpretNetworkForGeoDistributed :: a
-interpretNetworkForGeoDistributed = error "Deprecated: Use NetworkAdapter instead" 
+interpretNetworkForGeoDistributed = error "Deprecated: Use NetworkAdapter instead"
+
+-- | Run a P2P network action in the IO monad
+runP2PNetwork :: P2PNetwork r a -> P2PConfig -> IO a
+runP2PNetwork = error "runP2PNetwork must be implemented by specific adapter" 

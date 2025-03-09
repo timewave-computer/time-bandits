@@ -13,7 +13,7 @@ using rendezvous hashing for deterministic peer selection and discovery.
 -}
 module Adapters.Network.Discovery
   ( -- * Peer Discovery
-    discoverPeers
+    discoverPeersExt
   , maintainPeerList
   
     -- * Configuration
@@ -31,8 +31,11 @@ module Adapters.Network.Discovery
 
 import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Monad (forever, forM, when)
+import Data.Functor (void)
+import qualified Data.Functor as Functor
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -42,13 +45,18 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
+import qualified Data.Text.Encoding as TE
 import Crypto.Hash (SHA256, Digest, hash)
 import qualified Crypto.Hash as Hash
 import Network.Socket (SockAddr)
 import Data.Time (UTCTime, getCurrentTime, diffUTCTime)
+import Data.Word (Word8)
+import qualified Crypto.Hash as Crypto
+import qualified Control.Concurrent as Concurrent
 
 -- Import from TimeBandits modules
-import Types.Network
+import Types.Network (PeerId(..), NetworkConfig(..), MessageType(..))
+import Adapters.NetworkAdapter (NetworkAdapter(..))
 
 -- | Configuration for peer discovery
 data DiscoveryConfig = DiscoveryConfig
@@ -83,8 +91,8 @@ data PeerInfo = PeerInfo
   }
 
 -- | Discover peers using rendezvous hashing
-discoverPeers :: NetworkAdapter a => a -> DiscoveryConfig -> [PeerId] -> IO [PeerId]
-discoverPeers adapter config knownPeers = do
+discoverPeersExt :: NetworkAdapter a => a -> DiscoveryConfig -> [PeerId] -> IO [PeerId]
+discoverPeersExt adapter config knownPeers = do
   if null knownPeers
     then discoverFromBootstrap adapter config
     else discoverFromNetwork adapter config knownPeers
@@ -103,30 +111,32 @@ discoverFromNetwork adapter config knownPeers = do
   queryKey <- generateRandomKey
   
   -- Select peers to query based on rendezvous hashing
-  let peersToQuery = selectPeersToQuery knownPeers queryKey (maxPeersPerQuery config)
+  let queryKeyText = TE.decodeUtf8 queryKey
+  let peersToQuery = selectPeersToQuery queryKeyText knownPeers (maxPeersPerQuery config)
   
   -- Query each selected peer for their known peers
   results <- forM peersToQuery $ \peer -> do
     exchangePeers adapter peer
   
-  -- Combine results and return unique peers
+  -- Return unique peers
   return $ Set.toList $ Set.fromList $ concat results
 
--- | Start a background thread to maintain the peer list
-maintainPeerList :: NetworkAdapter a => a -> DiscoveryConfig -> (PeerId -> IO ()) -> IO ThreadId
-maintainPeerList adapter config callback = do
-  forkIO $ forever $ do
-    -- Get current known peers
-    knownPeers <- discoverPeers adapter
+-- | Continuously maintain peer list
+maintainPeerList :: NetworkAdapter a => a -> DiscoveryConfig -> ([PeerId] -> IO ()) -> IO ThreadId
+maintainPeerList adapter config@DiscoveryConfig{..} peerCallback = do
+  -- Start a background thread for discovery
+  Concurrent.forkIO $ forever $ do
+    -- Discover our known peers
+    knownPeers <- Adapters.NetworkAdapter.discoverPeers adapter
     
     -- Discover new peers
-    newPeers <- discoverPeers adapter config knownPeers
+    newPeers <- discoverPeersExt adapter config knownPeers
     
-    -- Notify about new peers
-    mapM_ callback newPeers
+    -- Notify callback with new peers
+    Functor.void $ peerCallback newPeers
     
-    -- Wait for next discovery cycle
-    threadDelay (discoveryInterval config * 1000000)
+    -- Wait until next discovery cycle
+    Concurrent.threadDelay (discoveryInterval * 1000000)  -- Convert to microseconds
 
 -- | Exchange peer lists with a specific peer
 exchangePeers :: NetworkAdapter a => a -> PeerId -> IO [PeerId]
@@ -144,26 +154,29 @@ exchangePeers adapter peer = do
 -- | Announce this peer to the network
 announcePeer :: NetworkAdapter a => a -> IO ()
 announcePeer adapter = do
-  -- Broadcast a peer announcement message
   let payload = "PEER_ANNOUNCE"  -- In a real implementation, this would include peer info
-  void $ broadcastMessage adapter PeerDiscovery payload
+  Functor.void $ broadcastMessage adapter PeerDiscovery payload
 
--- | Use rendezvous hashing to select a subset of peers
-selectPeersToQuery :: [PeerId] -> ByteString -> Int -> [PeerId]
-selectPeersToQuery knownPeers queryKey maxPeers =
-  take maxPeers $ sortBy (comparing $ computePeerScore queryKey . unPeerId) knownPeers
+-- | Select peers to query based on rendezvous hashing
+selectPeersToQuery :: Text -> [PeerId] -> Int -> [PeerId]
+selectPeersToQuery queryKey knownPeers maxPeers = do
+  -- Sort peers by their score (lower is better)
+  take maxPeers $ sortBy (comparing $ \peer -> computePeerScore (TE.encodeUtf8 queryKey) peer) knownPeers
 
--- | Compute a score for a peer based on rendezvous hashing
-computePeerScore :: ByteString -> Text -> Int
+-- | Compute a score for a peer using rendezvous hashing
+computePeerScore :: ByteString -> PeerId -> Int
 computePeerScore queryKey peerId = do
   -- Hash the combination of query key and peer ID
-  let combined = BS.append queryKey (encodeUtf8 peerId)
-      digest = hash combined :: Digest SHA256
-      hashBytes = Hash.digestToByteString digest
+  let input = queryKey <> TE.encodeUtf8 (unPeerId peerId)
+  let digest = Crypto.hash input :: Crypto.Digest Crypto.SHA256
   
-  -- Extract a numeric score from the hash
-  -- In a real implementation, this would convert the first 4 bytes to an integer
-  0  -- Placeholder
+  -- Convert the digest to a simple numeric value
+  -- Get first 4 bytes from digest as an integer for scoring
+  let digestString = show digest
+  let hashBytes = BS.take 4 $ TE.encodeUtf8 $ T.pack $ take 8 digestString
+  let score = BS.foldl' (\acc byte -> acc * 256 + fromIntegral byte) 0 hashBytes
+  
+  fromIntegral score
 
 -- | Generate a random key for queries
 generateRandomKey :: IO ByteString

@@ -21,7 +21,7 @@ Execution Logs:
 -}
 module Execution.ExecutionLog 
   ( -- * Core Types
-    ExecutionLog(..)
+    ExecutionLog
   , LogStore
   , LogIndex
   , LogQuery(..)
@@ -48,15 +48,17 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
-import Polysemy.Error (Error, throw)
+import Polysemy.Error (Error, throw, catch)
 import System.IO (IOMode(..), withFile)
 import qualified Data.ByteString.Char8 as BS
+import Data.Foldable (foldl)
 
 -- Import from TimeBandits modules
 import Core (Hash(..), EntityHash(..))
 import Core.Types
   ( AppError(..)
   , LamportTime(..)
+  , TimelineErrorType(..)
   )
 import Core.Resource 
   ( Resource
@@ -75,43 +77,45 @@ import Actors.TransitionMessage
   )
 
 -- | Index for efficient log queries
-type LogIndex = Map ProgramId [EntityHash LogEntry]
+type LogIndex = Map ProgramId [EntityHash "LogEntry"]
 
 -- | Log query criteria
 data LogQuery
   = ByProgramId ProgramId
   | ByTimeRange LamportTime LamportTime
   | ByEffect Effect
-  | ByCausalChain (EntityHash LogEntry)
+  | ByCausalChain (EntityHash "LogEntry")
   | Combined [LogQuery]
   deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
--- | Log store errors
+-- | Error types for log operations
 data LogError
-  = EntryNotFound (EntityHash LogEntry)
-  | InvalidEntry (EntityHash LogEntry)
-  | ChainBroken (EntityHash LogEntry) (EntityHash LogEntry)
+  = EntryNotFound (EntityHash "LogEntry")
+  | InvalidEntry (EntityHash "LogEntry")
+  | ChainBroken (EntityHash "LogEntry") (EntityHash "LogEntry")
   | StorageError Text
   deriving (Eq, Show, Generic)
   deriving anyclass (Serialize)
 
--- | A log store is a persistent store of log entries
-data LogStore = LogStore
-  { entries :: Map (EntityHash LogEntry) LogEntry
+-- | The execution log data structure
+data ExecutionLog = ExecutionLog
+  { entries :: Map (EntityHash "LogEntry") LogEntry
   , indexes :: LogIndex
-  , rootEntry :: Maybe (EntityHash LogEntry)
-  , latestEntry :: Maybe (EntityHash LogEntry)
+  , rootEntry :: Maybe (EntityHash "LogEntry")
+  , latestEntry :: Maybe (EntityHash "LogEntry")
   }
-  deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+  deriving (Eq, Show)
+
+-- | LogStore is just an alias for ExecutionLog
+type LogStore = ExecutionLog
 
 -- | Create a new log store
 createLogStore :: 
   (Member (Error AppError) r) => 
   Sem r LogStore
 createLogStore = do
-  pure $ LogStore
+  pure $ ExecutionLog
     { entries = Map.empty
     , indexes = Map.empty
     , rootEntry = Nothing
@@ -126,11 +130,11 @@ appendLogEntry ::
   Sem r LogStore
 appendLogEntry store entry = do
   -- Verify the entry can be appended
-  let entryId = entryId entry
+  let entryHash = entryId entry
   
   -- Check for duplicate entry
-  case Map.lookup entryId (entries store) of
-    Just _ -> throw $ AppError $ "Duplicate log entry: " <> T.pack (show entryId)
+  case Map.lookup entryHash (entries store) of
+    Just _ -> throw $ TimelineError $ TimelineGenericError $ "Duplicate log entry: " <> T.pack (show entryHash)
     Nothing -> pure ()
   
   -- Verify causal link if not the first entry
@@ -138,9 +142,9 @@ appendLogEntry store entry = do
     Nothing -> do
       -- This is the first entry
       let updatedStore = store
-            { entries = Map.insert entryId entry (entries store)
-            , rootEntry = Just entryId
-            , latestEntry = Just entryId
+            { entries = Map.insert entryHash entry (entries store)
+            , rootEntry = Just entryHash
+            , latestEntry = Just entryHash
             }
       
       -- Update indexes
@@ -151,17 +155,17 @@ appendLogEntry store entry = do
       -- Get the latest entry
       latestEntry <- case Map.lookup latest (entries store) of
         Just e -> pure e
-        Nothing -> throw $ AppError "Latest entry not found in store"
+        Nothing -> throw $ TimelineError $ TimelineGenericError "Latest entry not found in store"
       
       -- Verify causal link
       valid <- verifyLogEntryChain entry latestEntry
       if not valid
-        then throw $ AppError "Invalid causal link in log entry"
+        then throw $ TimelineError $ TimelineGenericError "Invalid causal link in log entry"
         else do
           -- Append the entry
           let updatedStore = store
-                { entries = Map.insert entryId entry (entries store)
-                , latestEntry = Just entryId
+                { entries = Map.insert entryHash entry (entries store)
+                , latestEntry = Just entryHash
                 }
           
           -- Update indexes
@@ -187,13 +191,13 @@ updateLogIndexes store entry = do
 getLogEntry ::
   (Member (Error AppError) r) =>
   LogStore ->
-  EntityHash LogEntry ->
+  EntityHash "LogEntry" ->
   Sem r LogEntry
 getLogEntry store entryId = do
   -- Look up the entry in the store
   case Map.lookup entryId (entries store) of
     Just entry -> pure entry
-    Nothing -> throw $ AppError $ "Log entry not found: " <> T.pack (show entryId)
+    Nothing -> throw $ TimelineError $ TimelineGenericError $ "Log entry not found: " <> T.pack (show entryId)
 
 -- | Query the log using search criteria
 queryLog ::
@@ -237,7 +241,7 @@ queryLog store query = do
 resolveEntries ::
   (Member (Error AppError) r) =>
   LogStore ->
-  [EntityHash LogEntry] ->
+  [EntityHash "LogEntry"] ->
   Sem r [LogEntry]
 resolveEntries store ids = do
   -- Look up each entry
@@ -247,7 +251,7 @@ resolveEntries store ids = do
 followCausalChain ::
   (Member (Error AppError) r) =>
   LogStore ->
-  EntityHash LogEntry ->
+  EntityHash "LogEntry" ->
   Sem r [LogEntry]
 followCausalChain store startId = do
   -- Get the starting entry
@@ -336,3 +340,9 @@ exportLogToFile store filePath = do
     -- Lift IO to Sem
     liftIO :: IO a -> Sem r a
     liftIO = undefined  -- In a real implementation, this would use the IO effect 
+
+getLatestLogEntry :: (Member (Error AppError) r) => LogStore -> Sem r LogEntry
+getLatestLogEntry store = do
+  case latestEntry store of
+    Just entryId -> getLogEntry store entryId
+    Nothing -> throw $ TimelineError $ TimelineGenericError "Latest entry not found in store" 
