@@ -30,8 +30,8 @@ module Actors.ActorCommunication
   -- * Channel Operations
   , createChannel
   , closeChannel
-  , sendMessage
-  , receiveMessage
+  , Actors.ActorCommunication.sendMessage
+  , Actors.ActorCommunication.receiveMessage
   , createLocalChannel
   , createNetworkChannel
   
@@ -49,8 +49,8 @@ module Actors.ActorCommunication
   , broadcastMessage
   ) where
 
-import Control.Concurrent (MVar, newMVar)
-import qualified Control.Concurrent as Concurrent (takeMVar, putMVar)
+import Control.Concurrent (MVar)
+import qualified Control.Concurrent as Concurrent (takeMVar, putMVar, newMVar)
 import Control.Concurrent.STM (TVar, atomically, readTVar, writeTVar, newTVarIO)
 import Control.Exception (IOException, try)
 import Control.Monad (when, void, forever, forM_)
@@ -73,6 +73,11 @@ import Polysemy (Member, Sem, embed)
 import Polysemy.Error (Error, throw, catch)
 import Polysemy.Embed (Embed)
 import Relude (newIORef)
+import qualified Data.Serialize as S
+import qualified Data.Binary as B
+import qualified Data.Binary.Put as BP
+import qualified Data.Binary.Get as BG
+import Data.Word (Word8)
 
 -- Import from TimeBandits modules
 import Core (Hash(..), EntityHash(..))
@@ -83,7 +88,9 @@ import Core.Types
 import Actors.Actor
   ( ActorRole
   , Actor(..)
+  , ActorHandle
   )
+import qualified Actors.Actor as Actor (sendMessage, receiveMessage)
 import Actors.TransitionMessage
   ( TransitionMessage(..)
   )
@@ -109,7 +116,34 @@ data ActorAddress
   | NetworkAddress Text SockAddr    -- ^ Network socket address
   | ProcessAddress Text FilePath    -- ^ Unix socket or process ID
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Manual instance for Serialize ActorAddress
+instance Serialize ActorAddress where
+  put (LocalAddress txt) = do
+    S.put (0 :: Word8)  -- Tag for LocalAddress
+    S.put txt
+  put (NetworkAddress txt _) = do
+    S.put (1 :: Word8)  -- Tag for NetworkAddress
+    S.put txt
+    -- We don't serialize SockAddr as it's not directly serializable
+    -- In a real implementation, we would serialize the host and port
+  put (ProcessAddress txt path) = do
+    S.put (2 :: Word8)  -- Tag for ProcessAddress
+    S.put txt
+    S.put path
+    
+  get = do
+    tag <- S.get :: S.Get Word8
+    case tag of
+      0 -> LocalAddress <$> S.get
+      1 -> do
+        txt <- S.get
+        -- Create a dummy SockAddr for deserialization
+        -- In a real implementation, we would deserialize the host and port
+        let dummySockAddr = SockAddrInet 0 0
+        return $ NetworkAddress txt dummySockAddr
+      2 -> ProcessAddress <$> S.get <*> S.get
+      _ -> fail "Invalid ActorAddress tag"
 
 -- | Channel error types
 data ChannelError
@@ -167,7 +201,7 @@ createChannel localAddr remoteAddr = do
       createProcessChannel localAddr remoteAddr
     
     -- Unmatched address types
-    _ -> throw $ AppError "Incompatible address types for channel creation"
+    _ -> throw $ NetworkError "Incompatible address types for channel creation"
 
 -- | Close a communication channel
 closeChannel :: 
@@ -185,7 +219,7 @@ sendMessage ::
 sendMessage channel msg = do
   result <- embed $ channelSend channel msg
   case result of
-    Left err -> throw $ AppError $ "Failed to send message: " <> T.pack (show err)
+    Left err -> throw $ NetworkError $ "Failed to send message: " <> T.pack (show err)
     Right () -> pure ()
 
 -- | Receive a message from a channel
@@ -196,7 +230,7 @@ receiveMessage ::
 receiveMessage channel = do
   result <- embed $ channelReceive channel
   case result of
-    Left err -> throw $ AppError $ "Failed to receive message: " <> T.pack (show err)
+    Left err -> throw $ NetworkError $ "Failed to receive message: " <> T.pack (show err)
     Right msg -> pure msg
 
 -- | Create a local in-memory channel
@@ -207,8 +241,8 @@ createLocalChannel ::
   Sem r ActorChannel
 createLocalChannel localAddr remoteAddr = do
   -- Create message queues for bidirectional communication
-  sendQueue <- embed $ newMVar []
-  recvQueue <- embed $ newMVar []
+  sendQueue <- embed $ Concurrent.newMVar []
+  recvQueue <- embed $ Concurrent.newMVar []
   
   -- Create the channel with appropriate send/receive functions
   let channel = ActorChannel
@@ -262,10 +296,10 @@ createNetworkChannel localAddr@(NetworkAddress _ localSock) remoteAddr@(NetworkA
   embed $ bind sock localSock
   
   -- Connect to the remote address
-  result <- embed $ try $ connect sock remoteSock
+  result <- embed $ tryIO $ connect sock remoteSock
   case result of
     Left (err :: IOException) -> 
-      throw $ AppError $ "Failed to connect to remote address: " <> T.pack (show err)
+      throw $ NetworkError $ "Failed to connect to remote address: " <> T.pack (show err)
     Right () -> do
       -- Create the channel with socket send/receive functions
       let channel = ActorChannel
@@ -279,7 +313,7 @@ createNetworkChannel localAddr@(NetworkAddress _ localSock) remoteAddr@(NetworkA
                         sizeBytes = encode (fromIntegral size :: Int)
                     
                     -- Send in a try block to handle network errors
-                    sendResult <- try $ do
+                    sendResult <- tryIO $ do
                       sendAll sock sizeBytes
                       sendAll sock bytes
                     
@@ -291,7 +325,7 @@ createNetworkChannel localAddr@(NetworkAddress _ localSock) remoteAddr@(NetworkA
             
             , channelReceive = do
                 -- Receive the message size first
-                sizeBytes <- try $ recv sock 4
+                sizeBytes <- tryIO $ recv sock 4
                 case sizeBytes of
                   Left (err :: IOException) -> 
                     pure $ Left $ MessageReceiveFailed $ T.pack $ show err
@@ -299,17 +333,19 @@ createNetworkChannel localAddr@(NetworkAddress _ localSock) remoteAddr@(NetworkA
                     if BS.null bytes 
                       then pure $ Left $ ChannelClosed "Connection closed by peer"
                       else do
-                        let Right size = decode bytes :: Either String Int
-                        
-                        -- Receive the message
-                        msgBytes <- try $ recvExactly sock size
-                        case msgBytes of
-                          Left (err :: IOException) -> 
-                            pure $ Left $ MessageReceiveFailed $ T.pack $ show err
-                          Right bytes' ->
-                            case deserializeMessage bytes' of
-                              Left err -> pure $ Left $ DeserializationFailed $ T.pack $ show err
-                              Right msg -> pure $ Right msg
+                        case decode bytes :: Either String Int of
+                          Left decodeErr -> 
+                            pure $ Left $ DeserializationFailed $ T.pack decodeErr
+                          Right size -> do
+                            -- Receive the message
+                            msgBytes <- tryIO $ recvExactly sock size
+                            case msgBytes of
+                              Left (err :: IOException) -> 
+                                pure $ Left $ MessageReceiveFailed $ T.pack $ show err
+                              Right bytes' ->
+                                case deserializeMessage bytes' of
+                                  Left err -> pure $ Left $ DeserializationFailed $ T.pack $ show err
+                                  Right msg -> pure $ Right msg
             
             , channelClose = close sock
             
@@ -337,8 +373,8 @@ createNetworkChannel localAddr@(NetworkAddress _ localSock) remoteAddr@(NetworkA
       loop n []
     
     -- Wrapper for try to handle IO exceptions
-    try :: IO a -> IO (Either IOException a)
-    try = Control.Exception.try
+    tryIO :: IO a -> IO (Either IOException a)
+    tryIO = Control.Exception.try
 
 -- | Create a process channel using Unix sockets or stdio
 createProcessChannel :: 
@@ -354,10 +390,10 @@ createProcessChannel localAddr@(ProcessAddress _ localPath) remoteAddr@(ProcessA
   embed $ bind sock (SockAddrUnix localPath)
   
   -- Connect to the remote path
-  result <- embed $ try $ connect sock (SockAddrUnix remotePath)
+  result <- embed $ tryIO $ connect sock (SockAddrUnix remotePath)
   case result of
     Left (err :: IOException) -> 
-      throw $ AppError $ "Failed to connect to remote process: " <> T.pack (show err)
+      throw $ NetworkError $ "Failed to connect to remote process: " <> T.pack (show err)
     Right () -> do
       -- Create the channel with socket send/receive functions
       let channel = ActorChannel
@@ -371,7 +407,7 @@ createProcessChannel localAddr@(ProcessAddress _ localPath) remoteAddr@(ProcessA
                         sizeBytes = encode (fromIntegral size :: Int)
                     
                     -- Send in a try block to handle errors
-                    sendResult <- try $ do
+                    sendResult <- tryIO $ do
                       sendAll sock sizeBytes
                       sendAll sock bytes
                     
@@ -383,7 +419,7 @@ createProcessChannel localAddr@(ProcessAddress _ localPath) remoteAddr@(ProcessA
             
             , channelReceive = do
                 -- Receive the message size first
-                sizeBytes <- try $ recv sock 4
+                sizeBytes <- tryIO $ recv sock 4
                 case sizeBytes of
                   Left (err :: IOException) -> 
                     pure $ Left $ MessageReceiveFailed $ T.pack $ show err
@@ -391,17 +427,19 @@ createProcessChannel localAddr@(ProcessAddress _ localPath) remoteAddr@(ProcessA
                     if BS.null bytes 
                       then pure $ Left $ ChannelClosed "Connection closed by peer"
                       else do
-                        let Right size = decode bytes :: Either String Int
-                        
-                        -- Receive the message
-                        msgBytes <- try $ recvExactly sock size
-                        case msgBytes of
-                          Left (err :: IOException) -> 
-                            pure $ Left $ MessageReceiveFailed $ T.pack $ show err
-                          Right bytes' ->
-                            case deserializeMessage bytes' of
-                              Left err -> pure $ Left $ DeserializationFailed $ T.pack $ show err
-                              Right msg -> pure $ Right msg
+                        case decode bytes :: Either String Int of
+                          Left decodeErr -> 
+                            pure $ Left $ DeserializationFailed $ T.pack decodeErr
+                          Right size -> do
+                            -- Receive the message
+                            msgBytes <- tryIO $ recvExactly sock size
+                            case msgBytes of
+                              Left (err :: IOException) -> 
+                                pure $ Left $ MessageReceiveFailed $ T.pack $ show err
+                              Right bytes' ->
+                                case deserializeMessage bytes' of
+                                  Left err -> pure $ Left $ DeserializationFailed $ T.pack $ show err
+                                  Right msg -> pure $ Right msg
             
             , channelClose = close sock
             
@@ -423,8 +461,8 @@ createProcessChannel localAddr@(ProcessAddress _ localPath) remoteAddr@(ProcessA
       loop n []
     
     -- Wrapper for try to handle IO exceptions
-    try :: IO a -> IO (Either IOException a)
-    try = Control.Exception.try
+    tryIO :: IO a -> IO (Either IOException a)
+    tryIO = Control.Exception.try
 
 -- | Serialize an actor message to bytes
 serializeMessage :: ActorMessage -> Either String ByteString
@@ -447,7 +485,7 @@ discoverActors role = do
 -- | Register an actor with the discovery service
 registerActor :: 
   (Member (Error AppError) r, Member (Embed IO) r) => 
-  Actor -> 
+  ActorHandle -> 
   ActorAddress -> 
   ActorRole -> 
   Sem r ()
@@ -459,33 +497,23 @@ registerActor actor addr role = do
 -- | Look up an actor by ID
 lookupActor :: 
   (Member (Error AppError) r, Member (Embed IO) r) => 
-  EntityHash Actor -> 
+  Text -> 
   Sem r (Maybe ActorAddress)
 lookupActor actorId = do
   -- In a real implementation, this would query a discovery service
   -- For now, return Nothing
   pure Nothing
 
--- | Route a message to the appropriate actor
+-- | Route a message to its destination
 routeMessage :: 
   (Member (Error AppError) r, Member (Embed IO) r) => 
+  ActorChannel -> 
   ActorMessage -> 
-  ActorAddress -> 
   Sem r ()
-routeMessage msg addr = do
-  -- Look up or create a channel to the destination
-  remoteActor <- lookupActor (EntityHash $ Hash "dummy")  -- This would be the actual actor ID
-  case remoteActor of
-    Nothing -> throw $ AppError $ "Actor not found: " <> T.pack (show addr)
-    Just remoteAddr -> do
-      -- Create a channel to the remote actor
-      channel <- createChannel addr remoteAddr
-      
-      -- Send the message
-      sendMessage channel msg
-      
-      -- Close the channel
-      closeChannel channel
+routeMessage channel msg = do
+  -- In a real implementation, this would handle routing logic
+  -- For now, just send directly
+  Actors.ActorCommunication.sendMessage channel msg
 
 -- | Broadcast a message to multiple actors
 broadcastMessage :: 
@@ -497,5 +525,8 @@ broadcastMessage ::
 broadcastMessage msg addrs localAddr = do
   -- Send the message to each actor
   for_ addrs $ \addr -> do
-    -- Try to route the message, but continue on failure
-    catch (routeMessage msg addr) $ \(_ :: AppError) -> pure () 
+    -- Try to create a channel and send the message
+    catch (do
+      channel <- createChannel localAddr addr
+      Actors.ActorCommunication.sendMessage channel msg
+      closeChannel channel) $ \(_ :: AppError) -> pure () 
