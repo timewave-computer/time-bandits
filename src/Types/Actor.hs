@@ -43,6 +43,7 @@ import GHC.Generics (Generic)
 import Core.Common (EntityHash, ActorHash)
 import qualified Data.Text.Encoding as TE
 import qualified Data.Serialize as S
+import Types.EffectBase ()
 
 -- | Actor ID type
 type ActorId = Text

@@ -21,6 +21,7 @@ module Core.Concurrency.ResourceLock
   , acquireLock
   , releaseLock
   , withResourceLock
+  , tryAcquireLock
   
     -- * Lock Utilities
   , isLockOwner
@@ -33,10 +34,12 @@ import Control.Monad (when)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, NominalDiffTime, getCurrentTime, diffUTCTime)
-import Control.Concurrent (MVar, newMVar, readMVar, modifyMVar, modifyMVar_, takeMVar, putMVar, threadDelay)
+import Control.Concurrent (MVar)
+import qualified Control.Concurrent as Concurrent
 import Control.Concurrent.STM (TVar, newTVarIO, readTVarIO, atomically, readTVar, writeTVar, check)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing, isJust)
 
 -- Import from TimeBandits modules
 import Core.ResourceId (ResourceId)
@@ -65,7 +68,7 @@ type LockResult a = Either LockError a
 -- | Create a new resource lock
 createResourceLock :: ResourceId -> NominalDiffTime -> IO ResourceLock
 createResourceLock resId timeout = do
-  lockVar <- newMVar ()
+  lockVar <- Concurrent.newMVar ()
   now <- getCurrentTime
   return ResourceLock
     { resourceId = resId
@@ -93,7 +96,7 @@ acquireLock resId effectId timeout = do
 -- | Try to acquire an existing lock
 tryAcquireLock :: ResourceLock -> EffectId -> IO (LockResult ResourceLock)
 tryAcquireLock lock effectId = do
-  result <- tryTakeMVar (lockMVar lock) timeout
+  result <- tryTakeMVarWithTimeout (lockMVar lock) timeout
   case result of
     Left err -> return $ Left err
     Right () -> do
@@ -107,16 +110,16 @@ tryAcquireLock lock effectId = do
     timeout = lockTimeout lock
 
 -- | Try to take an MVar with a timeout
-tryTakeMVar :: MVar () -> NominalDiffTime -> IO (LockResult ())
-tryTakeMVar mvar timeout = do
+tryTakeMVarWithTimeout :: MVar () -> NominalDiffTime -> IO (LockResult ())
+tryTakeMVarWithTimeout mvar timeout = do
   startTime <- getCurrentTime
   let tryLock = do
         -- Try to take the MVar (non-blocking)
-        result <- tryReadMVar mvar
+        result <- tryReadMVarCustom mvar
         case result of
           Nothing -> do
             -- MVar is empty, take it
-            takeMVar mvar
+            Concurrent.takeMVar mvar
             return $ Right ()
           Just _ -> do
             -- MVar is full, check timeout
@@ -126,7 +129,7 @@ tryTakeMVar mvar timeout = do
               then return $ Left $ LockTimeout (error "Resource ID not available in tryTakeMVar")
               else do
                 -- Sleep briefly and retry
-                threadDelay 10000  -- 10ms
+                Concurrent.threadDelay 10000  -- 10ms
                 tryLock
   tryLock
 
@@ -137,7 +140,7 @@ releaseLock lock effectId = do
   if owner lock == Just effectId
     then do
       -- Release the lock
-      putMVar (lockMVar lock) ()
+      Concurrent.putMVar (lockMVar lock) ()
       return $ Right ()
     else
       return $ Left $ LockNotOwned (resourceId lock)
@@ -162,7 +165,7 @@ withResourceLock resId effectId timeout action = do
         `catch` \(e :: SomeException) -> do
           -- Release the lock on exception
           _ <- releaseLock lock effectId
-          return $ error $ "Exception in withResourceLock: " ++ show e
+          return $ error $ T.pack $ "Exception in withResourceLock: " ++ show e
       
       return $ Right result
 
@@ -183,16 +186,16 @@ isLocked lock = do
 -- | Check if an MVar is empty
 isEmptyMVar :: MVar a -> IO Bool
 isEmptyMVar mvar = do
-  result <- tryReadMVar mvar
-  return (isNothing result)
+  result <- tryReadMVarCustom mvar
+  return (Data.Maybe.isNothing result)
 
--- | Try to read an MVar without taking it
-tryReadMVar :: MVar a -> IO (Maybe a)
-tryReadMVar mvar = do
+-- | Try to read an MVar without taking it (custom implementation)
+tryReadMVarCustom :: MVar a -> IO (Maybe a)
+tryReadMVarCustom mvar = do
   tryTakeMVarNow mvar >>= \case
     Nothing -> return Nothing
     Just x -> do
-      putMVar mvar x
+      Concurrent.putMVar mvar x
       return (Just x)
 
 -- | Try to take an MVar immediately (non-blocking)

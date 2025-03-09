@@ -26,7 +26,7 @@ import Control.Monad (void)
 import qualified Crypto.Hash as Hash
 import qualified Crypto.PubKey.RSA as RSA
 import qualified Crypto.PubKey.RSA.PKCS15 as PKCS15
-import qualified Crypto.Random as Random
+import qualified Crypto.Random.Types as CryptoRandom
 import Data.ASN1.Types (ASN1Object)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -39,6 +39,7 @@ import Data.X509 (Certificate, DistinguishedName, Extensions)
 import qualified Data.X509 as X509
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory)
+import qualified Control.Monad as CM
 
 -- | Generate a self-signed certificate and private key
 generateSelfSignedCert :: Text -> Integer -> IO (ByteString, RSA.PrivateKey)
@@ -55,7 +56,7 @@ generateSelfSignedCert commonName validityDays = do
   (pubKey, privKey) <- generateKeyPair 2048
   
   -- Create a placeholder certificate (just some random bytes)
-  certBytes <- BS.pack <$> replicateM 1024 (Random.getRandomByte)
+  certBytes <- BS.pack <$> Adapters.Network.TLS.Certificate.replicateM 1024 (getRandomByte)
   
   return (certBytes, privKey)
 
@@ -105,15 +106,19 @@ loadPrivateKey path = do
   keyBytes <- BS.readFile path
   error "Not implemented: RSA.PrivateKey parsing"
 
--- | Create a random byte
-getRandomByte :: IO Int
-getRandomByte = Random.getRandomByte
+-- | Get a random byte using the cryptographic RNG
+getRandomByte :: IO Word8
+getRandomByte = do
+  bytes <- CryptoRandom.getRandomBytes 1
+  case BS.unpack bytes of
+    [b] -> pure b
+    _ -> error "Failed to generate a random byte"
 
--- | Helper for repeating an action n times
+-- | Custom replicateM implementation to avoid ambiguity
 replicateM :: Monad m => Int -> m a -> m [a]
 replicateM n action
-  | n <= 0 = return []
+  | n <= 0 = pure []
   | otherwise = do
       x <- action
-      xs <- replicateM (n-1) action
-      return (x:xs) 
+      xs <- CM.replicateM (n-1) action
+      pure (x:xs) 

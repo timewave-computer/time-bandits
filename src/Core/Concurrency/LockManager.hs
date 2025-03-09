@@ -13,7 +13,7 @@ enabling the safe management of locks across multiple resources and effects.
 -}
 module Core.Concurrency.LockManager
   ( -- * Lock Manager
-    LockManager
+    LockManager(..)
   , createLockManager
   , destroyLockManager
   
@@ -33,19 +33,26 @@ module Core.Concurrency.LockManager
   , releaseDistributedLock
   ) where
 
+-- Use qualified imports to avoid ambiguity
 import Control.Concurrent (MVar, newMVar, readMVar, modifyMVar, modifyMVar_, takeMVar, putMVar, threadDelay)
+import qualified Control.Concurrent as Concurrent
 import Control.Exception (bracket, catch, SomeException)
 import Control.Monad (when, forM)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (NominalDiffTime, getCurrentTime, diffUTCTime)
+import Data.Time (NominalDiffTime, getCurrentTime, diffUTCTime, UTCTime)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Maybe as Maybe
 
 -- Import from TimeBandits modules
-import Core.Concurrency.ResourceLock
+import Core.Concurrency.ResourceLock (ResourceLock(..), LockError(..), LockResult, 
+                                     acquireLock, releaseLock, isLockOwner, 
+                                     getLockInfo, isLocked, tryAcquireLock)
+-- Use qualified import for ResourceLock to avoid conflicting lockTimeout 
+import qualified Core.Concurrency.ResourceLock as ResourceLock
 import Core.ResourceId (ResourceId)
 import Core.Types (EffectId)
 import Adapters.NetworkAdapter (PeerId)
@@ -58,7 +65,7 @@ defaultLockTimeout = 5  -- 5 seconds
 data LockManager = LockManager
   { locks :: MVar (Map ResourceId ResourceLock)  -- ^ Currently held locks
   , locksByEffect :: MVar (Map EffectId (Set ResourceId))  -- ^ Resources locked by each effect
-  , lockTimeout :: NominalDiffTime  -- ^ Default lock timeout
+  , lockManagerTimeout :: NominalDiffTime  -- ^ Default lock timeout
   , distributedLockEnabled :: Bool  -- ^ Whether distributed locking is enabled
   , networkPeers :: Maybe [PeerId]  -- ^ Peers for distributed locking
   }
@@ -66,12 +73,12 @@ data LockManager = LockManager
 -- | Create a new lock manager
 createLockManager :: NominalDiffTime -> Bool -> IO LockManager
 createLockManager timeout distributed = do
-  locksVar <- newMVar Map.empty
-  byEffectVar <- newMVar Map.empty
+  locksVar <- Concurrent.newMVar Map.empty
+  byEffectVar <- Concurrent.newMVar Map.empty
   return LockManager
     { locks = locksVar
     , locksByEffect = byEffectVar
-    , lockTimeout = timeout
+    , lockManagerTimeout = timeout
     , distributedLockEnabled = distributed
     , networkPeers = Nothing
     }
@@ -95,7 +102,7 @@ acquireResourceLock manager resId effectId = do
 acquireLocalLock :: LockManager -> ResourceId -> EffectId -> IO (LockResult ResourceLock)
 acquireLocalLock manager resId effectId = do
   -- Check if lock already exists
-  locksMap <- readMVar (locks manager)
+  locksMap <- Concurrent.readMVar (locks manager)
   case Map.lookup resId locksMap of
     Just existingLock -> do
       -- Lock exists, try to acquire it
@@ -109,7 +116,7 @@ acquireLocalLock manager resId effectId = do
     
     Nothing -> do
       -- Lock doesn't exist, create a new one
-      result <- acquireLock resId effectId (lockTimeout manager)
+      result <- acquireLock resId effectId (lockManagerTimeout manager)
       case result of
         Left err -> return $ Left err
         Right newLock -> do
@@ -133,16 +140,15 @@ updateLocks manager resId lock effectId = do
 -- | Release a lock on a resource
 releaseResourceLock :: LockManager -> ResourceId -> EffectId -> IO (LockResult ())
 releaseResourceLock manager resId effectId = do
-  -- Check if this is a distributed resource
   if distributedLockEnabled manager
     then releaseDistributedLock manager resId effectId
     else releaseLocalLock manager resId effectId
 
--- | Release a lock on a local resource
+-- | Release a local resource lock
 releaseLocalLock :: LockManager -> ResourceId -> EffectId -> IO (LockResult ())
 releaseLocalLock manager resId effectId = do
-  -- Check if lock exists
-  locksMap <- readMVar (locks manager)
+  -- Get the current locks
+  locksMap <- Concurrent.readMVar (locks manager)
   case Map.lookup resId locksMap of
     Just existingLock -> do
       -- Lock exists, try to release it
@@ -193,45 +199,46 @@ withResourceLock manager resId effectId action = do
   case lockResult of
     Left err -> return $ Left err
     Right lock -> do
-      -- Perform the action and release the lock
-      result <- bracket
-        (return ())  -- No additional setup
-        (\_ -> releaseResourceLock manager resId effectId >> return ())  -- Always release lock
-        (\_ -> action)  -- Run the action
-        `catch` \(e :: SomeException) -> do
-          -- Release the lock on exception
-          _ <- releaseResourceLock manager resId effectId
-          return $ error $ "Exception in withResourceLock: " ++ show e
+      -- Execute the action
+      result <- action `catch` \(e :: SomeException) -> do
+        -- Release the lock on exception
+        _ <- releaseResourceLock manager resId effectId
+        return $ error $ T.pack $ "Exception in withResourceLock: " ++ show e
       
       return $ Right result
 
 -- | Get information about a resource lock
 getResourceLockInfo :: LockManager -> ResourceId -> IO (Maybe (ResourceId, Maybe EffectId, UTCTime))
 getResourceLockInfo manager resId = do
-  locksMap <- readMVar (locks manager)
+  -- Get the resource lock
+  locksMap <- Concurrent.readMVar (locks manager)
   return $ fmap getLockInfo $ Map.lookup resId locksMap
 
 -- | Check if a resource is locked
 isResourceLocked :: LockManager -> ResourceId -> IO Bool
 isResourceLocked manager resId = do
-  locksMap <- readMVar (locks manager)
+  locksMap <- Concurrent.readMVar (locks manager)
   case Map.lookup resId locksMap of
     Just lock -> isLocked lock
     Nothing -> return False
 
--- | Get all currently locked resources
-getLockedResources :: LockManager -> IO [ResourceId]
+-- | Get all locked resources
+getLockedResources :: LockManager -> IO [(ResourceId, EffectId)]
 getLockedResources manager = do
-  locksMap <- readMVar (locks manager)
-  lockedResources <- forM (Map.toList locksMap) $ \(resId, lock) -> do
-    locked <- isLocked lock
-    return $ if locked then Just resId else Nothing
-  return $ catMaybes lockedResources
+  -- Get all locks
+  locksMap <- Concurrent.readMVar (locks manager)
+  
+  -- Extract resource IDs and their locking effects
+  let lockedResources = map extractLockInfo $ Map.toList locksMap
+  
+  -- Return only the valid lock entries
+  return $ Maybe.catMaybes lockedResources
 
 -- | Get all resources locked by an effect
 getEffectLocks :: LockManager -> EffectId -> IO [ResourceId]
 getEffectLocks manager effectId = do
-  byEffectMap <- readMVar (locksByEffect manager)
+  -- Get the effect -> resources map
+  byEffectMap <- Concurrent.readMVar (locksByEffect manager)
   return $ maybe [] Set.toList $ Map.lookup effectId byEffectMap
 
 -- | Acquire a distributed lock
@@ -272,8 +279,15 @@ releaseDistributedLock manager resId effectId = do
         
         _ -> return $ Right ()
 
--- | Helper functions
-catMaybes :: [Maybe a] -> [a]
-catMaybes [] = []
-catMaybes (Nothing : xs) = catMaybes xs
-catMaybes (Just x : xs) = x : catMaybes xs 
+-- | Helper for catMaybes - renamed to avoid conflict with the Prelude version
+ourCatMaybes :: [Maybe a] -> [a]
+ourCatMaybes [] = []
+ourCatMaybes (Nothing : xs) = ourCatMaybes xs
+ourCatMaybes (Just x : xs) = x : ourCatMaybes xs
+
+-- | Extract lock information from a lock entry
+extractLockInfo :: (ResourceId, ResourceLock) -> Maybe (ResourceId, EffectId)
+extractLockInfo (resId, lock) = 
+  case owner lock of
+    Just ownerId -> Just (resId, ownerId)
+    Nothing -> Nothing 

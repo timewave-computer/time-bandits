@@ -19,6 +19,7 @@ module Core.Error
   , ResourceError(..)
   , TimelineError(..)
   , NetworkError(..)
+  , AppError(..)
   ) where
 
 import Data.Text (Text)
@@ -79,4 +80,15 @@ data NetworkError
   | ProtocolError Text         -- ^ Protocol violation
   | AuthenticationError Text   -- ^ Authentication failure
   | SerializationError Text    -- ^ Error serializing/deserializing data
+  deriving (Show, Eq, Generic)
+
+-- | Application-level errors that combine all error types
+data AppError
+  = SystemErr SystemError         -- ^ System-level error
+  | DefinitionErr DefinitionError -- ^ Definition error
+  | ExecutionErr ExecutionError   -- ^ Execution error
+  | ResourceErr ResourceError     -- ^ Resource error
+  | TimelineErr TimelineError     -- ^ Timeline error
+  | NetworkErr NetworkError       -- ^ Network error
+  | GenericErr Text               -- ^ Generic error with message
   deriving (Show, Eq, Generic) 

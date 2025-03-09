@@ -37,7 +37,9 @@ import Control.Exception (try, catch, SomeException)
 import Control.Monad (forM, filterM, when, unless, void)
 import Data.Aeson (Value(..), Object, (.=), object, fromJSON, Result(..))
 import qualified Data.Aeson as Aeson
-import Data.List (find)
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Aeson.Key as Key
+import Data.List (find, foldl)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
@@ -52,12 +54,24 @@ import System.IO (hPutStrLn, stderr)
 
 -- Import from TimeBandits modules
 import Core.FactObservation.Rules
+import qualified Core.FactObservation.Rules as Rules
 import Core.FactObservation.TOMLParser
 import Core.FactObservation.Schema (validateRuleAgainstSchema, validateRuleSetAgainstSchema)
-import Core.Concurrency.Lock (ResourceLock, withLock)
-import qualified Core.Concurrency.Lock as Lock
-import Core.Effect.Log (EffectLog, logInfo, logError, logDebug)
-import qualified Core.Effect.Log as Log
+import Core.Concurrency.ResourceLock (ResourceLock, withResourceLock)
+import qualified Core.Concurrency.ResourceLock as Lock
+import Core.Concurrency.EffectLog (EffectLog, EffectLogError(..))
+import qualified Core.Concurrency.EffectLog as Log
+import qualified Control.Concurrent as Concurrent
+
+-- | Log level for the engine
+data LogLevel = Debug | Info | Warning | ErrorLevel
+  deriving (Eq, Ord, Show)
+
+-- | Logger for the engine
+data Logger = Logger
+  { logLevel :: LogLevel
+  , logHandler :: LogLevel -> Text -> IO ()
+  }
 
 -- | Configuration for the rule engine
 data EngineConfig = EngineConfig
@@ -101,12 +115,24 @@ data FactResult = FactResult
   , factConfidence  :: Double       -- ^ Confidence level (0.0-1.0)
   } deriving (Show, Eq)
 
+-- | Generic lock type for thread-safe access to values
+data GenericLock a = GenericLock (Concurrent.MVar (a, Maybe Text))
+
 -- | The rule engine
 data RuleEngine = RuleEngine
   { engineConfig    :: EngineConfig       -- ^ Engine configuration
-  , engineRules     :: ResourceLock RuleSet  -- ^ Thread-safe access to rules
-  , engineLogger    :: EffectLog          -- ^ Logger for engine events
+  , engineRules     :: GenericLock RuleSet  -- ^ Thread-safe access to rules
+  , engineLogger    :: Logger          -- ^ Logger for engine events
   }
+
+-- | Convert text to log level
+textToLogLevel :: Text -> LogLevel
+textToLogLevel t = case T.toLower t of
+  "debug"   -> Debug
+  "info"    -> Info
+  "warning" -> Warning
+  "error"   -> ErrorLevel
+  _         -> ErrorLevel  -- Default to error level for unknown values
 
 -- | Create a new rule engine with the given configuration
 createEngine :: EngineConfig -> IO RuleEngine
@@ -116,10 +142,11 @@ createEngine config = do
   createDirectoryIfMissing True (configFactsDirectory config)
   
   -- Create a logger
-  logger <- Log.createLogger (configLogLevel config)
+  let logLevel = textToLogLevel (configLogLevel config)
+  let logger = createLogger logLevel
   
   -- Create an empty rule set with a lock
-  rulesLock <- Lock.createLock $ RuleSet [] Map.empty
+  rulesLock <- createGenericLock $ RuleSet [] Map.empty
   
   -- Create the engine
   let engine = RuleEngine
@@ -153,21 +180,24 @@ loadRules engine filePath = do
     Right ruleSet -> do
       -- Validate the rule set if enabled
       if validate
-        then case validateRuleSetAgainstSchema ruleSet of
-          Left valErr -> do
-            let errMsg = "Rule validation failed: " <> valErr
-            logError logger errMsg
-            return $ Left $ RuleValidationError errMsg
-            
-          Right () -> do
-            -- Update the engine's rules
-            withLock (engineRules engine) $ \currentRules -> do
-              let updatedRules = mergeRuleSets currentRules ruleSet
-              logInfo logger $ "Loaded " <> T.pack (show (length $ rules ruleSet)) <> " rules"
-              return (updatedRules, Right updatedRules)
+        then do
+          -- Convert RuleSet to Value for validation
+          let ruleSetValue = Aeson.toJSON ruleSet
+          case validateRuleSetAgainstSchema ruleSetValue of
+            Left valErr -> do
+              let errMsg = "Rule validation failed: " <> valErr
+              logError logger errMsg
+              return $ Left $ RuleValidationError errMsg
+              
+            Right _validationMsgs -> do
+              -- Update the engine's rules
+              withGenericLock (engineRules engine) $ \currentRules -> do
+                let updatedRules = mergeRuleSets currentRules ruleSet
+                logInfo logger $ "Loaded " <> T.pack (show (length $ rules ruleSet)) <> " rules"
+                return (updatedRules, Right updatedRules)
         else do
           -- Update without validation
-          withLock (engineRules engine) $ \currentRules -> do
+          withGenericLock (engineRules engine) $ \currentRules -> do
             let updatedRules = mergeRuleSets currentRules ruleSet
             logInfo logger $ "Loaded " <> T.pack (show (length $ rules ruleSet)) <> " rules"
             return (updatedRules, Right updatedRules)
@@ -205,7 +235,7 @@ loadRulesFromDirectory engine dirPath = do
           let finalRuleSet = foldl mergeRuleSets (RuleSet [] Map.empty) ruleSets
           
           -- Update the engine's rules
-          withLock (engineRules engine) $ \_ -> do
+          withGenericLock (engineRules engine) $ \_ -> do
             logInfo logger $ "Loaded " <> T.pack (show (length $ rules finalRuleSet)) <> " rules from " <> T.pack (show (length tomlFiles)) <> " files"
             return (finalRuleSet, Right finalRuleSet)
 
@@ -213,7 +243,7 @@ loadRulesFromDirectory engine dirPath = do
 evaluateData :: RuleEngine -> Value -> IO [Either EngineError FactResult]
 evaluateData engine inputData = do
   -- Get the current rule set
-  currentRuleSet <- Lock.readLock (engineRules engine)
+  currentRuleSet <- readGenericLock (engineRules engine)
   
   -- Filter for enabled rules
   let enabledRules = filter enabled (rules currentRuleSet)
@@ -261,13 +291,18 @@ evaluateDataWithRule engine rule inputData = do
               
             Right proofValue -> do
               -- Generate the fact
-              factResult <- generateFactWithProof rule extractedValue proofValue
+              factResultEither <- generateFactWithProof rule extractedValue proofValue
               
-              -- Store the fact
-              storeResult <- storeFact engine factResult
-              case storeResult of
-                Left err -> return $ Left err
-                Right () -> return $ Right factResult
+              case factResultEither of
+                Left genErr -> 
+                  return $ Left genErr
+                  
+                Right factResult -> do
+                  -- Store the fact
+                  storeResult <- storeFact engine factResult
+                  case storeResult of
+                    Left err -> return $ Left err
+                    Right () -> return $ Right factResult
               
         Right False -> do
           -- Conditions not met
@@ -297,7 +332,7 @@ generateFactWithProof rule extractedData proofData = do
   -- Create the fact result
   let result = FactResult
         { factRuleId = ruleId rule
-        , factType = factType rule
+        , factType = Rules.factType rule
         , factData = extractedData
         , factProof = proofData
         , factTimestamp = now
@@ -315,8 +350,9 @@ storeFact engine factResult = do
   
   -- Create a filename based on the fact type and timestamp
   timestamp <- formatTimeString (factTimestamp factResult)
-  let filename = factsDir </> T.unpack (factType' <> "-" <> factRuleId factResult <> "-" <> timestamp <> ".json")
-      factType' = case factType factResult of
+  let FactResult{factType=ft} = factResult  -- using pattern matching
+      filename = factsDir </> T.unpack (factType' <> "-" <> factRuleId factResult <> "-" <> timestamp <> ".json")
+      factType' = case ft of
         CustomFact name -> name
         other -> T.pack $ show other
   
@@ -353,7 +389,7 @@ extractData PathExpression{..} inputData = do
   case inputData of
     Object obj -> do
       -- Try to find the source in the object
-      case Aeson.lookup source obj of
+      case KeyMap.lookup (Key.fromText source) obj of
         Nothing -> return $ Left $ "Source '" <> source <> "' not found in input data"
         Just sourceData -> do
           -- Try to find the selector in the source data
@@ -370,7 +406,7 @@ extractBySelector selector value =
     [] -> Just value
     (key:rest) -> case value of
       Object obj -> do
-        nextValue <- Aeson.lookup key obj
+        nextValue <- KeyMap.lookup (Key.fromText key) obj
         extractBySelector (T.intercalate "." rest) nextValue
       _ -> Nothing
 
@@ -447,13 +483,14 @@ toNumber _ = Nothing
 generateProof :: ProofType -> Value -> Value -> IO (Either Text (Maybe Value))
 generateProof NoProof _ _ = return $ Right Nothing
 generateProof proofType extractedData inputData = do
-  -- This is a simplified implementation
-  -- In a real system, this would generate actual cryptographic proofs
+  -- Get the current time
+  currentTime <- getCurrentTime
+  let formattedTime = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" currentTime
   
-  -- For now, we'll just create a simple proof object
+  -- Create a simple proof object
   let proofObj = object
-        [ "type" .= show proofType
-        , "timestamp" .= formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" =<< getCurrentTime
+        [ "type" .= (T.pack (show proofType) :: Text)
+        , "timestamp" .= formattedTime
         , "data_hash" .= ("hash_placeholder" :: Text)
         ]
   
@@ -491,4 +528,66 @@ factToJson FactResult{..} = object
   , "timestamp" .= formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" factTimestamp
   , "source" .= factSource
   , "confidence" .= factConfidence
-  ] 
+  ]
+
+-- | Create a logger with the specified log level
+createLogger :: LogLevel -> Logger
+createLogger logLevel = Logger
+  { logLevel = logLevel
+  , logHandler = defaultLogHandler
+  }
+
+-- | Default log handler that writes to stderr
+defaultLogHandler :: LogLevel -> Text -> IO ()
+defaultLogHandler level msg = do
+  timestamp <- getCurrentTime
+  let formattedTime = T.pack $ formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" timestamp
+  let logEntry = formattedTime <> " [" <> showLogLevel level <> "] " <> msg
+  TIO.hPutStrLn stderr logEntry
+
+-- | Show log level as text
+showLogLevel :: LogLevel -> Text
+showLogLevel Debug = "DEBUG"
+showLogLevel Info = "INFO"
+showLogLevel Warning = "WARNING"
+showLogLevel ErrorLevel = "ERROR"
+
+-- | Create a lock for a value
+createGenericLock :: a -> IO (GenericLock a)
+createGenericLock value = do
+  mvar <- Concurrent.newMVar (value, Nothing)
+  return $ GenericLock mvar 
+
+-- | Read the value from a lock without acquiring the lock
+readGenericLock :: GenericLock a -> IO a
+readGenericLock (GenericLock mvar) = do
+  (value, _) <- Concurrent.readMVar mvar
+  return value
+
+-- | Perform an action with a lock, returning both the result and the new value
+withGenericLock :: GenericLock a -> (a -> IO (a, b)) -> IO b
+withGenericLock (GenericLock mvar) action = 
+  Concurrent.modifyMVar mvar $ \(value, owner) -> do
+    (newValue, result) <- action value
+    return ((newValue, owner), result) 
+
+-- | Log an informational message
+logInfo :: Logger -> Text -> IO ()
+logInfo logger msg =
+  if logLevel logger >= Info
+    then (logHandler logger) Info msg
+    else return ()
+
+-- | Log a debug message
+logDebug :: Logger -> Text -> IO ()
+logDebug logger msg =
+  if logLevel logger >= Debug
+    then (logHandler logger) Debug msg
+    else return ()
+
+-- | Log an error message
+logError :: Logger -> Text -> IO ()
+logError logger msg =
+  if logLevel logger >= ErrorLevel
+    then (logHandler logger) ErrorLevel msg
+    else return () 

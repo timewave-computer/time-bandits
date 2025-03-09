@@ -240,17 +240,6 @@ Safe state requires:
 
 ---
 
-# Simulation Environment
-
-- Time Bandits supports:
-    - **In-memory mode:** All actors in a single process.
-    - **Local multi-process mode:** Actors in separate processes on the same machine.
-    - **Geo-distributed mode:** Actors on remote machines.
-- All modes use the **same program logic and effect pipeline**.
-- All modes write the **same unified logs** for replay.
-
----
-
 # Concurrency Model
 
 ## System-Level Concurrency
@@ -315,3 +304,4 @@ Safe state requires:
 | withdraw | Withdraw asset from account. |
 | transfer | Transfer asset to another program. |
 | queryBalance | Query per-timeline balances. |
+

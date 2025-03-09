@@ -27,6 +27,7 @@ module Core.Utils (
   -- ** Key Management
   derivePubKeyFromPrivKey,
   generateSecureEd25519KeyPair,
+  signMessage,
   
   -- ** Hashing Operations
   computeContentHash,
@@ -38,6 +39,7 @@ module Core.Utils (
   
   -- ** Event Validation
   verifyEventSignature,
+  localVerifySignature,
   
   -- ** Timeline Constants
   rootTimelineHash,
@@ -60,16 +62,17 @@ import Data.Serialize (Serialize, encode)
 import Data.Time.Clock (UTCTime)
 import Polysemy
 import Polysemy.Error (Error, throw)
-import Core (
-  ActorHash,
-  EntityHash (..),
-  Hash (..),
-  LamportTime,
-  PrivKey (..),
-  PubKey (..),
-  TimelineHash,
-  Signature(..),
- )
+import Core
+  ( ActorHash,
+    EntityHash(..),
+    Hash(..),
+    LamportTime,
+    PrivKey (..),
+    PubKey (..),
+    TimelineHash,
+    Signature(..),
+  )
+import Core.Types (AppError(..), ActorInfo)
 import Core.Common (Actor)
 import Core.Types (
   EventContent,
@@ -77,7 +80,6 @@ import Core.Types (
   LogEntry (..),
   AuthenticatedMessage (..),
   ContentAddressedMessage (..),
-  AppError(..),
   CryptoErrorType(..),
  )
 import Core.Core (computeMessageHash)
@@ -210,8 +212,8 @@ createLogEntry content meta prevHash contentHash =
 createAuthenticatedMessage ::
   ( Member (Error AppError) r, Serialize a
   ) =>
-  PubKey ->
-  PubKey ->
+  ActorInfo ->
+  Maybe ActorHash ->
   PrivKey ->
   a ->
   Sem r (AuthenticatedMessage ByteString)
@@ -221,7 +223,7 @@ createAuthenticatedMessage sender destination privKey content = do
   case signMessage privKey contentBytes of
     Left err -> throw $ CryptoError $ SigningError err
     Right signature -> do
-      let payload = ContentAddressedMessage msgHash content
+      let payload = ContentAddressedMessage msgHash contentBytes
       pure $ AuthenticatedMessage msgHash sender destination payload signature
 
 -- | Verify a message's signature using its content and signature
@@ -233,8 +235,7 @@ verifyMessageSignatureWithKey ::
   ByteString -> 
   Signature -> 
   Bool
-verifyMessageSignatureWithKey pubKey content signature =
-  localVerifySignature pubKey content signature 
+verifyMessageSignatureWithKey = localVerifySignature
 
 -- | Helper function to verify a message signature
 verifyMessageSignature ::

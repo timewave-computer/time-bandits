@@ -42,7 +42,7 @@ module Core.Schema
 
 import Control.Exception (Exception)
 import Control.Monad (forM, unless, when)
-import Data.Aeson (FromJSON, ToJSON, Value(..), Object)
+import Data.Aeson (FromJSON, ToJSON, Value(..), Object, toJSON, object)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -51,15 +51,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
-import Data.Version (Version, parseVersion, showVersion)
+import Data.Version (Version, parseVersion, showVersion, makeVersion)
 import Text.ParserCombinators.ReadP (readP_to_S)
-import Data.List (find)
-import Data.Version.Extra (mkVersion)
+import Data.List (find, foldl)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Core.Common (Hash, EntityHash)
-import Core.Types (ProgramId)
+import Core.ProgramId (ProgramId)
 
 -- | Protocol version type
 type ProtocolVersion = Version
@@ -227,11 +226,13 @@ applySchemaEvolution oldSchema newSchema state = do
     findField name = find (\f -> fieldName f == name)
     
     -- Apply the actual state evolution
+    evolveState :: Schema -> Schema -> Map Text ProgramState -> Map Text ProgramState
     evolveState old new stateMap = 
       -- For each program state, apply schema evolution
       Map.map (evolveStateFields old new) stateMap
     
     -- Evolve fields in a single program state
+    evolveStateFields :: Schema -> Schema -> ProgramState -> ProgramState
     evolveStateFields old new state = 
       -- Remove fields not in new schema if allowed
       let trimmedState = if allowRemoveUnusedFields (evolutionRules old)
@@ -242,22 +243,25 @@ applySchemaEvolution oldSchema newSchema state = do
       in addNewFields old new trimmedState
     
     -- Remove fields not present in new schema
+    removeUnusedFields :: Schema -> Schema -> ProgramState -> ProgramState
     removeUnusedFields old new state =
       let newFieldNames = Set.fromList $ map fieldName (fields new)
           shouldKeep k _ = k `Set.member` newFieldNames
       in Map.filterWithKey shouldKeep state
     
     -- Add new fields with default values
+    addNewFields :: Schema -> Schema -> ProgramState -> ProgramState
     addNewFields old new state =
       let oldFieldNames = Set.fromList $ map fieldName (fields old)
           newFields = filter (\f -> fieldName f `Set.notMember` oldFieldNames) (fields new)
           
           -- Add each new field with its default value
+          addField :: ProgramState -> SchemaField -> ProgramState
           addField s field = 
             if isOptional field
               then Map.insert (fieldName field) (toJSON Null) s
               else Map.insert (fieldName field) (defaultForType (fieldType field)) s
-      in foldr addField state newFields
+      in foldl addField state newFields
     
     -- Generate default value for a field type
     defaultForType :: FieldType -> Value
@@ -268,7 +272,7 @@ applySchemaEvolution oldSchema newSchema state = do
       FieldBool -> Bool False
       FieldHash -> Null
       FieldEntityHash -> Null
-      FieldMap _ _ -> Object Map.empty
+      FieldMap _ _ -> object []  -- Use object [] instead of Object Map.empty
       FieldList _ -> Array V.empty
       FieldCustom _ -> Null
 
@@ -288,8 +292,8 @@ checkSchemaCompatibility schema protocolVersion =
       else Right ()
   where
     -- These would come from actual configuration in real implementation
-    minimumSupportedProtocol = mkVersion [1, 0, 0]
-    maximumSupportedProtocol = mkVersion [3, 0, 0]
+    minimumSupportedProtocol = makeVersion [1, 0, 0]
+    maximumSupportedProtocol = makeVersion [3, 0, 0]
 
 -- | Check if a program is in a safe state for evolution
 checkSafeState :: Program -> IO SafeStateStatus
@@ -334,4 +338,10 @@ textToVersion :: Text -> Maybe Version
 textToVersion text =
   case readP_to_S parseVersion (T.unpack text) of
     [] -> Nothing
-    xs -> Just $ fst $ last xs 
+    -- Use a safe way to get the last element
+    xs -> safeLast xs >>= \(v, _) -> Just v
+  where
+    -- Safe last function
+    safeLast [] = Nothing
+    safeLast [x] = Just x
+    safeLast (_:xs) = safeLast xs

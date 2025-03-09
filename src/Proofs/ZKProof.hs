@@ -85,7 +85,7 @@ import Programs.ProgramEffect
   , Guard(..)
   , GuardedEffect(..)
   )
-import Core.TimeMap
+import Programs.Types
   ( TimeMap
   )
 
@@ -158,18 +158,18 @@ generateZKProof input = do
       mockProofData = convert $ hashWith SHA256 inputBytes
       
       -- Add a signature to indicate this is a mock
-      signedProofData = BS.append mockProofData (BS.pack "MOCK_ZK_PROOF")
+      signedProofData = BS.append mockProofData (BS8.pack "MOCK_ZK_PROOF")
       
       -- Metadata contains information about what is being proven
       metadata = case input of
         GuardInput guard effect _ -> 
-          BS.append (BS.pack "Guard: ") (encode guard)
+          BS8.append (BS8.pack "Guard: ") (encode guard)
         TimeMapInput timeMap -> 
-          BS.pack "TimeMap verification"
+          BS8.pack "TimeMap verification"
         OwnershipInput resource addr -> 
-          BS.append (BS.pack "Ownership: ") (encode addr)
+          BS8.append (BS8.pack "Ownership: ") (encode addr)
         CompositeInput _ -> 
-          BS.pack "Composite proof"
+          BS8.pack "Composite proof"
   
   -- Add small delay to simulate computation time
   embed $ threadDelay 10000  -- 10ms
@@ -242,7 +242,7 @@ verifyZKProof proof input = do
           
           -- Create the expected proof data
           expectedHash = convert $ hashWith SHA256 inputBytes
-          expectedSignature = BS.pack "MOCK_ZK_PROOF"
+          expectedSignature = BS8.pack "MOCK_ZK_PROOF"
           expectedProofData = BS.append expectedHash expectedSignature
           
           -- Get the actual proof data
@@ -361,7 +361,7 @@ splitProof proof n = do
       pure [ZKProof 
               { proofData = dataPart
               , proofType = componentType
-              , proofMetadata = BS.pack $ "Component " ++ show i
+              , proofMetadata = BS8.pack $ "Component " ++ show i
               } 
            | (i, (dataPart, componentType)) <- zip [1..] $ zip dataParts componentTypes]
 

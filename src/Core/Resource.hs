@@ -56,27 +56,40 @@ module Core.Resource
   , ResourceEventType(..)
   , ResourceCapability(..)
 
+  -- * Serialization
+  , resourceToByteString
+
   -- * Adapter functions for backward compatibility with old Effects interface
   , adaptCreateResource
   , adaptTransferResource
   , adaptConsumeResource
   , adaptVerifyResource
+
+  -- * Extract ResourceId from Resource
+  , getResourceId
   ) where
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
+import qualified Data.Serialize as S
 import Data.Text (Text)
-import Data.Text qualified as Text
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw)
-import Control.Concurrent (MVar, newMVar, readMVar, modifyMVar, modifyMVar_, takeMVar, putMVar)
+import Control.Concurrent qualified as Concurrent
 import Control.Monad (when, forM)
+import Data.Time (UTCTime)
+import System.IO.Unsafe (unsafePerformIO)
+import Data.Word (Word8)
 
 -- Import from TimeBandits modules
 import Core.Core (Hash(..), EntityHash(..))
+import Core.ResourceId (ResourceId)
+import qualified Core.ResourceId as ResourceId
 import Core.Types
   ( ResourceHash
   , ResourceEvent(..)
@@ -87,17 +100,27 @@ import Core.Types
   , ResourceErrorType(..)
   , ActorHash
   , TimelineHash
-  , EffectId, Effect, EffectType
+  , EffectId, Effect
   )
+import Types.EffectTypes (EffectType)
 
-import Core.Serialize ()  -- Import Serialize instances
+-- Import Serialize instances from Core.Serialize to avoid ambiguity with Types.EffectBase
+import Core.Serialize ()
 
 -- Import the new EffectLog module
 import Core.Concurrency.EffectLog
+  ( createEffectLog
+  , appendEffect
+  , getEffectHistory
+  , EffectLog
+  , EffectEntry
+  , EffectLogError
+  )
+import qualified Core.Concurrency.EffectLog as EffectLog
 import Core.Concurrency.ResourceLock
 
--- | Unique identifier for a Resource
-type ResourceId = EntityHash Resource
+-- | Unique identifier for a Resource (using Text for simplicity)
+-- type ResourceId = Text
 
 -- | Token identifier
 type TokenId = ByteString
@@ -123,8 +146,34 @@ data Resource
   | SyntheticInternalMarker Text
   deriving stock (Eq, Show, Generic)
 
--- Standalone deriving instance
-deriving instance Serialize Resource
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize Resource where
+  put (TokenBalanceResource tid addr amt) = do
+    S.put (0 :: Word8)  -- Tag for TokenBalanceResource
+    S.put tid
+    S.put addr
+    S.put amt
+  put (EscrowReceiptResource eid) = do
+    S.put (1 :: Word8)  -- Tag for EscrowReceiptResource
+    S.put eid
+  put (ContractWitnessResource cid bs) = do
+    S.put (2 :: Word8)  -- Tag for ContractWitnessResource
+    S.put cid
+    S.put bs
+  put (SyntheticInternalMarker txt) = do
+    S.put (3 :: Word8)  -- Tag for SyntheticInternalMarker
+    S.put (TE.encodeUtf8 txt)
+    
+  get = do
+    tag <- S.get :: S.Get Word8
+    case tag of
+      0 -> TokenBalanceResource <$> S.get <*> S.get <*> S.get
+      1 -> EscrowReceiptResource <$> S.get
+      2 -> ContractWitnessResource <$> S.get <*> S.get
+      3 -> do
+        bs <- S.get
+        return $ SyntheticInternalMarker (TE.decodeUtf8 bs)
+      _ -> fail "Invalid Resource tag"
 
 -- | Status of an escrowed resource
 data EscrowStatus
@@ -145,8 +194,32 @@ data ClaimCondition
   | AlwaysAllowed                         -- Can be claimed without condition
   deriving stock (Eq, Show, Generic)
 
--- Standalone deriving instance
-deriving instance Serialize ClaimCondition
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize ClaimCondition where
+  put (TimeBasedClaim time) = do
+    S.put (0 :: Word8)  -- Tag for TimeBasedClaim
+    S.put time
+  put (SignatureRequiredClaim bs) = do
+    S.put (1 :: Word8)  -- Tag for SignatureRequiredClaim
+    S.put bs
+  put (PredicateBasedClaim txt bs) = do
+    S.put (2 :: Word8)  -- Tag for PredicateBasedClaim
+    S.put (TE.encodeUtf8 txt)
+    S.put bs
+  put AlwaysAllowed = 
+    S.put (3 :: Word8)  -- Tag for AlwaysAllowed
+    
+  get = do
+    tag <- S.get :: S.Get Word8
+    case tag of
+      0 -> TimeBasedClaim <$> S.get
+      1 -> SignatureRequiredClaim <$> S.get
+      2 -> do
+        bs <- S.get
+        predBs <- S.get
+        return $ PredicateBasedClaim (TE.decodeUtf8 bs) predBs
+      3 -> return AlwaysAllowed
+      _ -> fail "Invalid ClaimCondition tag"
 
 -- | Escrow represents a resource held in escrow
 data Escrow = Escrow
@@ -165,20 +238,20 @@ deriving instance Serialize Escrow
 
 -- | Resource effect log map (resource ID -> effect log)
 {-# NOINLINE resourceEffectLogs #-}
-resourceEffectLogs :: MVar (Map.Map ResourceId EffectLog)
-resourceEffectLogs = unsafePerformIO $ newMVar Map.empty
+resourceEffectLogs :: Concurrent.MVar (Map.Map ResourceId EffectLog)
+resourceEffectLogs = unsafePerformIO $ Concurrent.newMVar Map.empty
 
 -- | Get or create the effect log for a resource
 getResourceEffectLog :: ResourceId -> IO EffectLog
 getResourceEffectLog resId = do
-  logs <- readMVar resourceEffectLogs
+  logs <- Concurrent.readMVar resourceEffectLogs
   case Map.lookup resId logs of
     Just log -> return log
     Nothing -> do
       -- Create a new log
       newLog <- createEffectLog resId
       -- Add it to the map
-      modifyMVar_ resourceEffectLogs $ \logs' ->
+      Concurrent.modifyMVar_ resourceEffectLogs $ \logs' ->
         return $ Map.insert resId newLog logs'
       return newLog
 
@@ -197,12 +270,18 @@ applyEffectToResource resId effect = do
 
 -- | Get the effect history for a resource
 getResourceEffectHistory :: ResourceId -> Maybe TimeRange -> IO [EffectEntry]
-getResourceEffectHistory resId timeRange = do
+getResourceEffectHistory resId _ = do
   -- Get the resource's effect log
   log <- getResourceEffectLog resId
   
-  -- Get the effect history
-  getEffectHistory log timeRange
+  -- Get the effect history without time range filtering for now
+  getEffectHistory log Nothing
+
+-- | TimeRange for querying effects
+data TimeRange = TimeRange
+  { startTime :: UTCTime  -- ^ Start time (inclusive)
+  , endTime   :: UTCTime  -- ^ End time (inclusive)
+  } deriving (Eq, Show)
 
 -- | Create a new resource
 createResource :: 
@@ -212,7 +291,9 @@ createResource ::
 createResource resource = do
   -- In a real implementation, this would create a resource in the system
   -- For now, just return a dummy resource ID
-  pure $ EntityHash $ Hash "dummy-resource-id"
+  case ResourceId.fromText "dummy-resource-id" of
+    Right resId -> pure resId
+    Left _ -> error "Failed to create resource ID"
 
 -- | Transfer a resource to a new owner
 transferResource ::
@@ -332,7 +413,7 @@ adaptCreateResource ::
   Sem r (Either AppError Resource)
 adaptCreateResource metadata owner timeline = do
   -- Create a resource based on metadata and owner
-  let resource = SyntheticInternalMarker (Text.pack $ BS.unpack metadata)
+  let resource = SyntheticInternalMarker (T.pack $ BS.unpack metadata)
   -- In a real implementation, this would create a resource appropriate for the metadata
   rid <- createResource resource
   -- Wrap the result with Right since the old interface returned Either
@@ -348,8 +429,11 @@ adaptTransferResource ::
 adaptTransferResource resource newOwner timeline = do
   -- Convert ActorHash to Address (implementation detail)
   let newOwnerAddr = BS.pack $ show $ unEntityHash newOwner
+      dummyResId = case ResourceId.fromText "dummy-resource-id" of
+        Right resId -> resId
+        Left _ -> error "Failed to create resource ID"
   -- Transfer the resource
-  rid <- transferResource (EntityHash $ Hash "dummy-resource-id") newOwnerAddr
+  rid <- transferResource dummyResId newOwnerAddr
   -- Return the resource with Right
   pure $ Right resource
 
@@ -360,7 +444,10 @@ adaptConsumeResource ::
   Sem r (Either AppError Resource)
 adaptConsumeResource resource = do
   -- Consume the resource
-  consumeResource (EntityHash $ Hash "dummy-resource-id")
+  let dummyResId = case ResourceId.fromText "dummy-resource-id" of
+        Right resId -> resId
+        Left _ -> error "Failed to create resource ID"
+  consumeResource dummyResId
   -- Return the resource with Right
   pure $ Right resource
 
@@ -371,6 +458,32 @@ adaptVerifyResource ::
   Sem r (Either AppError Bool)
 adaptVerifyResource resource = do
   -- Verify the resource
-  result <- verifyResourceOwnership (EntityHash $ Hash "dummy-resource-id") BS.empty
+  let dummyResId = case ResourceId.fromText "dummy-resource-id" of
+        Right resId -> resId
+        Left _ -> error "Failed to create resource ID"
+  result <- verifyResourceOwnership dummyResId BS.empty
   -- Return the result with Right
-  pure $ Right result 
+  pure $ Right result
+
+-- | Convert a resource to a ByteString for serialization/hashing
+resourceToByteString :: Resource -> ByteString
+resourceToByteString = S.encode 
+
+-- | Extract the ResourceId from a Resource
+getResourceId :: Resource -> ResourceId
+getResourceId (TokenBalanceResource tid _ _) = 
+  case ResourceId.fromByteString (TE.encodeUtf8 $ T.pack $ show tid) of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID"
+getResourceId (EscrowReceiptResource eid) = 
+  case ResourceId.fromByteString (TE.encodeUtf8 $ T.pack $ show eid) of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID"
+getResourceId (ContractWitnessResource cid _) = 
+  case ResourceId.fromByteString (TE.encodeUtf8 $ T.pack $ show cid) of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID"
+getResourceId (SyntheticInternalMarker txt) = 
+  case ResourceId.fromText txt of
+    Right rid -> rid
+    Left _    -> error "Invalid resource ID" 

@@ -31,13 +31,17 @@ import Data.Word (Word8)
 import Data.Bits (xor)
 import Crypto.Hash (hash, SHA256, Digest)
 import qualified Crypto.Hash as Hash
+import qualified Data.ByteString.Base16 as Base16
 
 -- | Compute a SHA-256 hash of a ByteString
 computeHash :: ByteString -> ByteString
 computeHash input =
   let digest = hash input :: Digest SHA256
-      hashBytes = Hash.digestToHexByteString digest
-  in hashBytes
+      -- Use Show instance to get the hex representation and convert to ByteString
+      hashStr = C8.pack $ show digest
+      -- Alternatively, we could use Base16 encoding if available
+      -- hashBytes = Base16.encode $ BS.pack $ Hash.digestToByteString digest
+  in hashStr
 
 -- | Compute a node score for a key using rendezvous hashing
 computeNodeScore :: ByteString -> ByteString -> Double

@@ -10,18 +10,11 @@ module Core
   , PubKey(..)
   , PrivKey(..)
   , Signature(..)
-  , SignatureError(..)
-  , VerificationError(..)
-  , AssetType(..)
-  , AssetAmount(..)
-  , Asset(..)
-  , AddressType(..)
-  , Core.Common.Address(..)
   , SimulationMode(..)
   , computeHash
-  , computeSha256
   , generateEntityHash
-  , Core.Common.Actor
+  , computeNodeScore
+  , computeMessageHash
     
     -- * Resource Management from Core.Resource and Core.ResourceId
   , Core.Resource.Resource(..)
@@ -61,6 +54,12 @@ module Core
   , ActorId
   , ProgramId
   , AccountProgram(..)
+  
+  -- We're temporarily commenting out these exports since the modules don't exist
+  -- -- * Events and Messages
+  -- , Event(..)
+  -- , Message(..)
+  -- , Actor(..)
   ) where
 
 -- Import all Core submodules
@@ -81,3 +80,17 @@ import Core.Timeline
 import Core.TimelineDescriptor
 import Core.TimelineId
 import Core.Types
+import Core.Hashing (computeNodeScore)
+import Core.Core (computeMessageHash)
+-- Commenting out these imports as they don't exist in the codebase
+-- import Core.Event (Event(..))
+-- import Core.Message (Message(..))
+-- import Core.Actor (Actor(..))
+
+-- Additional imports for utility functions
+import Data.Serialize (Serialize, encode)
+
+-- | Generate a hash for an entity of a specific type
+-- This is a utility function that wraps computeHash
+generateEntityHash :: Serialize a => a -> EntityHash s
+generateEntityHash a = EntityHash $ computeHash $ encode a

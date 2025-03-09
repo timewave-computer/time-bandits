@@ -53,10 +53,12 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
-
+import qualified Data.Aeson as JSON
+import Core.Effect (Effect, EffectId)
+import Core.ActorId (ActorId)
+import Programs.ProgramTypes (ProgramId)
 import Core.Common (Hash, EntityHash, TimelineHash)
-import Core.Effect (Effect, EffectID)
-import Core.Types (ActorId, ProgramId)
+import qualified Data.ByteString.Base64 as B64
 
 -- | The TECL Abstract Syntax Tree
 data TECLAST = TECLAST
@@ -331,6 +333,6 @@ translateToEffects ast =
 data ProposedEffect = ProposedEffect
   { proposedType :: Text
   , proposedPayload :: Map Text Text
-  , proposedParents :: [EffectID]
+  , proposedParents :: [Text]  -- Store parent IDs as Text
   }
   deriving (Show, Eq, Generic, FromJSON, ToJSON) 

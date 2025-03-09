@@ -62,6 +62,8 @@ import Data.Serialize (Serialize)
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime)
 import GHC.Generics (Generic)
+import qualified Data.Text.Encoding as TE
+import qualified Data.Serialize as S
 
 -- Import from Core modules
 import Core.Common (EntityHash, Hash)
@@ -76,7 +78,6 @@ import Types.EffectPayload (EffectPayload(..))
 -- | Direction of a message
 data MessageDirection = Inbound | Outbound
   deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
 
 -- | A message in the account program inbox
 data InboxMessage = InboxMessage
@@ -87,7 +88,23 @@ data InboxMessage = InboxMessage
   , inboxProcessed :: Bool
   }
   deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize InboxMessage where
+  put msg = do
+    S.put (TE.encodeUtf8 $ inboxMessageId msg)
+    S.put (inboxTimestamp msg)
+    S.put (inboxSender msg)
+    S.put (inboxContents msg)
+    S.put (inboxProcessed msg)
+    
+  get = do
+    msgId <- TE.decodeUtf8 <$> S.get
+    timestamp <- S.get
+    sender <- S.get
+    contents <- S.get
+    processed <- S.get
+    return $ InboxMessage msgId timestamp sender contents processed
 
 -- | A message in the account program outbox
 data OutboxMessage = OutboxMessage
@@ -98,7 +115,23 @@ data OutboxMessage = OutboxMessage
   , outboxDelivered :: Bool
   }
   deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize OutboxMessage where
+  put msg = do
+    S.put (TE.encodeUtf8 $ outboxMessageId msg)
+    S.put (outboxTimestamp msg)
+    S.put (outboxRecipient msg)
+    S.put (outboxContents msg)
+    S.put (outboxDelivered msg)
+    
+  get = do
+    msgId <- TE.decodeUtf8 <$> S.get
+    timestamp <- S.get
+    recipient <- S.get
+    contents <- S.get
+    delivered <- S.get
+    return $ OutboxMessage msgId timestamp recipient contents delivered
 
 -- | Message types that can be sent through an account program
 data AccountMessage
@@ -135,7 +168,60 @@ data AccountMessage
       , customMessagePayload :: ByteString
       }
   deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize AccountMessage where
+  put (Deposit resId amt target) = do
+    S.put (0 :: Word8)  -- Tag for Deposit
+    S.put resId
+    S.put amt
+    S.put target
+  put (Withdraw resId amt source) = do
+    S.put (1 :: Word8)  -- Tag for Withdraw
+    S.put resId
+    S.put amt
+    S.put source
+  put (Transfer resId amt target) = do
+    S.put (2 :: Word8)  -- Tag for Transfer
+    S.put resId
+    S.put amt
+    S.put target
+  put (Invoke target func args) = do
+    S.put (3 :: Word8)  -- Tag for Invoke
+    S.put target
+    S.put (TE.encodeUtf8 func)
+    S.put args
+  put (ReceiveCallback source payload) = do
+    S.put (4 :: Word8)  -- Tag for ReceiveCallback
+    S.put source
+    S.put payload
+  put (Watch resource condition) = do
+    S.put (5 :: Word8)  -- Tag for Watch
+    S.put resource
+    S.put condition
+  put (CustomMessage msgType payload) = do
+    S.put (6 :: Word8)  -- Tag for CustomMessage
+    S.put (TE.encodeUtf8 msgType)
+    S.put payload
+    
+  get = do
+    tag <- S.get :: S.Get Word8
+    case tag of
+      0 -> Deposit <$> S.get <*> S.get <*> S.get
+      1 -> Withdraw <$> S.get <*> S.get <*> S.get
+      2 -> Transfer <$> S.get <*> S.get <*> S.get
+      3 -> do
+        target <- S.get
+        funcBytes <- S.get
+        args <- S.get
+        return $ Invoke target (TE.decodeUtf8 funcBytes) args
+      4 -> ReceiveCallback <$> S.get <*> S.get
+      5 -> Watch <$> S.get <*> S.get
+      6 -> do
+        typeBytes <- S.get
+        payload <- S.get
+        return $ CustomMessage (TE.decodeUtf8 typeBytes) payload
+      _ -> fail "Invalid AccountMessage tag"
 
 -- | The Account Program is a specialized program that serves as a gateway
 -- for actors to interact with the system
@@ -166,7 +252,48 @@ data AccountProgram = AccountProgram
   , accountCurrentFacts :: FactSnapshot
   }
   deriving (Eq, Show, Generic)
-  deriving anyclass (Serialize)
+
+-- Manual Serialize instance to avoid Text serialization ambiguity
+instance Serialize AccountProgram where
+  put prog = do
+    S.put (accountId prog)
+    S.put (accountProgramId prog)
+    S.put (accountVersion prog)
+    S.put (accountResources prog)
+    S.put (accountEffects prog)
+    S.put (accountRootEffect prog)
+    S.put (accountInbox prog)
+    S.put (accountOutbox prog)
+    S.put (accountPendingMessages prog)
+    S.put (accountAcceptDeposits prog)
+    S.put (accountAllowWithdrawals prog)
+    S.put (accountAllowCalls prog)
+    S.put (accountKnownPrograms prog)
+    S.put (accountLastUpdated prog)
+    S.put (accountCurrentFacts prog)
+    
+  get = do
+    actId <- S.get
+    progId <- S.get
+    ver <- S.get
+    res <- S.get
+    effs <- S.get
+    root <- S.get
+    inbox <- S.get
+    outbox <- S.get
+    pending <- S.get
+    acceptDeposits <- S.get
+    allowWithdrawals <- S.get
+    allowCalls <- S.get
+    knownPrograms <- S.get
+    lastUpdated <- S.get
+    currentFacts <- S.get
+    return $ AccountProgram 
+      actId progId ver 
+      res effs root 
+      inbox outbox pending 
+      acceptDeposits allowWithdrawals allowCalls knownPrograms
+      lastUpdated currentFacts
 
 -- | Create a new account program for an actor
 createAccountProgram :: ActorId -> ProgramId -> UTCTime -> AccountProgram

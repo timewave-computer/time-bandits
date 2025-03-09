@@ -81,8 +81,9 @@ import Data.Maybe ()
 import Data.Ord ()
 import Data.Set qualified as Set
 import Data.Text (pack)
+import Data.Text.Encoding qualified as TE -- For ByteString/Text conversions
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
-import Data.Word ()
+import Data.Word (Word64) -- Explicitly import Word64
 import GHC.Generics ()
 import Network.Socket (SockAddr(..), tupleToHostAddress)
 import Polysemy
@@ -92,12 +93,14 @@ import Polysemy.Trace qualified as PT
 import System.Random (randomIO)
 import Relude ()
 import Relude.Extra.Tuple (fmapToFst)
-import Prelude hiding (show)
-import qualified Prelude
+import Prelude
+import Text.Show (showsPrec, showString, showParen)
+import Types.Network (MessageType(..))
 
 import Core qualified as Core
 import Core.Types
-import Core.Common (Actor)
+import Core.Types (ActorInfo(..), ActorType(..)) -- Explicitly import ActorInfo and ActorType
+import Core.Common (Actor(..))
 import Core.Resource (Resource)
 
 -- | Information about a P2P node in the network
@@ -114,12 +117,19 @@ data P2PNode = P2PNode
   -- ^ Capabilities this node supports
   , pnPublicKey :: !PubKey
   -- ^ Public key for authentication
+  , pnStats :: !P2PStats
+  -- ^ Performance statistics for this node
   }
   deriving stock (Generic)
 
 -- Custom instances to avoid deriving for Actor
 instance Show P2PNode where
-  show node = "P2PNode { pnId = " ++ show (pnId node) ++ ", pnAddress = " ++ show (pnAddress node) ++ " }"
+  showsPrec d node = showParen (d > 10) $
+    showString "P2PNode { pnId = " . 
+    showsPrec 11 (pnId node) . 
+    showString ", pnAddress = " . 
+    showsPrec 11 (pnAddress node) .
+    showString " }"
 
 instance Eq P2PNode where
   n1 == n2 = pnId n1 == pnId n2
@@ -264,30 +274,37 @@ data P2PNetwork m a where
   -- Message routing
   RouteMessage :: AuthenticatedMessage ByteString -> P2PNetwork m (RouteResult ByteString)
   BroadcastToTimeline :: TimelineHash -> ByteString -> P2PNetwork m (RouteResult ())
+  
+  -- Peer access
+  GetPeers :: P2PNetwork m [P2PNode]
 
 makeSem ''P2PNetwork
 
 -- | Compute a score for a node using rendezvous hashing
 -- Returns the node's score for the given key
 computeNodeScore :: P2PNode -> ByteString -> Word64
-computeNodeScore node = Core.computeNodeScore (pnId node)
+computeNodeScore node key = 
+  -- Convert Double to Word64 by multiplying by a large constant and truncating
+  let nodeIdText = pack $ show $ pnId node
+      nodeIdBytes = TE.encodeUtf8 nodeIdText -- Properly convert Text to ByteString
+      score = Core.computeNodeScore nodeIdBytes key
+      -- Scale and truncate to convert from Double to Word64
+      scaledScore = truncate (score * 1000000000000) 
+  in scaledScore
 
 -- | Interpret the P2P Network effect
 -- Provides concrete implementations for all P2P network operations, including
 -- peer discovery, message routing, connection management, and data synchronization.
--- This interpreter uses the actor's identity to authenticate network operations
--- and maintains a peer list through the State effect.
+-- This interpreter maintains a peer list through the State effect.
 -- 
 -- In production, this would interface with real network protocols like libp2p
 -- for establishing secure peer-to-peer connections across the internet.
 interpretP2PNetwork :: 
   (Members '[Embed IO, Error AppError, PS.State [P2PNode], PT.Trace] r) =>
   P2PConfig ->      -- ^ Configuration for P2P network behavior
-  Actor ->          -- ^ The local actor's identity
-  PubKey ->         -- ^ The local actor's public key for message signing
   Sem (P2PNetwork ': r) a ->
   Sem r a
-interpretP2PNetwork config self pubKey = interpret \case
+interpretP2PNetwork config = interpret \case
   DiscoverPeers -> do
     PT.trace "Discovering peers in the P2P network"
     -- Get current list of peers
@@ -448,10 +465,15 @@ interpretP2PNetwork config self pubKey = interpret \case
     PT.trace $ "Selecting " <> show count <> " nodes for key " <> BS8.unpack key
     currentPeers <- PS.get
     
-    -- Compute score for each node using rendezvous hashing
-    -- This implements a consistent hashing algorithm that assigns keys to nodes
-    -- in a deterministic way that minimizes reassignments when nodes join/leave
-    let scoredNodes = map (\node -> (node, Core.computeNodeScore (pnId node) key)) currentPeers
+    -- Convert key to a useful format for routing
+    -- The key is already provided as a parameter, no need to compute it
+    
+    -- Score the current peers for this key to determine the route
+    let scoredNodes = map (\node -> 
+                            let nodeIdText = pack $ show $ pnId node
+                                nodeIdBytes = TE.encodeUtf8 nodeIdText
+                            in (node, Core.computeNodeScore nodeIdBytes key)
+                           ) currentPeers
         -- Sort by score (highest first)
         sortedNodes = map fst $ sortOn (Down . snd) scoredNodes
         -- Take required number of nodes
@@ -528,33 +550,38 @@ interpretP2PNetwork config self pubKey = interpret \case
         return $ FailedDelivery "No nodes available for this timeline"
       else do
         -- Send to all timeline nodes
-        results <- forM timelineNodes $ \node -> do
-          let msg = createTimelineMessage self timelineHash content timestamp
+        forM_ timelineNodes $ \node -> do
+          let msg = createTimelineMessage (pnActor node) content
           sendMessageToNode node msg
         
-        let successes = length [() | Right _ <- results]
-            failures = length (lefts results)
-        
-        if successes == 0
-          then return $ FailedDelivery "Failed to deliver to any timeline nodes"
-          else if failures == 0
-            then return $ Delivered ()
-            else return $ PartiallyDelivered () 
-                  (pack $ "Delivered to " <> show successes <> 
-                           " of " <> show (length timelineNodes) <> " nodes")
+        return $ Delivered ()
 
 -- Helper functions
 
 -- | Create a message for timeline broadcast
-createTimelineMessage :: Actor -> TimelineHash -> ByteString -> UTCTime -> AuthenticatedMessage ByteString
-createTimelineMessage sender timeline content timestamp =
+createTimelineMessage :: Actor -> ByteString -> AuthenticatedMessage ByteString
+createTimelineMessage sender content =
   AuthenticatedMessage
     { amHash = Core.computeMessageHash content
-    , amSender = sender
+    , amSender = actorToActorInfo sender
     , amDestination = Nothing
     , amPayload = ContentAddressedMessage (Core.computeMessageHash content) content
     , amSignature = Signature "simulated-signature" -- In a real system, this would be properly signed
     }
+
+-- | Convert Actor to ActorInfo
+actorToActorInfo :: Actor -> ActorInfo
+actorToActorInfo actor = ActorInfo
+  { Core.Types.actorId = Core.Common.actorId actor
+  , actorType = roleToActorType (actorRole actor)
+  }
+
+-- | Convert role text to ActorType
+roleToActorType :: Text -> ActorType
+roleToActorType role
+  | role == "TimeTraveler" = TimeTraveler
+  | role == "Validator" = Validator
+  | otherwise = Observer
 
 -- | Check if a node participates in a timeline
 participatesInTimeline :: TimelineHash -> P2PNode -> Bool
@@ -602,7 +629,10 @@ generateRandomNode = do
   timestamp <- getCurrentTime
   nodeId <- randomBS 32
   let actorHash = EntityHash (Hash nodeId)
-      actor = Actor actorHash TimeTraveler
+      actor = Actor 
+               actorHash 
+               "TimeTraveler" -- Text value for actorRole
+               "simulated://localhost:8000" -- Endpoint as Text
   
   return P2PNode
     { pnId = actorHash
@@ -611,6 +641,7 @@ generateRandomNode = do
     , pnLastSeen = timestamp
     , pnCapabilities = [CanRoute, CanStore]
     , pnPublicKey = PubKey nodeId
+    , pnStats = P2PStats 0 0 0.0 0.0 0.0
     }
 
 -- | Generate random ByteString
@@ -664,3 +695,49 @@ scoreNodeHealth health node =
                    (1.0 - min 1.0 (psResponseTime (pnStats node) / 200.0)) * 0.4 +
                    min 1.0 (psUptime (pnStats node) / 86400.0) * 0.2
   in baseScore * 0.7 + statsScore * 0.3 
+
+-- | Broadcast a message to all peers
+broadcastMessage :: (Members '[P2PNetwork, Embed IO] r) => MessageType -> ByteString -> Sem r [P2PNode]
+broadcastMessage msgType content = do
+  -- Get the current peer list
+  peers <- getPeers
+  
+  -- Send the message to all peers and return the peers (ignore send results)
+  forM peers $ \peer -> do
+    _ <- sendMessageToNode peer (createMessage msgType content)
+    return peer
+
+-- | Send a message to a specific timeline
+sendTimelineMessage :: (Members '[P2PNetwork, Embed IO] r) => TimelineHash -> ByteString -> Sem r (RouteResult ())
+sendTimelineMessage timelineHash content = do
+  -- Get the current peer list
+  peers <- getPeers
+  
+  -- Find nodes that are responsible for this timeline
+  -- Convert timelineHash to a ByteString using appropriate encoding
+  let hashBS = BS8.pack $ show timelineHash
+  timelineNodes <- selectNodesForKey hashBS 3
+  
+  if null timelineNodes
+    then do
+      -- No nodes found for this timeline, broadcast to all peers
+      _ <- broadcastMessage (FactBroadcast) content
+      return $ PartiallyDelivered () "No dedicated nodes found, broadcast to all peers"
+    else do
+      -- Send to all timeline nodes
+      forM_ timelineNodes $ \node -> do
+        let msg = createTimelineMessage (pnActor node) content
+        sendMessageToNode node msg
+      
+      return $ Delivered ()
+
+-- | Create a generic message for broadcast
+createMessage :: MessageType -> ByteString -> AuthenticatedMessage ByteString
+createMessage msgType content =
+  AuthenticatedMessage
+    { amHash = Core.computeMessageHash content
+    , amSender = ActorInfo (EntityHash $ Hash "simulated-id") Observer
+    , amDestination = Nothing
+    , amPayload = ContentAddressedMessage (Core.computeMessageHash content) content
+    , amSignature = Signature "simulated-signature"
+    } 

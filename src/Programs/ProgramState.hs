@@ -54,6 +54,9 @@ module Programs.ProgramState
   -- * Execution log
   , logExecution
   , getExecutionLog
+  
+  -- * Authorization
+  , isAuthorizedCaller
   ) where
 
 import Control.Monad (unless, when)
@@ -138,7 +141,7 @@ type Value = Text
 -- | Checkpoint for program state
 data Checkpoint = Checkpoint
   { checkpointTimestamp :: UTCTime
-  , checkpointHash :: EntityHash ()  -- Using unit as a placeholder type parameter
+  , checkpointHash :: EntityHash "Checkpoint"  -- Using a type-level string instead of unit
   , checkpointDescription :: Text
   }
   deriving stock (Eq, Show, Generic)
@@ -175,6 +178,10 @@ data ProgramState = ProgramState
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Serialize)
+
+-- | Check if an actor is authorized to call this program
+isAuthorizedCaller :: ProgramState -> Address -> Bool
+isAuthorizedCaller state caller = caller `elem` programAuthorizedCallers state
 
 -- | Create a new program state
 createProgramState :: ProgramId -> UTCTime -> ProgramState

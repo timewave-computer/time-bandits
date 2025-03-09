@@ -84,7 +84,7 @@ import Core.Types
   )
 
 -- | Unique identifier for a Timeline
-type TimelineId = EntityHash Timeline
+type TimelineId = EntityHash "Timeline"
 
 -- | Timeline clock represents the time concept within a timeline
 -- This could be block height, slot number, timestamp, etc.
@@ -180,8 +180,8 @@ getTimelineHead timeline = do
     , bhMerkleRoot = Hash "dummy-merkle-root"
     , bhTimestamp = case clock timeline of
         LamportClock t -> t
-        BlockHeightClock h -> LamportTime h
-        SlotNumberClock s -> LamportTime s
+        BlockHeightClock h -> LamportTime (fromIntegral h)
+        SlotNumberClock s -> LamportTime (fromIntegral s)
         TimestampClock _ -> LamportTime 0
     }
 

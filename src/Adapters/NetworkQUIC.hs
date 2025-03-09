@@ -30,8 +30,8 @@ module Adapters.NetworkQUIC
   , connectToQuicPeer
   , broadcastQuicMessage
   , sendQuicMessage
-  , receiveQuicMessage
-  , closeQuicConnection
+  -- , receiveQuicMessage  -- Commented out as it's not implemented yet
+  -- , closeQuicConnection  -- Commented out as it's not implemented yet
   
   -- * Peer Discovery
   , discoverQuicPeers
@@ -60,31 +60,46 @@ module Adapters.NetworkQUIC
 import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.STM (TVar, atomically, readTVar, modifyTVar)
 import Control.Concurrent.STM.TVar (newTVarIO)
-import Control.Exception (try, SomeException)
-import Control.Monad (void, forever, when)
-import Crypto.PubKey.X509 (X509)
-import Crypto.Random (getRandomBytes)
+import Control.Exception (SomeException, try)
+import Control.Monad (void, forever, when, unless, forM, forM_, foldM)
+import Crypto.PubKey.RSA (PrivateKey)
+import Crypto.Random.Types (getRandomBytes)
 import Data.Binary (Binary, encode, decode)
+import Data.Bool (Bool(..))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import Data.Char (ord)
+import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (catMaybes)
 import Data.Set qualified as Set
 import Data.Text (Text, pack, unpack)
+import Data.Text qualified as T
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime)
+import Foreign.C.Types (CChar)
 import GHC.Generics (Generic)
-import Network.Socket (SockAddr(..), HostName, PortNumber)
+import Network.Socket (SockAddr(..), HostName, PortNumber, HostAddress, HostAddress6, hostAddressToTuple)
 import Polysemy
 import Polysemy.Error
 import Polysemy.State qualified as PS
-import Polysemy.Trace qualified as PT
+import qualified Polysemy.Trace as PT
 import System.Directory (doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>))
 import System.Process (callCommand)
+import System.Random (randomIO)
+import Control.Concurrent.MVar (MVar, newMVar, modifyMVar, readMVar, modifyMVar_)
+
+import Data.Aeson (FromJSON, ToJSON)
 
 import Core qualified as Core
 import Core.Types
-import Adapters.Network (P2PNode(..), P2PCapability(..))
+import Core.Common (Actor, EntityHash(..), ActorHash, PubKey(..))
+import Adapters.Network (P2PNode(..), P2PCapability(..), P2PConfig(..))
+
+-- | Network error type
+data NetworkError = NetworkError Text
+  deriving (Show, Eq)
 
 -- | QUIC peer representation
 data QuicPeer = QuicPeer
@@ -126,20 +141,16 @@ data QuicStats = QuicStats
 data QuicConnection = QuicConnection
   { qcPeer :: !QuicPeer
   -- ^ Remote peer
-  , qcLocalPort :: !PortNumber
-  -- ^ Local port
-  , qcRemotePort :: !PortNumber
-  -- ^ Remote port
-  , qcConnectionState :: !ConnectionState
-  -- ^ Current state of the connection
-  , qcDataChannel :: !ByteString
-  -- ^ Channel identifier for data
-  , qcControlChannel :: !ByteString
-  -- ^ Channel identifier for control messages
-  , qcTimeOpened :: !UTCTime
+  , qcEstablished :: !UTCTime
   -- ^ When the connection was established
-  , qcIsEncrypted :: !Bool
-  -- ^ Whether the connection is encrypted
+  , qcLastActivity :: !UTCTime
+  -- ^ Last activity timestamp
+  , qcMessagesSent :: !Int
+  -- ^ Number of messages sent
+  , qcMessagesReceived :: !Int
+  -- ^ Number of messages received
+  , qcActive :: !Bool
+  -- ^ Whether the connection is active
   }
   deriving stock (Show, Eq, Generic)
 
@@ -196,12 +207,18 @@ data QuicMessage
     }
   deriving stock (Show, Eq, Generic)
 
--- | Network operating mode
+-- | Network mode
 data NetworkMode
   = ServerMode     -- ^ Server mode listening for connections
   | ClientMode     -- ^ Client mode initiating connections
   | HybridMode     -- ^ Both server and client capabilities
   deriving stock (Show, Eq, Generic)
+
+-- | Alias for NetworkMode for backward compatibility
+type QuicNetworkMode = NetworkMode
+
+instance FromJSON NetworkMode
+instance ToJSON NetworkMode
 
 -- | QUIC network configuration
 data QuicConfig = QuicConfig
@@ -252,18 +269,18 @@ defaultQuicConfig = QuicConfig
 -- | Start a QUIC server
 startQuicServer :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   , Member (Error NetworkError) r
   ) => 
   QuicConfig -> Actor -> PubKey -> Sem r QuicServer
 startQuicServer config localActor pubKey = do
-  Trace.trace $ "Starting QUIC server on " <> T.pack (show (qcBindAddress config)) <> ":" <> T.pack (show (qcBindPort config))
+  PT.trace $ "Starting QUIC server on " <> unpack (T.pack (show (qcBindAddress config))) <> ":" <> unpack (T.pack (show (qcBindPort config)))
   
   -- Generate certificate if needed
-  generateCertificate (qcCertPath config) (qcKeyPath config)
+  generateCertificate (qcCertificatePath config) (qcPrivateKeyPath config)
   
   -- Create a new connection map
-  connectionsVar <- embed $ newMVar Map.empty
+  connectionsVar <- embed $ Control.Concurrent.MVar.newMVar Map.empty
   
   -- Start the server thread
   serverThread <- embed $ forkIO $ do
@@ -283,33 +300,33 @@ startQuicServer config localActor pubKey = do
         , qsActive = True
         }
   
-  Trace.trace "QUIC server started successfully"
+  PT.trace "QUIC server started successfully"
   return server
 
 -- | Stop a QUIC server
 stopQuicServer :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   ) => 
   QuicServer -> Sem r ()
 stopQuicServer server = do
-  Trace.trace "Stopping QUIC server"
+  PT.trace "Stopping QUIC server"
   
   -- In a real implementation, we would properly stop the server
   -- For now, we just kill the thread
   embed $ killThread (qsServerThread server)
   
-  Trace.trace "QUIC server stopped successfully"
+  PT.trace "QUIC server stopped successfully"
 
 -- | Connect to a QUIC peer
 connectToQuicPeer :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   , Member (Error NetworkError) r
   ) => 
   QuicServer -> SockAddr -> Sem r QuicConnection
 connectToQuicPeer server peerAddr = do
-  Trace.trace $ "Connecting to QUIC peer at " <> T.pack (show peerAddr)
+  PT.trace $ "Connecting to QUIC peer at " <> unpack (T.pack (show peerAddr))
   
   -- In a real implementation, we would establish a QUIC connection
   -- For now, we just simulate the connection
@@ -317,11 +334,20 @@ connectToQuicPeer server peerAddr = do
   
   -- Create a dummy peer
   let peer = QuicPeer
-        { qpAddress = peerAddr
+        { qpId = EntityHash (Hash "dummy-actor-id")
+        , qpAddress = peerAddr
         , qpPublicKey = PubKey "dummy-public-key"
-        , qpActorId = "dummy-actor-id"
+        , qpCapabilities = [CanRoute, CanStore]
         , qpLastSeen = now
-        , qpConnectionQuality = 1.0
+        , qpConnectionId = BS.empty
+        , qpStats = QuicStats
+            { qsRTT = 100.0
+            , qsPacketsSent = 0
+            , qsPacketsReceived = 0
+            , qsPacketsLost = 0
+            , qsBytesTransferred = 0
+            , qsLastActivity = now
+            }
         }
   
   -- Create a new connection
@@ -338,71 +364,69 @@ connectToQuicPeer server peerAddr = do
   embed $ modifyMVar (qsConnections server) $ \conns ->
     return (Map.insert peerAddr conn conns, conn)
   
-  Trace.trace $ "Connected to QUIC peer at " <> T.pack (show peerAddr)
+  PT.trace $ "Connected to QUIC peer at " <> unpack (T.pack (show peerAddr))
   return conn
 
 -- | Disconnect from a QUIC peer
 disconnectFromQuicPeer :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   ) => 
   QuicServer -> QuicConnection -> Sem r ()
 disconnectFromQuicPeer server conn = do
-  Trace.trace $ "Disconnecting from QUIC peer at " <> T.pack (show (qpAddress (qcPeer conn)))
+  PT.trace $ "Disconnecting from QUIC peer at " <> unpack (T.pack (show (qpAddress (qcPeer conn))))
   
   -- In a real implementation, we would properly close the connection
   -- For now, we just remove it from the server
   embed $ modifyMVar (qsConnections server) $ \conns ->
     return (Map.delete (qpAddress (qcPeer conn)) conns, ())
   
-  Trace.trace $ "Disconnected from QUIC peer at " <> T.pack (show (qpAddress (qcPeer conn)))
+  PT.trace $ "Disconnected from QUIC peer at " <> unpack (T.pack (show (qpAddress (qcPeer conn))))
 
 -- | Send a QUIC message to a peer
 sendQuicMessage :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   , Member (Error NetworkError) r
   ) => 
-  QuicServer -> QuicConnection -> QuicMessage -> Sem r ()
-sendQuicMessage server conn msg = do
-  Trace.trace $ "Sending QUIC message to " <> T.pack (show (qpAddress (qcPeer conn)))
+  QuicConnection -> ByteString -> Sem r Bool
+sendQuicMessage conn msg = do
+  PT.trace $ "Sending QUIC message to " <> unpack (T.pack (show (qpAddress (qcPeer conn))))
   
   -- In a real implementation, we would send the message over QUIC
-  -- For now, we just log it
-  Trace.trace $ "Message: " <> T.pack (show msg)
+  -- For now, we just simulate it
+  success <- embed simulateMessageSending
   
-  -- Update the connection stats
-  now <- embed getCurrentTime
-  embed $ modifyMVar (qsConnections server) $ \conns ->
-    let updatedConn = conn
-          { qcLastActivity = now
-          , qcMessagesSent = qcMessagesSent conn + 1
-          }
-    in return (Map.insert (qpAddress (qcPeer conn)) updatedConn conns, ())
-  
-  Trace.trace $ "Sent QUIC message to " <> T.pack (show (qpAddress (qcPeer conn)))
+  if success
+    then do
+      PT.trace "Message sent successfully"
+      return True
+    else do
+      PT.trace "Failed to send message"
+      return False
 
 -- | Broadcast a QUIC message to all peers
 broadcastQuicMessage :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   , Member (Error NetworkError) r
   ) => 
-  QuicServer -> QuicMessage -> Sem r ()
-broadcastQuicMessage server msg = do
-  Trace.trace "Broadcasting QUIC message to all peers"
-  
-  -- Get all connections
-  conns <- embed $ readMVar (qsConnections server)
+  [QuicConnection] -> ByteString -> Sem r Int
+broadcastQuicMessage connections msg = do
+  PT.trace "Broadcasting QUIC message to all peers"
   
   -- Send the message to each connection
-  mapM_ (\conn -> sendQuicMessage server conn msg) (Map.elems conns)
+  successCount <- foldM (\count conn -> do
+    success <- sendQuicMessage conn msg
+    return $ if success then count + 1 else count
+    ) 0 connections
   
-  Trace.trace $ "Broadcasted QUIC message to " <> T.pack (show (Map.size conns)) <> " peers"
+  PT.trace $ "Broadcasted QUIC message to " <> unpack (T.pack (show successCount)) <> " peers"
+  return successCount
 
 -- | Discover peers using the QUIC protocol
 discoverQuicPeers ::
-  (Member (Embed IO) r, Member (Error AppError) r, Member PT.Trace r) =>
+  (Member (Embed IO) r, Member (Error NetworkError) r, Member PT.Trace r) =>
   QuicConfig ->
   [QuicConnection] ->
   Sem r [QuicPeer]
@@ -417,7 +441,7 @@ discoverQuicPeers config existingConns = do
   timestamp <- embed getCurrentTime
   discoveredPeers <- fmap concat $ forM selectedConns $ \conn -> do
     -- Generate request ID
-    requestId <- embed $ getRandomBytes 16
+    requestId <- embed $ randomBS 16
     
     -- Create discovery request
     let request = DiscoveryRequest
@@ -429,8 +453,8 @@ discoverQuicPeers config existingConns = do
     -- For now, simulate peer discovery
     newPeers <- embed $ simulatePeerDiscovery (qcMaxPeers config)
     
-    PT.trace $ "Discovered " <> show (length newPeers) <> " peers from connection " <> 
-               show (qpId $ qcPeer conn)
+    PT.trace $ "Discovered " <> unpack (T.pack (show (length newPeers))) <> " peers from connection " <>
+      unpack (T.pack (show (qpId $ qcPeer conn)))
     return newPeers
   
   -- Filter out duplicates and existing connections
@@ -438,17 +462,16 @@ discoverQuicPeers config existingConns = do
       uniquePeers = filter (\p -> not $ Set.member (qpId p) existingPeerIds) $
                     nubPeersByHash discoveredPeers
   
-  PT.trace $ "Total unique new peers discovered: " <> show (length uniquePeers)
+  PT.trace $ "Total unique new peers discovered: " <> unpack (T.pack (show (length uniquePeers)))
   return uniquePeers
 
 -- | Announce this peer to the network
 announcePeer ::
-  (Member (Embed IO) r, Member PT.Trace r) =>
-  QuicConfig ->
+  (Member (Embed IO) r, Member PT.Trace r, Member (Error NetworkError) r) =>
   QuicPeer ->  -- ^ Local peer info
   [QuicConnection] ->
   Sem r Int
-announcePeer config localPeer connections = do
+announcePeer localPeer connections = do
   PT.trace "Announcing peer to the network"
   
   -- Create announcement message
@@ -459,85 +482,98 @@ announcePeer config localPeer connections = do
         , qmCertificate = BS.empty  -- In a real implementation, this would be the certificate
         }
   
-  -- Serialize the announcement
-  let announcementBS = BS.pack [1]  -- Dummy serialization, would use actual encoding in real impl
+  -- Serialize the announcement (in a real implementation, we would use proper serialization)
+  let announcementBS = BS.pack [1]  -- Dummy serialization
   
   -- Broadcast to connections
   broadcastQuicMessage connections announcementBS
 
 -- | Register with bootstrap peers
 registerWithBootstrapPeers ::
-  (Member (Embed IO) r, Member (Error AppError) r, Member PT.Trace r) =>
+  (Member (Embed IO) r, Member (Error NetworkError) r, Member (Error SomeException) r, Member PT.Trace r) =>
   QuicConfig ->
-  QuicPeer ->  -- ^ Local peer info
+  QuicServer ->
+  QuicPeer ->
   Sem r [QuicConnection]
-registerWithBootstrapPeers config localPeer = do
-  PT.trace $ "Registering with " <> show (length (qcBootstrapPeers config)) <> " bootstrap peers"
+registerWithBootstrapPeers config server localPeer = do
+  PT.trace $ "Registering with " <> unpack (T.pack (show (length (qcBootstrapPeers config)))) <> " bootstrap peers"
   
   -- Connect to each bootstrap peer
   connections <- fmap catMaybes $ forM (qcBootstrapPeers config) $ \peerAddr -> do
-    connectToQuicPeer config peerAddr
+    result <- Polysemy.Error.try @NetworkError $ connectToQuicPeer server peerAddr
+    case result of
+      Left e -> do
+        PT.trace $ "Failed to connect to bootstrap peer at " <> unpack (pack (show peerAddr)) <> ": " <> unpack (pack (show e))
+        return Nothing
+      Right conn -> return (Just conn)
   
   -- Announce ourselves to each connection
   when (not $ null connections) $ do
-    announcePeer config localPeer connections
-    return ()
+    void $ announcePeer localPeer connections
   
-  PT.trace $ "Successfully connected to " <> show (length connections) <> " bootstrap peers"
+  PT.trace $ "Successfully connected to " <> unpack (T.pack (show (length connections))) <> " bootstrap peers"
   return connections
 
--- | Handle a network partition
-handleNetworkPartition ::
-  (Member (Embed IO) r, Member PT.Trace r) =>
-  QuicConfig ->
-  [QuicConnection] ->
-  Sem r [QuicConnection]
-handleNetworkPartition config connections = do
+-- | Handle network partition
+handleNetworkPartition
+  :: (Member (Embed IO) r, Member (Error NetworkError) r, Member (Error SomeException) r, Member PT.Trace r)
+  => QuicConfig
+  -> QuicServer
+  -> [QuicConnection]
+  -> Sem r [QuicConnection]
+handleNetworkPartition config server connections = do
   PT.trace "Handling network partition"
   
   -- Check which connections are still alive
   timestamp <- embed getCurrentTime
   activeConns <- fmap catMaybes $ forM connections $ \conn -> do
-    -- Send a keepalive message
-    let keepalive = KeepAlive
-          { qmSenderNode = qcPeer conn
-          , qmTimestamp = timestamp
-          }
+    -- Check if connection is still active
+    let keepalive = "KEEPALIVE"
+    let keepaliveBS = BS.pack $ map (fromIntegral . ord) keepalive
     
-    -- Serialize the keepalive
-    let keepaliveBS = BS.pack [2]  -- Dummy serialization
-    
-    -- Try to send it
-    success <- sendQuicMessage conn keepaliveBS
-    
-    if success
-      then do
-        PT.trace $ "Connection to " <> show (qpId $ qcPeer conn) <> " is active"
-        return $ Just conn
-      else do
-        PT.trace $ "Connection to " <> show (qpId $ qcPeer conn) <> " is broken"
+    -- Try to send a keepalive message
+    result <- Polysemy.Error.try @NetworkError $ sendQuicMessage conn keepaliveBS
+    case result of
+      Right success -> 
+        if success then do
+          PT.trace $ "Connection to " <> unpack (pack (show (qpId $ qcPeer conn))) <> " is active"
+          return $ Just conn
+        else do
+          PT.trace $ "Connection to " <> unpack (pack (show (qpId $ qcPeer conn))) <> " is broken"
+          return Nothing
+      Left _ -> do
+        PT.trace $ "Error sending keepalive to " <> unpack (pack (show (qpId $ qcPeer conn)))
         return Nothing
   
   -- If we've lost too many connections, attempt to reconnect to bootstrap peers
   if length activeConns < length connections `div` 2
     then do
       PT.trace "Significant connection loss detected, reconnecting to bootstrap peers"
-      bootstrapConns <- registerWithBootstrapPeers config (qcPeer $ head activeConns)
-      return $ activeConns ++ bootstrapConns
+      -- If we have active connections, use one of them to reconnect to bootstrap peers
+      if not (null activeConns)
+        then do
+          let firstConn = case activeConns of
+                            conn:_ -> conn
+                            []     -> error "Impossible: activeConns is empty"
+          bootstrapConns <- registerWithBootstrapPeers config server (qcPeer firstConn)
+          return $ activeConns ++ bootstrapConns
+        else
+          return activeConns
     else
       return activeConns
 
 -- | Attempt to reconnect to a peer
-attemptReconnection ::
-  (Member (Embed IO) r, Member (Error AppError) r, Member PT.Trace r) =>
-  QuicConfig ->
-  QuicPeer ->
-  Sem r (Maybe QuicConnection)
-attemptReconnection config peer = do
-  PT.trace $ "Attempting to reconnect to peer " <> show (qpId peer)
-  
-  -- Try to establish a new connection
-  connectToQuicPeer config (qpAddress peer)
+attemptReconnection
+  :: (Member (Embed IO) r, Member (Error AppError) r, Member (Error NetworkError) r, Member (Error SomeException) r, Member PT.Trace r)
+  => QuicServer
+  -> QuicPeer
+  -> Sem r (Maybe QuicConnection)
+attemptReconnection server peer = do
+  PT.trace $ "Attempting to reconnect to peer " <> unpack (pack (show (qpId peer)))
+  result <- Polysemy.Error.try @NetworkError $ connectToQuicPeer server (qpAddress peer)
+  case result of
+    Left _ -> return Nothing
+    Right conn -> return (Just conn)
 
 -- | Migrate a connection to a new network path
 migrateConnection ::
@@ -546,8 +582,8 @@ migrateConnection ::
   SockAddr ->  -- ^ New address
   Sem r (Maybe QuicConnection)
 migrateConnection conn newAddr = do
-  PT.trace $ "Migrating connection from " <> show (qpAddress $ qcPeer conn) <> 
-             " to " <> show newAddr
+  PT.trace $ "Migrating connection from " <> unpack (T.pack (show (qpAddress $ qcPeer conn))) <> 
+             " to " <> unpack (T.pack (show newAddr))
   
   -- In a real implementation, this would use QUIC's connection migration feature
   -- For now, simulate migration
@@ -583,25 +619,20 @@ generateSelfSignedCertificate _ _ _ =
 -- | Simulate a connection attempt
 simulateConnectionAttempt :: IO Bool
 simulateConnectionAttempt = do
-  -- 80% success rate
-  r <- randomIO
+  r <- randomIO :: IO Double
   return (r < 0.8)
 
 -- | Simulate message sending
 simulateMessageSending :: IO Bool
 simulateMessageSending = do
-  -- 95% success rate
-  r <- randomIO
+  r <- randomIO :: IO Double
   return (r < 0.95)
 
 -- | Simulate message receiving
 simulateMessageReceiving :: IO (Maybe ByteString)
 simulateMessageReceiving = do
-  -- 90% success rate
-  r <- randomIO
-  if r < 0.9
-    then Just <$> getRandomBytes 128
-    else return Nothing
+  r <- randomIO :: IO Double
+  if r < 0.9 then Just <$> randomBS 128 else return Nothing
 
 -- | Simulate peer discovery
 simulatePeerDiscovery :: Int -> IO [QuicPeer]
@@ -613,8 +644,7 @@ simulatePeerDiscovery maxPeers = do
 -- | Simulate connection migration
 simulateConnectionMigration :: IO Bool
 simulateConnectionMigration = do
-  -- 70% success rate
-  r <- randomIO
+  r <- randomIO :: IO Double
   return (r < 0.7)
 
 -- | Generate a random peer for simulation
@@ -644,64 +674,15 @@ generateRandomPeer = do
     }
 
 -- | Random number in range
-randomRIO :: (Integral a) => (a, a) -> IO a
+randomRIO :: Integral a => (a, a) -> IO a
 randomRIO (lo, hi) = do
-  r <- randomIO
+  r <- randomIO :: IO Int
   return $ lo + fromIntegral (abs r `mod` fromIntegral (hi - lo + 1))
 
 -- | Remove duplicate peers by hash
 nubPeersByHash :: [QuicPeer] -> [QuicPeer]
 nubPeersByHash peers =
   Map.elems $ Map.fromList [(qpId p, p) | p <- peers]
-
--- Missing imports (would be included in real implementation)
-import Data.Bool (Bool(..))
-import System.Random (randomIO)
-import Foreign.C.Types (CChar)
-import Data.List (sortOn)
-import Control.Monad (unless, forM, forM_)
-
--- | QUIC network mode
-data QuicNetworkMode
-  = ClientMode     -- ^ Client-only mode
-  | ServerMode     -- ^ Server-only mode
-  | HybridMode     -- ^ Both client and server mode
-  deriving (Show, Eq, Generic)
-
-instance FromJSON QuicNetworkMode
-instance ToJSON QuicNetworkMode
-
--- | QUIC configuration
-data QuicConfig = QuicConfig
-  { qcBindAddress :: SockAddr        -- ^ Address to bind the QUIC server to
-  , qcBindPort :: Int                -- ^ Port to bind the QUIC server to
-  , qcCertPath :: FilePath           -- ^ Path to the certificate file
-  , qcKeyPath :: FilePath            -- ^ Path to the private key file
-  , qcNetworkMode :: QuicNetworkMode -- ^ Network mode
-  , qcBootstrapNodes :: [SockAddr]   -- ^ Bootstrap nodes to connect to
-  , qcConnectionTimeout :: Int       -- ^ Connection timeout in milliseconds
-  , qcMaxConnections :: Int          -- ^ Maximum number of connections
-  , qcMaxMessageSize :: Int          -- ^ Maximum message size in bytes
-  , qcPingInterval :: Int            -- ^ Ping interval in milliseconds
-  } deriving (Show, Eq, Generic)
-
-instance FromJSON QuicConfig
-instance ToJSON QuicConfig
-
--- | Default QUIC configuration
-defaultQuicConfig :: QuicConfig
-defaultQuicConfig = QuicConfig
-  { qcBindAddress = SockAddrInet 8443 0  -- INADDR_ANY
-  , qcBindPort = 8443
-  , qcCertPath = "certs/server.crt"
-  , qcKeyPath = "certs/server.key"
-  , qcNetworkMode = HybridMode
-  , qcBootstrapNodes = []
-  , qcConnectionTimeout = 5000  -- 5 seconds
-  , qcMaxConnections = 100
-  , qcMaxMessageSize = 1024 * 1024  -- 1 MB
-  , qcPingInterval = 30000  -- 30 seconds
-  }
 
 -- | QUIC error
 data QuicError
@@ -727,31 +708,34 @@ data QuicServer = QuicServer
   }
 
 -- | Convert a P2P configuration to a QUIC configuration
-p2pConfigToQuicConfig :: Network.P2PConfig -> QuicConfig
+p2pConfigToQuicConfig :: P2PConfig -> QuicConfig
 p2pConfigToQuicConfig p2pConfig = defaultQuicConfig
-  { qcBindAddress = Network.p2pBindAddress p2pConfig
-  , qcBindPort = Network.p2pBindPort p2pConfig
-  , qcBootstrapNodes = Network.p2pBootstrapNodes p2pConfig
-  , qcConnectionTimeout = Network.p2pConnectionTimeout p2pConfig
-  , qcMaxConnections = Network.p2pMaxConnections p2pConfig
+  { qcBindAddress = pcBindAddress p2pConfig
+  , qcBindPort = case pcBindAddress p2pConfig of
+                   SockAddrInet port _ -> port
+                   SockAddrInet6 port _ _ _ -> port
+                   _ -> 8443
+  , qcBootstrapPeers = pcSeedNodes p2pConfig
+  , qcMaxPeers = pcNodeCapacity p2pConfig
+  , qcConnectionTimeout = pcConnectionTimeout p2pConfig
   }
 
 -- | Generate a self-signed certificate for QUIC
 generateCertificate :: 
   ( Member (Embed IO) r
-  , Member Trace r
+  , Member PT.Trace r
   , Member (Error NetworkError) r
   ) => 
   FilePath -> FilePath -> Sem r ()
 generateCertificate certPath keyPath = do
-  Trace.trace $ "Generating self-signed certificate at " <> T.pack certPath
+  PT.trace $ "Generating self-signed certificate at " <> unpack (T.pack certPath)
   
   -- Check if the certificate already exists
   certExists <- embed $ doesFileExist certPath
   keyExists <- embed $ doesFileExist keyPath
   
   if certExists && keyExists
-    then Trace.trace "Certificate and key already exist, skipping generation"
+    then PT.trace "Certificate and key already exist, skipping generation"
     else do
       -- Create the directory if it doesn't exist
       let certDir = takeDirectory certPath
@@ -761,17 +745,17 @@ generateCertificate certPath keyPath = do
       embed $ createDirectoryIfMissing True keyDir
       
       -- Generate a self-signed certificate using OpenSSL
-      result <- embed $ try @SomeException $ callCommand $ 
+      result <- embed $ Control.Exception.try @SomeException $ callCommand $ 
         "openssl req -x509 -newkey rsa:4096 -keyout " <> keyPath <> 
         " -out " <> certPath <> 
         " -days 365 -nodes -subj '/CN=localhost'"
       
       case result of
         Left err -> do
-          Trace.trace $ "Failed to generate certificate: " <> T.pack (show err)
-          throw $ NetworkError $ "Failed to generate certificate: " <> T.pack (show err)
+          PT.trace $ "Failed to generate certificate: " <> unpack (T.pack (show err))
+          throw $ Adapters.NetworkQUIC.NetworkError $ "Failed to generate certificate: " <> T.pack (show err)
         Right _ -> 
-          Trace.trace "Certificate generated successfully"
+          PT.trace "Certificate generated successfully"
 
 -- Helper functions
 takeDirectory :: FilePath -> FilePath
@@ -779,3 +763,7 @@ takeDirectory = reverse . dropWhile (== '/') . dropWhile (/= '/') . reverse
 
 killThread :: ThreadId -> IO ()
 killThread _ = pure ()  -- In a real implementation, we would use Control.Concurrent.killThread 
+
+-- Helper function to generate random bytes using IO
+randomBS :: Int -> IO ByteString
+randomBS n = BS.pack <$> replicateM n (randomRIO (0, 255)) 

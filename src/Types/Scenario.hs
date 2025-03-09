@@ -27,9 +27,9 @@ module Types.Scenario
   , ScenarioTimeline(..)
   ) where
 
-import Data.Text (Text)
+import Data.Text ()
 import Data.Serialize (Serialize)
-import GHC.Generics (Generic)
+import GHC.Generics ()
 import qualified Data.Text.Encoding as TE
 import qualified Data.Serialize as S
 import Core.Common (SimulationMode(..), EntityHash(..))

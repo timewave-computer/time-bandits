@@ -34,8 +34,16 @@ module Core.Concurrency.Combinators
   , fork
   , invoke
   , callback
+  
+    -- * Re-exports
+  , tryPutMVar
+  , mapM
+  , forM
   ) where
 
+import Prelude hiding (mapM, forM, readIORef, writeIORef, newIORef, 
+                       takeMVar, putMVar, readMVar, newMVar, newEmptyMVar, 
+                       tryPutMVar)
 import Control.Concurrent (MVar, ThreadId, forkIO, killThread, newEmptyMVar, newMVar, putMVar, readMVar, takeMVar, threadDelay)
 import Control.Exception (bracket, catch, finally, SomeException)
 import Control.Monad (void, when)
@@ -51,7 +59,9 @@ import System.Timeout (timeout)
 
 -- Import from TimeBandits modules
 import Core.ResourceId (ResourceId)
-import Core.Types (EffectId, ProgramId, ResourceState)
+import Core.Types (EffectId)
+import Core.ProgramId (ProgramId)
+import Core.ResourceLedger (ResourceState)
 
 -- | Condition type for watch operations
 data Condition
