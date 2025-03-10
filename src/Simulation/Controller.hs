@@ -59,7 +59,8 @@ import Control.Exception (Exception, throwIO, catch, throw)
 import Control.Monad (forM, forM_, unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.ByteString (ByteString)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef)
+import Data.IORef (IORef)
+import qualified Data.IORef as IORef
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
@@ -71,18 +72,19 @@ import GHC.Generics (Generic)
 import System.Directory (createDirectoryIfMissing)
 
 -- Core imports
-import Core.Common (EntityHash, ActorId)
+import Core.Common (EntityHash, LamportTime(..))
+import Core.ActorId (ActorId)
 import Core.Resource (ResourceId)
 import Core.Timeline (TimelineHash, Timeline)
-import Core.Types (LamportTime)
+import Core.Types (AppError)
 
 -- Programs imports
 import Programs.Program (Program, ProgramId, ProgramState)
 import Programs.AccountProgram (AccountProgram, createAccountProgram)
 
 -- Simulation imports
-import Simulation.Scenario (Scenario(..), scenarioEntities, scenarioTimelines)
-import Simulation.Messaging (ActorSpec(..), ActorID, ActorRole(..), Message, MessageType(..))
+import Simulation.Messaging (ActorSpec(..), ActorID, Message, ActorRole(..))
+import Simulation.Scenario (Scenario(..), ScenarioConfig(..))
 
 -- | Simulation mode determines how the simulation is executed
 data SimulationMode
@@ -162,12 +164,12 @@ createController spec = liftIO $ do
   createDirectoryIfMissing True (configLogPath $ specConfig spec)
   
   -- Create IORef fields
-  actorsRef <- newIORef Map.empty
-  accountsRef <- newIORef Map.empty
-  logsRef <- newIORef []
-  metricsRef <- newIORef Map.empty
-  errorsRef <- newIORef []
-  runningRef <- newIORef False
+  actorsRef <- IORef.newIORef Map.empty
+  accountsRef <- IORef.newIORef Map.empty
+  logsRef <- IORef.newIORef []
+  metricsRef <- IORef.newIORef Map.empty
+  errorsRef <- IORef.newIORef []
+  runningRef <- IORef.newIORef False
   
   pure Controller
     { controllerSpec = spec
@@ -188,11 +190,12 @@ loadScenario controller scenario = liftIO $ do
   
   -- Determine required actors
   actors <- determineRequiredActors controller' scenario
-  writeIORef (controllerActors controller') actors
+  IORef.writeIORef (controllerActors controller') actors
   
   -- Log the scenario load
-  let logEntry = LogEntry 0 ("Loaded scenario: " <> scenarioName scenario) "Controller" Nothing
-  modifyIORef (controllerLogs controller') (logEntry :)
+  let scenarioNameText = scenarioName (scenarioConfig scenario)
+  let logEntry = LogEntry (LamportTime 0) ("Loaded scenario: " <> scenarioNameText) "Controller" Nothing
+  IORef.modifyIORef (controllerLogs controller') (logEntry :)
 
 -- | Run the controller with a scenario
 runWithScenario :: MonadIO m => Controller -> Scenario -> m SimulationResult
@@ -201,10 +204,10 @@ runWithScenario controller scenario = liftIO $ do
   loadScenario controller scenario
   
   -- Set controller to running
-  writeIORef (controllerRunning controller) True
+  IORef.writeIORef (controllerRunning controller) True
   
   -- Deploy actors
-  actors <- readIORef (controllerActors controller)
+  actors <- IORef.readIORef (controllerActors controller)
   deploySpecializedActors controller actors
   
   -- Create account programs for all actors
@@ -214,14 +217,14 @@ runWithScenario controller scenario = liftIO $ do
   runController controller `catch` \(e :: ControllerError) -> do
     -- Log the error
     let errorMsg = T.pack $ show e
-    modifyIORef (controllerErrors controller) (errorMsg :)
-    writeIORef (controllerRunning controller) False
+    IORef.modifyIORef (controllerErrors controller) (errorMsg :)
+    IORef.writeIORef (controllerRunning controller) False
   
   -- Collect results
-  logs <- readIORef (controllerLogs controller)
-  metrics <- readIORef (controllerMetrics controller)
-  errors <- readIORef (controllerErrors controller)
-  accounts <- readIORef (controllerAccountPrograms controller)
+  logs <- IORef.readIORef (controllerLogs controller)
+  metrics <- IORef.readIORef (controllerMetrics controller)
+  errors <- IORef.readIORef (controllerErrors controller)
+  accounts <- IORef.readIORef (controllerAccountPrograms controller)
   
   -- Create account states map
   let accountStates = Map.empty  -- Placeholder, would extract states from programs
@@ -244,18 +247,18 @@ runController controller = liftIO $ do
     Nothing -> throwIO $ ConfigurationError "No scenario loaded"
   
   -- Log simulation start
-  let logEntry = LogEntry 0 "Starting simulation" "Controller" Nothing
-  modifyIORef (controllerLogs controller) (logEntry :)
+  let logEntry = LogEntry (LamportTime 0) "Starting simulation" "Controller" Nothing
+  IORef.modifyIORef (controllerLogs controller) (logEntry :)
   
   -- Execute scenario steps
   executeScenarioSteps controller scenario
   
   -- Set controller to not running
-  writeIORef (controllerRunning controller) False
+  IORef.writeIORef (controllerRunning controller) False
   
   -- Log simulation end
-  let logEntry' = LogEntry 0 "Simulation completed" "Controller" Nothing
-  modifyIORef (controllerLogs controller) (logEntry' :)
+  let logEntry' = LogEntry (LamportTime 0) "Simulation completed" "Controller" Nothing
+  IORef.modifyIORef (controllerLogs controller) (logEntry' :)
 
 -- | Execute scenario steps
 executeScenarioSteps :: MonadIO m => Controller -> Scenario -> m ()
@@ -272,7 +275,7 @@ executeScenarioSteps controller scenario = liftIO $ do
 determineRequiredActors :: MonadIO m => Controller -> Scenario -> m (Map ActorID ActorSpec)
 determineRequiredActors _ scenario = liftIO $ do
   -- Extract actors from scenario
-  let actors = scenarioEntities scenario
+  let actors = scenarioActors (scenarioConfig scenario)
   
   -- Create a map of actor IDs to actor specs
   pure $ Map.fromList [(actorId actor, actor) | actor <- actors]
@@ -292,8 +295,8 @@ setSimulationMode controller mode = liftIO $ do
   let controller' = controller { controllerSpec = newSpec }
   
   -- Log the mode change
-  let logEntry = LogEntry 0 ("Set simulation mode to: " <> T.pack (show mode)) "Controller" Nothing
-  modifyIORef (controllerLogs controller') (logEntry :)
+  let logEntry = LogEntry (LamportTime 0) ("Set simulation mode to: " <> T.pack (show mode)) "Controller" Nothing
+  IORef.modifyIORef (controllerLogs controller') (logEntry :)
 
 -- | Get the current simulation mode
 getSimulationMode :: MonadIO m => Controller -> m SimulationMode
@@ -305,9 +308,9 @@ getSimulationMode controller = liftIO $ do
 deploySpecializedActors :: MonadIO m => Controller -> Map ActorID ActorSpec -> m ()
 deploySpecializedActors controller actors = liftIO $ do
   -- Group actors by role
-  let travelers = Map.filter (\a -> _actorSpecRole a == TimeTraveler) actors
-      keepers = Map.filter (\a -> _actorSpecRole a == TimeKeeper) actors
-      bandits = Map.filter (\a -> _actorSpecRole a == TimeBandit) actors
+  let travelers = Map.filter (\a -> _actorSpecRole a == TimeTravelerRole) actors
+      keepers = Map.filter (\a -> _actorSpecRole a == TimeKeeperRole) actors
+      bandits = Map.filter (\a -> _actorSpecRole a == TimeBanditRole) actors
   
   -- Deploy each type of actor
   createTimeTravelersForScenario controller travelers
@@ -315,13 +318,13 @@ deploySpecializedActors controller actors = liftIO $ do
   createTimeBanditsForScenario controller bandits
   
   -- Log deployment
-  let logEntry = LogEntry 0 
+  let logEntry = LogEntry (LamportTime 0) 
         ("Deployed actors: " <> 
          T.pack (show (Map.size travelers)) <> " travelers, " <>
          T.pack (show (Map.size keepers)) <> " keepers, " <>
          T.pack (show (Map.size bandits)) <> " bandits")
         "Controller" Nothing
-  modifyIORef (controllerLogs controller) (logEntry :)
+  IORef.modifyIORef (controllerLogs controller) (logEntry :)
 
 -- | Create time travelers for the scenario
 createTimeTravelersForScenario :: MonadIO m => Controller -> Map ActorID ActorSpec -> m ()
@@ -345,7 +348,7 @@ createTimeBanditsForScenario _ _ = liftIO $ do
 createAccountProgramsForActors :: MonadIO m => Controller -> m ()
 createAccountProgramsForActors controller = liftIO $ do
   -- Get all actors
-  actors <- readIORef (controllerActors controller)
+  actors <- IORef.readIORef (controllerActors controller)
   
   -- Create account programs for each actor
   accountPrograms <- forM (Map.elems actors) $ \actor -> do
@@ -355,18 +358,18 @@ createAccountProgramsForActors controller = liftIO $ do
     pure (actorId, program)
   
   -- Store the account programs
-  writeIORef (controllerAccountPrograms controller) (Map.fromList accountPrograms)
+  IORef.writeIORef (controllerAccountPrograms controller) (Map.fromList accountPrograms)
   
   -- Log creation
-  let logEntry = LogEntry 0 
+  let logEntry = LogEntry (LamportTime 0) 
         ("Created account programs for " <> T.pack (show (length accountPrograms)) <> " actors")
         "Controller" Nothing
-  modifyIORef (controllerLogs controller) (logEntry :)
+  IORef.modifyIORef (controllerLogs controller) (logEntry :)
 
 -- | Get the account program for an actor
 getAccountProgramForActor :: MonadIO m => Controller -> ActorId -> m (Maybe AccountProgram)
 getAccountProgramForActor controller actorId = liftIO $ do
-  accounts <- readIORef (controllerAccountPrograms controller)
+  accounts <- IORef.readIORef (controllerAccountPrograms controller)
   pure $ Map.lookup actorId accounts
 
 -- | Route a message through an actor's account program
@@ -384,15 +387,15 @@ routeMessageThroughAccount controller actorId message = liftIO $ do
       -- 3. Return any response message
       
       -- Log the message routing
-      let logEntry = LogEntry 0 
+      let logEntry = LogEntry (LamportTime 0) 
             ("Routed message through account program for actor " <> T.pack (show actorId))
             "Controller" (Just $ "message-data")
-      modifyIORef (controllerLogs controller) (logEntry :)
+      IORef.modifyIORef (controllerLogs controller) (logEntry :)
       
       pure $ Just message  -- Placeholder response
       
     Nothing -> do
       -- Log the error
       let errorMsg = "No account program found for actor " <> T.pack (show actorId)
-      modifyIORef (controllerErrors controller) (errorMsg :)
+      IORef.modifyIORef (controllerErrors controller) (errorMsg :)
       pure Nothing
