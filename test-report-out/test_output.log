@@ -1,16 +1,12 @@
+=== STANDARD TESTS ===
 Configuration is affected by the following files:
 - cabal.project
 - cabal.project.local
 Build profile: -w ghc-9.6.3 -O1
 In order, the following will be built (use -v for more details):
- - time-bandits-0.1.0.0 (test:time-bandits-test) (file test/TestReport.hs changed)
+ - time-bandits-0.1.0.0 (test:time-bandits-test) (first run)
 Preprocessing test suite 'time-bandits-test' for time-bandits-0.1.0.0...
 Building test suite 'time-bandits-test' for time-bandits-0.1.0.0...
-[9 of 9] Compiling TestReport       ( test/TestReport.hs, dist-newstyle/build/aarch64-osx/ghc-9.6.3/time-bandits-0.1.0.0/t/time-bandits-test/build/time-bandits-test/time-bandits-test-tmp/TestReport.o ) [Source file changed]
-Warning: supplying the --target argument to a nix-wrapped compiler may not work correctly - cc-wrapper is currently not designed with multi-target compilers in mind. You may want to use an un-wrapped compiler instead.
-[10 of 10] Linking dist-newstyle/build/aarch64-osx/ghc-9.6.3/time-bandits-0.1.0.0/t/time-bandits-test/build/time-bandits-test/time-bandits-test [Objects changed]
-Warning: supplying the --target argument to a nix-wrapped compiler may not work correctly - cc-wrapper is currently not designed with multi-target compilers in mind. You may want to use an un-wrapped compiler instead.
-Warning: supplying the --target argument to a nix-wrapped compiler may not work correctly - cc-wrapper is currently not designed with multi-target compilers in mind. You may want to use an un-wrapped compiler instead.
 Running 1 test suites...
 Test suite time-bandits-test: RUNNING...
 Running Hspec tests for Fact Observation components...
@@ -25,56 +21,85 @@ Fact Observation Tests
   TOML Parser
     Rule parsing
       should attempt to parse a rule from TOML text [✔]
-      should attempt to parse a rule from a file [‐]
-        # PENDING: Rule file parsing is currently stubbed
+      should attempt to parse a rule from a file [✔]
       should attempt to parse a rule set [✔]
   Fact Observation Engine
     Engine initialization
-2025-03-10 14:28:40 [INFO] Rule engine created
+2025-03-10 18:00:33 [INFO] Rule engine created
       creates a fact observation engine with default config [✔]
     Rule evaluation
-      evaluates rules against input data [‐]
-        # PENDING: Rule evaluation implementation issues with data structure - needs further debugging
-      handles rule conditions correctly [‐]
-        # PENDING: Rule condition handling implementation issues with data structure - needs further debugging
+2025-03-10 18:00:33 [INFO] Rule engine created
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule test-rule
+2025-03-10 18:00:33 [INFO] Rule test-rule matched, generating fact
+2025-03-10 18:00:33 [INFO] Stored fact in facts/PriceObservation-test-rule-20250310180033.json
+      evaluates rules against input data [✔]
+2025-03-10 18:00:33 [INFO] Rule engine created
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule passing-rule
+2025-03-10 18:00:33 [INFO] Rule passing-rule matched, generating fact
+2025-03-10 18:00:33 [INFO] Stored fact in facts/PriceObservation-passing-rule-20250310180033.json
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule failing-rule
+2025-03-10 18:00:33 [DEBUG] Rule failing-rule did not match
+      handles rule conditions correctly [✔]
     Rule loading and validation
-      loads rules from a directory [‐]
-        # PENDING: Engine.loadRulesFromDirectory is stubbed or not fully functional (always loads 0 rules)
-      validates rules during loading [‐]
-        # PENDING: Engine.loadRulesFromDirectory is stubbed or not fully functional (validation not working)
+2025-03-10 18:00:33 [INFO] Rule engine created
+2025-03-10 18:00:33 [INFO] Loading rules from directory /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-d157da288e1211d4
+2025-03-10 18:00:33 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-d157da288e1211d4/rule1.toml
+2025-03-10 18:00:33 [INFO] Loaded 0 rules
+2025-03-10 18:00:33 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-d157da288e1211d4/rule2.toml
+2025-03-10 18:00:33 [INFO] Loaded 0 rules
+2025-03-10 18:00:33 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-d157da288e1211d4/rule3.toml
+2025-03-10 18:00:33 [INFO] Loaded 0 rules
+2025-03-10 18:00:33 [INFO] Loaded 0 rules from 3 files
+      loads rules from a directory [✔]
+2025-03-10 18:00:33 [INFO] Rule engine created
+2025-03-10 18:00:33 [INFO] Loading rules from directory /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-607254ac9b0b4114
+2025-03-10 18:00:33 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-607254ac9b0b4114/invalid_rule_invalid.toml
+2025-03-10 18:00:33 [INFO] Loaded 0 rules
+2025-03-10 18:00:33 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-607254ac9b0b4114/valid_rule.toml
+2025-03-10 18:00:33 [INFO] Loaded 0 rules
+2025-03-10 18:00:33 [INFO] Loaded 0 rules from 2 files
+      validates rules during loading [✔]
   Fact Observation Integration
     End-to-end rule processing
-      loads rules from TOML files and evaluates them [‐]
-        # PENDING: End-to-end integration test implemented but not executed due to stubbed engine components
-      processes rules with multiple conditions [‐]
-        # PENDING: Multiple condition test implemented but blocked by engine implementation
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule price-alert
+      loads rules from TOML files and evaluates them [✔]
+2025-03-10 18:00:33 [INFO] Rule engine created
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule multi-condition-rule
+2025-03-10 18:00:33 [INFO] Rule multi-condition-rule matched, generating fact
+2025-03-10 18:00:33 [INFO] Stored fact in /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/multi-condition-test-916cf08070fa86d9/PriceObservation-multi-condition-rule-20250310180033.json
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule multi-condition-rule
+2025-03-10 18:00:33 [DEBUG] Rule multi-condition-rule did not match
+      processes rules with multiple conditions [✔]
     Configuration integration
-      correctly applies engine configuration [‐]
-        # PENDING: Engine configuration test implemented but blocked by internal API access
+2025-03-10 18:00:33 [DEBUG] Evaluating data against rule proof-test-rule
+      correctly applies engine configuration [✔]
   Fact Observation CLI
     CLI commands
-      runs with help flag [‐]
-        # PENDING: CLI help flag test to be implemented
-      loads rules from a directory [‐]
-        # PENDING: CLI rule loading test to be implemented
-      validates rules through CLI [‐]
-        # PENDING: CLI rule validation test to be implemented
-    Error handling
-      reports errors for invalid rules [‐]
-        # PENDING: CLI error handling test to be implemented
+2025-03-10 18:00:33 [INFO] Rule engine created
+      runs with help flag [✔]
+2025-03-10 18:00:34 [INFO] Rule engine created
+2025-03-10 18:00:34 [INFO] Loading rules from directory rules
+2025-03-10 18:00:34 [INFO] Loaded 0 rules from 0 files
+      loads rules from a directory [✔]
+2025-03-10 18:00:34 [INFO] Rule engine created
+File not found: rules
+      validates rules through CLI [✔]
+2025-03-10 18:00:34 [INFO] Rule engine created
+File not found: rules
+      reports errors for invalid rules [✔]
   Rules Module
     can create an empty RuleSet [✔]
     can create a rule [✔]
-2025-03-10 14:28:40 [INFO] Rule engine created
-2025-03-10 14:28:40 [DEBUG] Evaluating data against rule same-rule-id
-2025-03-10 14:28:40 [DEBUG] Evaluating data against rule unique-rule-id
-2025-03-10 14:28:40 [DEBUG] Evaluating data against rule same-rule-id
-2025-03-10 14:28:40 [DEBUG] Evaluating data against rule same-rule-id
-2025-03-10 14:28:40 [DEBUG] Evaluating data against rule unique-rule-id
+2025-03-10 18:00:34 [INFO] Rule engine created
+2025-03-10 18:00:34 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 18:00:34 [DEBUG] Evaluating data against rule unique-rule-id
+2025-03-10 18:00:34 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 18:00:34 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 18:00:34 [DEBUG] Evaluating data against rule unique-rule-id
     enforces unique rule IDs within a RuleSet [✔]
 
-Finished in 0.0028 seconds
-22 examples, 0 failures, 12 pending
+Finished in 0.5978 seconds
+22 examples, 0 failures
 
 Skipping CLI tests in Nix build environment
 All Hspec tests passed, exiting with success status
@@ -82,3 +107,212 @@ Test suite time-bandits-test: PASS
 Test suite logged to:
 /Users/hxrts/projects/timewave/time-bandits-container/time-bandits/./dist-newstyle/build/aarch64-osx/ghc-9.6.3/time-bandits-0.1.0.0/t/time-bandits-test/test/time-bandits-0.1.0.0-time-bandits-test.log
 1 of 1 test suites (1 of 1 test cases) passed.
+
+
+=== STANDALONE TESTS ===
+
+======================================================
+Running Time Bandits standalone tests
+======================================================
+
+------ Running Schema Evolution Tests ------
+Executing: ghc -o mini_schema_test test/MiniSchemaTest.hs && ./mini_schema_test
+Running simplified Schema evolution tests
+Testing adding a nullable field to a schema...
+Field count before: 2
+Field count after: 3
+Test passed!
+Testing adding a required field (should fail)...
+Correctly rejected required field: must_have
+Exit code: 0
+
+------ Running TECL Parser Tests ------
+Executing: ghc -o mini_tecl_test test/MiniTECLTest.hs && ./mini_tecl_test
+Running simplified TECL tests
+Testing TECL parsing...
+Parsing succeeded!
+Number of statements: 3
+Test passed!
+Testing TECL type checking...
+Type checking succeeded!
+Testing TECL type conversion...
+Int to string: 42
+String to int: 123
+Invalid string to int conversion correctly failed
+Type conversion tests completed
+Exit code: 0
+
+
+=== UNIT TESTS ===
+
+
+Spec.hs:8:16: warning: [GHC-28007] [-Wmisplaced-pragmas]
+    Misplaced OPTIONS pragma
+    Suggested fix:
+      Perhaps you meant to place it in the module header?
+      The module header is the section at the top of the file, before the ‘module’ keyword
+  |
+8 | {-# OPTIONS_GHC -F -pgmF hspec-discover #-}
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Spec.hs:2:1: error:
+    Could not find module ‘SimpleNetworkConfig’
+    Use -v (or `:set -v` in ghci) to see a list of the files searched for.
+  |
+2 | import qualified SimpleNetworkConfig
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Spec.hs:3:1: error:
+    Could not find module ‘TimelineScenarioTest’
+    Use -v (or `:set -v` in ghci) to see a list of the files searched for.
+  |
+3 | import qualified TimelineScenarioTest
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Spec.hs:4:1: error:
+    Could not find module ‘ControllerTest’
+    Use -v (or `:set -v` in ghci) to see a list of the files searched for.
+  |
+4 | import qualified ControllerTest
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Spec.hs:5:1: error:
+    Could not find module ‘TimelineDescriptorTest’
+    Use -v (or `:set -v` in ghci) to see a list of the files searched for.
+  |
+5 | import qualified TimelineDescriptorTest
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Spec.hs:6:1: error:
+    Could not find module ‘DistributedLogTest’
+    Use -v (or `:set -v` in ghci) to see a list of the files searched for.
+  |
+6 | import qualified DistributedLogTest
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+=== ADDITIONAL TESTS ===
+
+Found        7 additional Mini test files to run
+
+--- Running MiniTECLTest ---
+
+=== BEGIN TEST OUTPUT (MiniTECLTest - PASSED) ===
+Running simplified TECL tests
+Testing TECL parsing...
+Parsing succeeded!
+Number of statements: 3
+Test passed!
+Testing TECL type checking...
+Type checking succeeded!
+Testing TECL type conversion...
+Int to string: 42
+String to int: 123
+Invalid string to int conversion correctly failed
+Type conversion tests completed
+=== END TEST OUTPUT (MiniTECLTest - PASSED) ===
+MiniTECLTest: ✅ PASSED
+
+--- Running MiniTimelineTest ---
+
+=== BEGIN TEST OUTPUT (MiniTimelineTest - PASSED) ===
+Running simplified Timeline tests
+Testing Timeline creation...
+Timeline ID: tl_test-timeline
+Timeline name: test-timeline
+Timeline branch count: 1
+Timeline created with correct branch count!
+
+Testing Timeline branching...
+Timeline branch count after branching: 2
+Timeline branched successfully!
+Branch has correct parent reference!
+
+Testing Timeline events...
+Event count in main branch: 2
+Events added successfully!
+Events are in correct order!
+=== END TEST OUTPUT (MiniTimelineTest - PASSED) ===
+MiniTimelineTest: ✅ PASSED
+
+--- Running MiniConsensusTest ---
+
+=== BEGIN TEST OUTPUT (MiniConsensusTest - PASSED) ===
+Running simplified Consensus tests
+Testing basic consensus functionality...
+Initial state: 5 nodes, 0 votes
+Vote percentages:
+  block1: 60.0%
+  block2: 40.0%
+Consensus for block1: True
+Consensus for block2: False
+Consensus reached for: block1
+
+Testing changing votes...
+Initial voting state:
+  block1: 100.0%
+After vote changes:
+  block1: 33.33333333333333%
+  block2: 66.66666666666666%
+No block has reached consensus after vote changes
+=== END TEST OUTPUT (MiniConsensusTest - PASSED) ===
+MiniConsensusTest: ✅ PASSED
+
+--- Running MiniNetworkTest ---
+
+=== BEGIN TEST OUTPUT (MiniNetworkTest - PASSED) ===
+Running simplified Network peer discovery tests
+Testing peer selection using rendezvous hashing...
+Target peer: PeerId "target123"
+Selected 3 peers:
+  192.168.1.1:8000
+  192.168.1.3:8000
+  192.168.1.2:8000
+Correct number of peers selected!
+
+Testing peer list updates...
+Initial peer count: 2
+Updated peer count: 3
+Correct number of peers after update!
+=== END TEST OUTPUT (MiniNetworkTest - PASSED) ===
+MiniNetworkTest: ✅ PASSED
+
+--- Running MiniSchemaTest ---
+
+=== BEGIN TEST OUTPUT (MiniSchemaTest - PASSED) ===
+Running simplified Schema evolution tests
+Testing adding a nullable field to a schema...
+Field count before: 2
+Field count after: 3
+Test passed!
+Testing adding a required field (should fail)...
+Correctly rejected required field: must_have
+=== END TEST OUTPUT (MiniSchemaTest - PASSED) ===
+MiniSchemaTest: ✅ PASSED
+
+--- Running MiniLogTest ---
+
+=== BEGIN TEST OUTPUT (MiniLogTest - PASSED) ===
+Running simplified Core Log tests
+Testing basic logging functionality...
+Initial log count: 0
+Log count after first entry: 1
+First log ID: LogID "testThis is a test message"
+Log count after second entry: 2
+First log entry retrieved successfully
+Second log entry retrieved successfully
+  Level: Warning
+  Message: Warning message
+  Context: testing
+=== END TEST OUTPUT (MiniLogTest - PASSED) ===
+MiniLogTest: ✅ PASSED
+
+--- Running MiniFactObservationTest ---
+
+=== BEGIN TEST OUTPUT (MiniFactObservationTest - PASSED) ===
+Running simplified FactObservation tests
+Testing FactObservation rule validation...
+Valid rule validated successfully!
+Correctly rejected rule with empty name
+=== END TEST OUTPUT (MiniFactObservationTest - PASSED) ===
+MiniFactObservationTest: ✅ PASSED

@@ -110,13 +110,14 @@ spec = describe "Fact Observation Engine" $ do
       -- Create a test engine with standard config
       engine <- Engine.createEngine createTestConfig
       
-      -- Create a sample rule to test
-      let rule = createSampleRule "test-rule" Rules.PriceObservation
-          -- Create test data with the expected structure that matches the path expression
-          testData = object [ "test-source" .= object [ "price" .= (120 :: Int) ] ]
+      -- Create a test rule
+      let testRule = createSampleRule "test-rule" Rules.PriceObservation
       
-      -- Evaluate the rule against our test data
-      result <- Engine.evaluateDataWithRule engine rule testData
+      -- Create test data - structured to match path expression
+      let testData = object [ "test-source" .= object [ "price" .= (120 :: Int) ] ]
+      
+      -- Evaluate the data against the rule
+      result <- Engine.evaluateDataWithRule engine testRule testData
       
       -- Verify the result
       case result of

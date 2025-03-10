@@ -63,7 +63,7 @@ nix run .#generate-minimal-report -- test-report-out
 
 Where `[use_nix]` is optional and can be set to either `true` or `false` to specify whether to use Nix or Cabal for building and running tests. If Nix fails, the script will automatically fall back to Cabal.
 
-All test reports are stored in the `test-report-out` directory in the project root, with timestamped filenames. A symbolic link `latest_report.md` always points to the most recent report.
+All test reports are stored in the `test-report-out` directory in the project root, with timestamped filenames. A file named `latest_report.md` is always a copy of the most recent report, which can be safely checked into git.
 
 To view the latest test report:
 

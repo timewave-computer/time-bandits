@@ -82,7 +82,7 @@ cabal run generate-test-report -- [output-directory]
 nix run .#test-report-generator -- [output-directory]
 ```
 
-The generated reports will be available in the output directory (defaults to `test-reports`), with the latest report always available as `latest_report.md`.
+The generated reports will be available in the output directory (defaults to `test-reports`), with the most recent report always copied to `latest_report.md` for easy access and git tracking.
 
 ## Design Notes
 
