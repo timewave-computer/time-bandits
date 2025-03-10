@@ -177,7 +177,7 @@ spec = describe "Fact Observation Integration" $ do
               , Rules.proof = Rules.NoProof
               }
         
-        -- Create test data that matches both conditions
+        -- Create data that matches both conditions
         let testData = object
               [ "market-data" .= object
                   [ "price" .= object

@@ -10,22 +10,16 @@ module TestReport (
   writeReport
 ) where
 
--- Import Text properly to avoid ambiguity
-import qualified Data.Text as T
-
--- Text type is from the TextShow instance in scope, no need to import Data.Text
--- import Data.Text (Text)
--- FilePath is imported from Prelude, so we don't need this explicit import
--- import System.FilePath (FilePath)
+import Data.Text (Text)
 
 data TestReport = TestReport deriving stock Show
 data TestResult = TestResult {
-  testName :: T.Text,
-  testModule :: T.Text,
-  testDescription :: T.Text,
+  testName :: Text,
+  testModule :: Text,
+  testDescription :: Text,
   testStatus :: ResultStatus,
   testDuration :: Double,
-  testMessage :: Maybe T.Text
+  testMessage :: Maybe Text
 } deriving stock Show
 data ResultStatus = Pass | Fail | Skip deriving stock Show
 

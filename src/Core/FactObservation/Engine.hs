@@ -269,8 +269,8 @@ evaluateDataWithRule engine rule inputData = do
       return $ Left $ DataEvaluationError err
       
     Right extractedValue -> do
-      -- Evaluate conditions
-      conditionResult <- evaluateConditions (conditions rule) extractedValue
+      -- Evaluate conditions against the original input data
+      conditionResult <- evaluateConditions (conditions rule) inputData
       case conditionResult of
         Left err -> do
           logError logger $ "Condition evaluation failed: " <> err
@@ -334,7 +334,10 @@ generateFactWithProof rule extractedData proofData = do
   let result = FactResult
         { factRuleId = ruleId rule
         , factType = Rules.factType rule
-        , factData = extractedData
+        , factData = case extractedData of
+            -- If the extracted data is not already an object, wrap it in one with the selector as the key
+            Object _ -> extractedData
+            _ -> object [ Key.fromText (selector (path rule)) .= extractedData ]
         , factProof = proofData
         , factTimestamp = now
         , factSource = source (path rule)
@@ -349,10 +352,9 @@ storeFact engine factResult = do
   let logger = engineLogger engine
   let factsDir = configFactsDirectory (engineConfig engine)
   
-  -- Create a filename based on the fact type and timestamp
-  timestamp <- formatTimeString (factTimestamp factResult)
+  -- Create a filename based on the fact type (without timestamp)
   let FactResult{factType=ft} = factResult  -- using pattern matching
-      filename = factsDir </> T.unpack (factType' <> "-" <> factRuleId factResult <> "-" <> timestamp <> ".json")
+      filename = factsDir </> T.unpack (factType' <> "-" <> factRuleId factResult <> ".json")
       factType' = case ft of
         CustomFact name -> name
         other -> T.pack $ show other
@@ -411,8 +413,13 @@ extractBySelector selector value =
     [] -> Just value
     (key:rest) -> case value of
       Object obj -> do
-        nextValue <- KeyMap.lookup (Key.fromText key) obj
-        extractBySelector (T.intercalate "." rest) nextValue
+        -- First try to find the exact selector as a direct key
+        case KeyMap.lookup (Key.fromText selector) obj of
+          Just directValue -> Just directValue
+          Nothing -> do
+            -- If not found, try to navigate the hierarchy
+            nextValue <- KeyMap.lookup (Key.fromText key) obj
+            extractBySelector (T.intercalate "." rest) nextValue
       _ -> Nothing
 
 -- | Evaluate conditions against extracted data
@@ -431,18 +438,21 @@ evaluateConditions conditions value = do
 evaluateCondition :: Condition -> Value -> IO (Either Text Bool)
 evaluateCondition (ComparisonCondition field operator condValue) inputValue = do
   -- Extract the field from the input
-  case extractField field inputValue of
-    Nothing -> return $ Left $ "Field '" <> field <> "' not found in data"
-    Just fieldValue -> do
-      -- Compare based on the operator
-      case operator of
-        "==" -> return $ Right $ fieldValue == condValue
-        "!=" -> return $ Right $ fieldValue /= condValue
-        ">"  -> return $ compareValues (>) fieldValue condValue
-        ">=" -> return $ compareValues (>=) fieldValue condValue
-        "<"  -> return $ compareValues (<) fieldValue condValue
-        "<=" -> return $ compareValues (<=) fieldValue condValue
-        _    -> return $ Left $ "Unknown operator: " <> operator
+  -- First try to extract directly from the input
+  let fieldValue = extractField field inputValue
+  case fieldValue of
+    Nothing -> 
+      -- If not found directly, try to find it in the source data
+      case inputValue of
+        Object obj -> do
+          -- Try to find the field in each of the source objects
+          let sourceValues = map snd (KeyMap.toList obj)
+          let results = catMaybes $ map (extractField field) sourceValues
+          case results of
+            [] -> return $ Left $ "Field '" <> field <> "' not found in data"
+            (value:_) -> compareWithOperator operator value condValue
+        _ -> return $ Left $ "Field '" <> field <> "' not found in data"
+    Just value -> compareWithOperator operator value condValue
 
 evaluateCondition (LogicalCondition op subConditions) inputValue = do
   -- Evaluate each sub-condition
@@ -464,9 +474,28 @@ evaluateCondition (ExistsCondition field) inputValue = do
   let exists = isJust $ extractField field inputValue
   return $ Right exists
 
+-- Helper function to compare values with the given operator
+compareWithOperator :: Text -> Value -> Value -> IO (Either Text Bool)
+compareWithOperator operator fieldValue condValue = do
+  -- Compare based on the operator
+  case operator of
+    "==" -> return $ Right $ fieldValue == condValue
+    "!=" -> return $ Right $ fieldValue /= condValue
+    ">"  -> return $ compareValues (>) fieldValue condValue
+    ">=" -> return $ compareValues (>=) fieldValue condValue
+    "<"  -> return $ compareValues (<) fieldValue condValue
+    "<=" -> return $ compareValues (<=) fieldValue condValue
+    _    -> return $ Left $ "Unknown operator: " <> operator
+
 -- | Extract a field from a value
 extractField :: Text -> Value -> Maybe Value
-extractField field = extractBySelector field
+extractField field value = 
+  -- First try to find the field directly in the value
+  case value of
+    Object obj -> case KeyMap.lookup (Key.fromText field) obj of
+      Just directValue -> Just directValue
+      Nothing -> extractBySelector field value
+    _ -> extractBySelector field value
 
 -- | Compare two JSON values
 compareValues :: (Double -> Double -> Bool) -> Value -> Value -> Either Text Bool
