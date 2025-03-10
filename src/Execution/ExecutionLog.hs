@@ -34,6 +34,7 @@ module Execution.ExecutionLog
   , queryLog
   , verifyLogChain
   , exportLogToFile
+  , getLogEntries
   
   -- * Re-exports from TransitionMessage
   , LogEntry(..)
@@ -47,11 +48,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
-import Polysemy (Member, Sem)
+import Polysemy (Member, Sem, Embed)
 import Polysemy.Error (Error, throw, catch)
+import Polysemy.Embed (embed)
 import System.IO (IOMode(..), withFile)
 import qualified Data.ByteString.Char8 as BS
 import Data.Foldable (foldl)
+import Data.Time.Clock (getCurrentTime, UTCTime)
+import qualified Execution.LogStore as Execution.LogStore
 
 -- Import from TimeBandits modules
 import Core (Hash(..), EntityHash(..))
@@ -236,6 +240,35 @@ queryLog store query = do
       case results of
         [] -> pure []
         (first:rest) -> pure $ foldl intersectEntries first rest
+
+-- | Get all log entries from the execution log
+getLogEntries ::
+  (Member (Error AppError) r, Member (Embed IO) r) =>
+  ExecutionLog ->
+  Sem r [Execution.LogStore.LogEntry]
+getLogEntries log = do
+  -- Get all entries as TransitionMessage.LogEntry
+  let transitionEntries = Map.elems (entries log)
+  
+  -- Convert each TransitionMessage.LogEntry to LogStore.LogEntry
+  -- In a real implementation, this would properly map between the two types
+  -- For now, we create dummy LogStore.LogEntry objects
+  now <- embed getCurrentTime
+  
+  pure $ map (convertToLogStoreEntry now) transitionEntries
+  where
+    -- Convert a TransitionMessage.LogEntry to a LogStore.LogEntry
+    convertToLogStoreEntry :: UTCTime -> Actors.TransitionMessage.LogEntry -> Execution.LogStore.LogEntry
+    convertToLogStoreEntry now entry = 
+      Execution.LogStore.LogEntry
+        { Execution.LogStore.logTimestamp = now
+        , Execution.LogStore.logLevel = Execution.LogStore.Info
+        , Execution.LogStore.logCategory = Execution.LogStore.Effect
+        , Execution.LogStore.logMessage = "Converted log entry: " <> T.pack (show (entryId entry))
+        , Execution.LogStore.logSource = "ExecutionLog.getLogEntries"
+        , Execution.LogStore.logTimelineHash = Nothing
+        , Execution.LogStore.logData = Map.empty
+        }
 
 -- | Resolve a list of entry IDs to entries
 resolveEntries ::

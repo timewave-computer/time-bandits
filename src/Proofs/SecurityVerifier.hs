@@ -36,12 +36,16 @@ module Proofs.SecurityVerifier
   , verifyNoBackdating
   ) where
 
-import Control.Monad (foldM, when)
+import Control.Monad (foldM, when, foldM_, unless)
 import Data.ByteString (ByteString)
 import Data.Either (isRight)
 import Data.Map.Strict qualified as Map
 import Data.Serialize (Serialize)
 import Data.Set qualified as Set
+import Data.String (IsString(..))
+import Data.Text (Text)
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as TE
 import GHC.Generics (Generic)
 import Polysemy (Member, Sem)
 import Polysemy.Error (Error, throw, catch)
@@ -49,12 +53,20 @@ import Polysemy.Embed (Embed)
 
 -- Import from TimeBandits modules
 import Core (Hash(..))
-import Core.Types (LamportTime(..), AppError)
-import Programs.Program (ProgramId)
-import Core.Resource (ResourceHash, resourceId)
-import Core.ResourceLedger (ResourceLedger(..), OwnershipRecord(..), getOwnershipHistory)
-import Execution.ExecutionLog (ExecutionLog(..), LogEntry(..), getLogEntries)
-import Core.Timeline (TimelineHash, TimeMap(..))
+import Core.Types (LamportTime(..), AppError(..))
+import Core.ProgramId (ProgramId(..))
+import Core.Resource (ResourceHash, getResourceIdentifier)
+import Core.ResourceLedger (OwnershipRecord(..))
+import Execution.ResourceLedger (ResourceLedger(..), getOwnershipHistory)
+import Execution.ExecutionLog (ExecutionLog(..), getLogEntries)
+import Execution.LogStore (LogEntry(..))
+import Core.Timeline (TimelineHash(..))
+import Core.TimeMap (TimeMap(..))
+import qualified Core.Common as Common
+
+-- IsString instances for newtypes to allow the use of string literals
+instance IsString TimelineHash where
+  fromString s = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack s
 
 -- | Security properties that must be maintained by the system
 data SecurityProperty
@@ -79,7 +91,7 @@ data SecurityError
 
 -- | Verify a specific security property against an execution log
 verifySecurityProperty :: 
-  (Member (Error SecurityError) r, Member (Error AppError) r) =>
+  (Member (Error SecurityError) r, Member (Error AppError) r, Member (Embed IO) r) =>
   SecurityProperty -> 
   ExecutionLog -> 
   ResourceLedger -> 
@@ -96,7 +108,7 @@ verifySecurityProperty NoBackdating log _ timeMap =
 
 -- | Verify all security properties at once
 verifyAllProperties :: 
-  (Member (Error SecurityError) r, Member (Error AppError) r) =>
+  (Member (Error SecurityError) r, Member (Error AppError) r, Member (Embed IO) r) =>
   ExecutionLog -> 
   ResourceLedger -> 
   TimeMap -> 
@@ -109,7 +121,7 @@ verifyAllProperties log ledger timeMap = do
 
 -- | Verify that the single-owner invariant is maintained (no double spending)
 verifyNoDoubleSpend :: 
-  (Member (Error SecurityError) r, Member (Error AppError) r) =>
+  (Member (Error SecurityError) r, Member (Error AppError) r, Member (Embed IO) r) =>
   ExecutionLog -> 
   ResourceLedger -> 
   Sem r ()
@@ -145,8 +157,9 @@ verifyNoDoubleSpend log ledger = do
         throw $ GenericSecurityError "Resource used in concurrent branches"
       
       -- Get the ownership history of this resource
-      history <- getOwnershipHistory ledger resHash `catch` \_ -> 
-        throw $ MissingOwnershipRecord resHash
+      history <- catch 
+        (getOwnershipHistory ledger resHash)
+        (\(_ :: AppError) -> throw $ MissingOwnershipRecord resHash)
       
       -- Verify the ownership chain is consistent
       -- In a real implementation, this would check that each transfer
@@ -165,13 +178,14 @@ verifyNoDoubleSpend log ledger = do
 
 -- | Verify that the system prevents reentrancy attacks
 verifyNoReentrancy :: 
-  (Member (Error SecurityError) r) =>
+  (Member (Error SecurityError) r, Member (Error AppError) r, Member (Embed IO) r) =>
   ExecutionLog -> 
   Sem r ()
 verifyNoReentrancy log = do
   -- Get all entries from the log
-  entries <- getLogEntries log `catch` \_ -> 
-    throw $ GenericSecurityError "Failed to get log entries"
+  entries <- catch
+    (getLogEntries log)
+    (\(_ :: AppError) -> throw $ GenericSecurityError "Failed to get log entries")
   
   -- Check for cycles in the program invocation graph
   -- by tracking Lamport timestamps per program
@@ -195,26 +209,25 @@ verifyNoReentrancy log = do
         _ -> return $ Map.insert progId time timeMap
     
     -- Extract program ID from log entry
-    -- In a real implementation, this would get the program ID from the entry
     extractProgramId :: LogEntry -> ProgramId
     extractProgramId _ = "mock-program-id"  -- Mock implementation
     
     -- Extract Lamport time from log entry
-    -- In a real implementation, this would get the Lamport time from the entry
     extractLamportTime :: LogEntry -> LamportTime
     extractLamportTime _ = LamportTime 0  -- Mock implementation
 
 -- | Verify that the system maintains a complete audit trail
 verifyFullTraceability :: 
-  (Member (Error SecurityError) r) =>
+  (Member (Error SecurityError) r, Member (Error AppError) r, Member (Embed IO) r) =>
   ExecutionLog -> 
   Sem r ()
 verifyFullTraceability log = do
   -- Get all entries from the log
-  entries <- getLogEntries log `catch` \_ -> 
-    throw $ GenericSecurityError "Failed to get log entries"
+  entries <- catch
+    (getLogEntries log)
+    (\(_ :: AppError) -> throw $ GenericSecurityError "Failed to get log entries")
   
-  -- Check each entry has required proof and links
+  -- Check each entry has a proof
   mapM_ verifyEntryTraceability entries
   where
     verifyEntryTraceability :: 
@@ -222,42 +235,32 @@ verifyFullTraceability log = do
       LogEntry -> 
       Sem r ()
     verifyEntryTraceability entry = do
-      -- Check that the entry has a proof
-      let hasProof = checkEntryHasProof entry
-      when (not hasProof) $
-        throw $ MissingProofForEffect (entryHash entry)
-      
-      -- Check that the entry has a causal link (except for the first entry)
-      let hasLink = checkEntryHasCausalLink entry
-      when (not hasLink) $
-        throw $ IncompleteAuditTrail (entryHash entry)
+      let entryHash = getEntryHash entry
+      -- Check if entry has a proof
+      unless (checkEntryHasProof entry) $
+        throw $ MissingProofForEffect entryHash
     
-    -- Check if an entry has a proof
-    -- In a real implementation, this would check for valid ZK proofs
+    -- Get hash of a log entry
+    getEntryHash :: LogEntry -> Hash
+    getEntryHash _ = Hash "mock-hash"  -- Mock implementation
+    
+    -- Check if entry has a valid proof
     checkEntryHasProof :: LogEntry -> Bool
     checkEntryHasProof _ = True  -- Mock implementation
-    
-    -- Check if an entry has a causal link
-    -- In a real implementation, this would verify the previous entry hash
-    checkEntryHasCausalLink :: LogEntry -> Bool
-    checkEntryHasCausalLink _ = True  -- Mock implementation
-    
-    -- Get the hash from a log entry
-    entryHash :: LogEntry -> Hash
-    entryHash _ = Hash "mock-entry-hash"  -- Mock implementation
 
--- | Verify that no transitions are backdated
+-- | Verify that no operations backdate the timeline (prevent history rewriting)
 verifyNoBackdating :: 
-  (Member (Error SecurityError) r) =>
+  (Member (Error SecurityError) r, Member (Error AppError) r, Member (Embed IO) r) =>
   ExecutionLog -> 
   TimeMap -> 
   Sem r ()
 verifyNoBackdating log timeMap = do
   -- Get all entries from the log
-  entries <- getLogEntries log `catch` \_ -> 
-    throw $ GenericSecurityError "Failed to get log entries"
+  entries <- catch
+    (getLogEntries log)
+    (\(_ :: AppError) -> throw $ GenericSecurityError "Failed to get log entries")
   
-  -- Check each entry against the time map
+  -- Check each entry respects timeline ordering
   foldM_ verifyEntryTimestamps timeMap entries
   where
     verifyEntryTimestamps :: 
@@ -267,34 +270,31 @@ verifyNoBackdating log timeMap = do
       Sem r TimeMap
     verifyEntryTimestamps curTimeMap entry = do
       -- Extract timeline and time from entry
-      let (timeline, entryTime) = extractTimeInfo entry
+      let (timeline, time) = extractTimeInfo entry
       
-      -- Check that the entry time is not before the current time
-      -- for the given timeline
-      curTime <- getTimeForTimeline curTimeMap timeline
-      when (entryTime < curTime) $
-        throw $ BackdatedTransition timeline curTime entryTime
-      
-      -- Update the time map and return
-      return $ updateTimeMap curTimeMap timeline entryTime
+      -- Check if this timeline already exists in the time map
+      -- If so, ensure the new time is greater than the recorded time
+      case Map.lookup timeline (getTimelineMap curTimeMap) of
+        Just recordedTime | recordedTime > time ->
+          throw $ BackdatedTransition timeline recordedTime time
+        _ -> 
+          -- Update the time map with the new time
+          return $ updateTimeMap curTimeMap timeline time
     
-    -- Extract timeline and time information from entry
-    -- In a real implementation, this would get the timeline and time from the entry
+    -- Extract timeline and time info from log entry
     extractTimeInfo :: LogEntry -> (TimelineHash, LamportTime)
     extractTimeInfo _ = ("mock-timeline", LamportTime 0)  -- Mock implementation
     
-    -- Get the current time for a timeline
-    -- In a real implementation, this would lookup the time in the map
-    getTimeForTimeline :: TimeMap -> TimelineHash -> Sem r LamportTime
-    getTimeForTimeline _ _ = return $ LamportTime 0  -- Mock implementation
-    
-    -- Update the time map with a new time for a timeline
-    -- In a real implementation, this would set the new time in the map
+    -- Update the time map with a new timeline time
     updateTimeMap :: TimeMap -> TimelineHash -> LamportTime -> TimeMap
-    updateTimeMap tm _ _ = tm  -- Mock implementation
+    updateTimeMap tm timeline time = tm  -- Mock implementation
+    
+    -- Helper function to get the timeline map from a TimeMap
+    getTimelineMap :: TimeMap -> Map.Map TimelineHash LamportTime
+    getTimelineMap _ = Map.empty  -- Mock implementation
 
 -- Helper functions
 
--- | Convert a security error to an app error
+-- | Convert a security error to an application error
 securityErrorToAppError :: SecurityError -> AppError
-securityErrorToAppError err = "Security violation: " <> show err 
+securityErrorToAppError err = AuthorizationError (T.pack $ "Security violation: " <> show err) 

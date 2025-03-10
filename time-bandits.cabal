@@ -231,6 +231,13 @@ executable time-bandits
     , time-bandits
     , utf8-string
 
+executable deployment-app
+  import:         shared
+  main-is:        DeploymentApp.hs
+  hs-source-dirs: app
+  build-depends:
+    , time-bandits
+
 executable fact-observation-cli
   import:          shared
   hs-source-dirs:  app

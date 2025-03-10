@@ -1,4 +1,4 @@
-# ADR 013: Content-Addressed Code
+# ADR 011: Content-Addressed Code
 
 ## Status
 

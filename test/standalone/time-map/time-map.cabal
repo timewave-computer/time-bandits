@@ -1,0 +1,28 @@
+cabal-version:      2.4
+name:               time-map
+version:            0.1.0.0
+synopsis:           Standalone test for TimeMap
+description:        A standalone test for the TimeMap component of Time Bandits
+author:             Time Bandits
+maintainer:         time-bandits@example.com
+category:           Testing
+build-type:         Simple
+
+common warnings
+    ghc-options: -Wall
+
+executable time-map
+    import:           warnings
+    main-is:          Main.hs
+    other-modules:    TimeMap
+                    , Timeline
+                    , Types
+    build-depends:    base >=4.14 && <5
+                    , containers
+                    , text
+                    , bytestring
+                    , mtl
+                    , aeson
+                    , cereal
+    hs-source-dirs:   app
+    default-language: Haskell2010 
