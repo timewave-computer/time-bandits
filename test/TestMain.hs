@@ -10,6 +10,7 @@ import qualified Test.Unit.Proofs.ZKProofTest as ZKProofTest
 
 -- Integration tests
 import qualified Test.Integration.ProgramExecution.TimelineScenarioTest as TimelineScenarioTest
+import qualified TestModeScenarioTest as TestModeScenarioTest
 
 -- Fixtures
 import qualified Test.Fixtures.SimpleNetworkConfig as SimpleNetworkConfig
@@ -31,6 +32,7 @@ main = Tasty.defaultMain $ Tasty.testGroup "Time Bandits Tests"
   , Tasty.testGroup "Integration Tests"
     [ Tasty.testGroup "Program Execution"
       [ TimelineScenarioTest.tests
+      , TestModeScenarioTest.tests
       ]
     ]
   , Tasty.testGroup "Fixtures"

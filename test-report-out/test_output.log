@@ -25,80 +25,80 @@ Fact Observation Tests
       should attempt to parse a rule set [✔]
   Fact Observation Engine
     Engine initialization
-2025-03-10 18:08:57 [INFO] Rule engine created
+2025-03-10 21:49:37 [INFO] Rule engine created
       creates a fact observation engine with default config [✔]
     Rule evaluation
-2025-03-10 18:08:57 [INFO] Rule engine created
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule test-rule
-2025-03-10 18:08:57 [INFO] Rule test-rule matched, generating fact
-2025-03-10 18:08:57 [INFO] Stored fact in facts/PriceObservation-test-rule.json
+2025-03-10 21:49:37 [INFO] Rule engine created
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule test-rule
+2025-03-10 21:49:37 [INFO] Rule test-rule matched, generating fact
+2025-03-10 21:49:37 [INFO] Stored fact in facts/PriceObservation-test-rule.json
       evaluates rules against input data [✔]
-2025-03-10 18:08:57 [INFO] Rule engine created
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule passing-rule
-2025-03-10 18:08:57 [INFO] Rule passing-rule matched, generating fact
-2025-03-10 18:08:57 [INFO] Stored fact in facts/PriceObservation-passing-rule.json
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule failing-rule
-2025-03-10 18:08:57 [DEBUG] Rule failing-rule did not match
+2025-03-10 21:49:37 [INFO] Rule engine created
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule passing-rule
+2025-03-10 21:49:37 [INFO] Rule passing-rule matched, generating fact
+2025-03-10 21:49:37 [INFO] Stored fact in facts/PriceObservation-passing-rule.json
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule failing-rule
+2025-03-10 21:49:37 [DEBUG] Rule failing-rule did not match
       handles rule conditions correctly [✔]
     Rule loading and validation
-2025-03-10 18:08:57 [INFO] Rule engine created
-2025-03-10 18:08:57 [INFO] Loading rules from directory /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-c98e9839f3865417
-2025-03-10 18:08:57 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-c98e9839f3865417/rule1.toml
-2025-03-10 18:08:57 [INFO] Loaded 0 rules
-2025-03-10 18:08:57 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-c98e9839f3865417/rule2.toml
-2025-03-10 18:08:57 [INFO] Loaded 0 rules
-2025-03-10 18:08:57 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-c98e9839f3865417/rule3.toml
-2025-03-10 18:08:57 [INFO] Loaded 0 rules
-2025-03-10 18:08:57 [INFO] Loaded 0 rules from 3 files
+2025-03-10 21:49:37 [INFO] Rule engine created
+2025-03-10 21:49:37 [INFO] Loading rules from directory /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-69d59138b783d563
+2025-03-10 21:49:37 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-69d59138b783d563/rule1.toml
+2025-03-10 21:49:37 [INFO] Loaded 0 rules
+2025-03-10 21:49:37 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-69d59138b783d563/rule2.toml
+2025-03-10 21:49:37 [INFO] Loaded 0 rules
+2025-03-10 21:49:37 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-69d59138b783d563/rule3.toml
+2025-03-10 21:49:37 [INFO] Loaded 0 rules
+2025-03-10 21:49:37 [INFO] Loaded 0 rules from 3 files
       loads rules from a directory [✔]
-2025-03-10 18:08:57 [INFO] Rule engine created
-2025-03-10 18:08:57 [INFO] Loading rules from directory /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-03070571bac3a900
-2025-03-10 18:08:57 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-03070571bac3a900/invalid_rule_invalid.toml
-2025-03-10 18:08:57 [INFO] Loaded 0 rules
-2025-03-10 18:08:57 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-03070571bac3a900/valid_rule.toml
-2025-03-10 18:08:57 [INFO] Loaded 0 rules
-2025-03-10 18:08:57 [INFO] Loaded 0 rules from 2 files
+2025-03-10 21:49:37 [INFO] Rule engine created
+2025-03-10 21:49:37 [INFO] Loading rules from directory /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-c033d8dc7cc84980
+2025-03-10 21:49:37 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-c033d8dc7cc84980/invalid_rule_invalid.toml
+2025-03-10 21:49:37 [INFO] Loaded 0 rules
+2025-03-10 21:49:37 [INFO] Loading rules from /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/test-rules-validation-c033d8dc7cc84980/valid_rule.toml
+2025-03-10 21:49:37 [INFO] Loaded 0 rules
+2025-03-10 21:49:37 [INFO] Loaded 0 rules from 2 files
       validates rules during loading [✔]
   Fact Observation Integration
     End-to-end rule processing
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule price-alert
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule price-alert
       loads rules from TOML files and evaluates them [✔]
-2025-03-10 18:08:57 [INFO] Rule engine created
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule multi-condition-rule
-2025-03-10 18:08:57 [INFO] Rule multi-condition-rule matched, generating fact
-2025-03-10 18:08:57 [INFO] Stored fact in /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/multi-condition-test-631df54e938e922c/PriceObservation-multi-condition-rule.json
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule multi-condition-rule
-2025-03-10 18:08:57 [DEBUG] Rule multi-condition-rule did not match
+2025-03-10 21:49:37 [INFO] Rule engine created
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule multi-condition-rule
+2025-03-10 21:49:37 [INFO] Rule multi-condition-rule matched, generating fact
+2025-03-10 21:49:37 [INFO] Stored fact in /private/tmp/nix-shell.O3FdZL/nix-shell.TMdg5c/multi-condition-test-4b723bbc1956ac7a/PriceObservation-multi-condition-rule.json
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule multi-condition-rule
+2025-03-10 21:49:37 [DEBUG] Rule multi-condition-rule did not match
       processes rules with multiple conditions [✔]
     Configuration integration
-2025-03-10 18:08:57 [DEBUG] Evaluating data against rule proof-test-rule
+2025-03-10 21:49:37 [DEBUG] Evaluating data against rule proof-test-rule
       correctly applies engine configuration [✔]
   Fact Observation CLI
     CLI commands
-2025-03-10 18:08:58 [INFO] Rule engine created
+2025-03-10 21:49:37 [INFO] Rule engine created
       runs with help flag [✔]
-2025-03-10 18:08:58 [INFO] Rule engine created
-2025-03-10 18:08:58 [INFO] Loading rules from directory rules
-2025-03-10 18:08:58 [INFO] Loaded 0 rules from 0 files
+2025-03-10 21:49:38 [INFO] Rule engine created
+2025-03-10 21:49:38 [INFO] Loading rules from directory rules
+2025-03-10 21:49:38 [INFO] Loaded 0 rules from 0 files
       loads rules from a directory [✔]
-2025-03-10 18:08:58 [INFO] Rule engine created
+2025-03-10 21:49:38 [INFO] Rule engine created
 File not found: rules
       validates rules through CLI [✔]
-2025-03-10 18:08:58 [INFO] Rule engine created
+2025-03-10 21:49:38 [INFO] Rule engine created
 File not found: rules
       reports errors for invalid rules [✔]
   Rules Module
     can create an empty RuleSet [✔]
     can create a rule [✔]
-2025-03-10 18:08:58 [INFO] Rule engine created
-2025-03-10 18:08:58 [DEBUG] Evaluating data against rule same-rule-id
-2025-03-10 18:08:58 [DEBUG] Evaluating data against rule unique-rule-id
-2025-03-10 18:08:58 [DEBUG] Evaluating data against rule same-rule-id
-2025-03-10 18:08:58 [DEBUG] Evaluating data against rule same-rule-id
-2025-03-10 18:08:58 [DEBUG] Evaluating data against rule unique-rule-id
+2025-03-10 21:49:38 [INFO] Rule engine created
+2025-03-10 21:49:38 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 21:49:38 [DEBUG] Evaluating data against rule unique-rule-id
+2025-03-10 21:49:38 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 21:49:38 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 21:49:38 [DEBUG] Evaluating data against rule unique-rule-id
     enforces unique rule IDs within a RuleSet [✔]
 
-Finished in 0.5673 seconds
+Finished in 0.5589 seconds
 22 examples, 0 failures
 
 Skipping CLI tests in Nix build environment
