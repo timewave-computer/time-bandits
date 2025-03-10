@@ -352,10 +352,9 @@ storeFact engine factResult = do
   let logger = engineLogger engine
   let factsDir = configFactsDirectory (engineConfig engine)
   
-  -- Create a filename based on the fact type and timestamp
-  timestamp <- formatTimeString (factTimestamp factResult)
+  -- Create a filename based on the fact type (without timestamp)
   let FactResult{factType=ft} = factResult  -- using pattern matching
-      filename = factsDir </> T.unpack (factType' <> "-" <> factRuleId factResult <> "-" <> timestamp <> ".json")
+      filename = factsDir </> T.unpack (factType' <> "-" <> factRuleId factResult <> ".json")
       factType' = case ft of
         CustomFact name -> name
         other -> T.pack $ show other
