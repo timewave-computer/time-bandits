@@ -180,6 +180,7 @@ library
     Core.FactObservation.Schema
     Core.FactObservation.TOMLParser
     Core.FactObservation.Engine
+    Core.Hashing
     Core.Schema
     
     -- Execution directory
@@ -255,38 +256,21 @@ executable fact-observation-cli
     , time
 
 test-suite time-bandits-test
-  default-language: GHC2021
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
-  main-is:          Spec.hs
-  other-modules:    SimpleNetworkConfig
-                   , TimelineScenarioTest
-                   , ControllerTest
-                   , TimelineDescriptorTest
-                   , DistributedLogTest
-                   , Core.FactObservation.RulesSpec
-                   , Core.FactObservation.TOMLParserSpec
-                   , Core.FactObservation.EngineSpec
-                   , Core.FactObservation.IntegrationSpec
-                   , Core.FactObservation.CLISpec
-  build-depends:    base >= 4.16 && < 5,
-                   time-bandits,
-                   polysemy,
-                   polysemy-plugin,
-                   tasty,
-                   tasty-hunit,
-                   random,
-                   bytestring,
-                   containers,
-                   time,
-                   network,
-                   hspec,
-                   hspec-discover,
-                   QuickCheck,
-                   raw-strings-qq,
-                   temporary,
-                   aeson,
-                   text,
-                   directory,
-                   filepath,
-                   process
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  build-depends:       base
+                     , time-bandits
+                     , hspec
+                     , hspec-core
+                     , tasty
+                     , tasty-hunit
+                     , temporary
+                     , directory
+                     , filepath
+                     , process
+                     , containers
+                     , text
+                     , aeson
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010

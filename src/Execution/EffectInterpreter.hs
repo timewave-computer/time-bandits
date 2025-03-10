@@ -32,6 +32,7 @@ module Execution.EffectInterpreter
   , EffectContext(..)
   , EffectError(..)
   , ProposedEffectType
+  , ProposedEffect(..)
   
   -- * Interpreter Operations
   , createInterpreter
@@ -363,6 +364,9 @@ data ProposedEffectType
   | ProposedEffect_ConsumeResource ResourceId
   deriving (Eq, Show, Generic)
 
+-- | Type alias for ProposedEffectType to maintain backward compatibility
+type ProposedEffect = ProposedEffectType
+
 -- | Extract the extended effect from a proposed effect
 extractEffect :: ProposedEffectType -> ExtendedEffect
 extractEffect = \case
@@ -578,7 +582,7 @@ applyAccountMessage interpreter proposedEffect context = do
                   liftIO $ STM.atomically $ STM.writeTVar (resourceLedger interpreter) updatedLedger
                   
                   let coreEffect = convertToEffect extEffect
-                  pure $ EffectApplied coreEffect (encode finalAccount)
+                  pure $ EffectApplied coreEffect BS.empty
                 else
                   pure $ EffectFailed $ "Insufficient balance for resource: " <> show resource
             
@@ -691,31 +695,31 @@ evaluatePreconditions ::
 evaluatePreconditions _ _ _ _ = pure PreconditionsSatisfied  -- Placeholder
 
 -- | Interpret the ResourceOperationEffect
-interpretResourceOp :: IORef.IORef ResourceLog -> Sem (ResourceOps ': r) a -> Sem r a
+interpretResourceOp :: Member (Trace) r => IORef.IORef ResourceLog -> Sem (ResourceOps ': r) a -> Sem r a
 interpretResourceOp resourceLog = interpret $ \case
     CreateResource metadata ownerHash timelineId -> do
         PTrace.trace "Creating resource..."
         -- Implementation would create a resource and return its info
         -- Create a ResourceInfo with the correct type structure
         pure $ Right $ ResourceInfo 
-            { resourceId = Common.EntityHash $ T.pack "dummy" -- ResourceHash
-            , resourceOrigin = Common.EntityHash $ T.pack $ show timelineId -- TimelineHash 
-            , resourceOwner = Common.EntityHash $ T.pack $ show ownerHash -- ActorHash
+            { resourceId = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "dummy" -- ResourceHash
+            , resourceOrigin = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show timelineId -- TimelineHash 
+            , resourceOwner = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show ownerHash -- ActorHash
             , resourceCapabilities = [] -- List of ResourceCapability
             , resourceMeta = metadata -- ByteString
             , resourceSpentBy = Nothing -- Maybe Hash
             , resourceParents = [] -- [ResourceHash]
             , resourceTimestamp = Common.LamportTime 0 -- LamportTime
-            , resourceProvenanceChain = [Common.EntityHash $ T.pack $ show timelineId] -- [TimelineHash]
+            , resourceProvenanceChain = [Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show timelineId] -- [TimelineHash]
             }
 
     TransferResource resourceInfo newOwnerHash timelineId -> do
         PTrace.trace "Transferring resource..."
         -- Implementation would transfer ownership and return updated info
         let updatedResource = resourceInfo {
-            resourceOwner = Common.EntityHash $ T.pack $ show newOwnerHash,
+            resourceOwner = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show newOwnerHash,
             resourceProvenanceChain = resourceProvenanceChain resourceInfo ++ 
-                                     [Common.EntityHash $ T.pack $ show timelineId]
+                                     [Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show timelineId]
         }
         pure $ Right $ updatedResource
 
@@ -736,49 +740,49 @@ interpretResourceOp resourceLog = interpret $ \case
         PTrace.trace "Getting resource by hash..."
         -- Implementation would look up resource by hash
         pure $ Right $ ResourceInfo
-            { resourceId = Common.EntityHash $ T.pack $ show hash -- ResourceHash
-            , resourceOrigin = Common.EntityHash "origin-timeline" -- TimelineHash
-            , resourceOwner = Common.EntityHash "dummy-owner" -- ActorHash
+            { resourceId = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show hash -- ResourceHash
+            , resourceOrigin = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "origin-timeline" -- TimelineHash
+            , resourceOwner = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "dummy-owner" -- ActorHash
             , resourceCapabilities = [] -- List of ResourceCapability
             , resourceMeta = "metadata" -- ByteString
             , resourceSpentBy = Nothing -- Maybe Hash
             , resourceParents = [] -- [ResourceHash]
             , resourceTimestamp = Common.LamportTime 0 -- LamportTime
-            , resourceProvenanceChain = [Common.EntityHash "origin-timeline"] -- [TimelineHash]
+            , resourceProvenanceChain = [Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "origin-timeline"] -- [TimelineHash]
             }
 
     GetResourcesByOwner ownerHash -> do
         PTrace.trace "Getting resources by owner..."
         -- Implementation would find all resources owned by actor
         pure $ Right [ResourceInfo
-            { resourceId = Common.EntityHash "dummy-resource" -- ResourceHash
-            , resourceOrigin = Common.EntityHash "origin-timeline" -- TimelineHash
-            , resourceOwner = Common.EntityHash $ T.pack $ show ownerHash -- ActorHash
+            { resourceId = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "dummy-resource" -- ResourceHash
+            , resourceOrigin = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "origin-timeline" -- TimelineHash
+            , resourceOwner = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show ownerHash -- ActorHash
             , resourceCapabilities = [] -- List of ResourceCapability
             , resourceMeta = "metadata" -- ByteString
             , resourceSpentBy = Nothing -- Maybe Hash
             , resourceParents = [] -- [ResourceHash]
             , resourceTimestamp = Common.LamportTime 0 -- LamportTime
-            , resourceProvenanceChain = [Common.EntityHash "origin-timeline"] -- [TimelineHash]
+            , resourceProvenanceChain = [Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "origin-timeline"] -- [TimelineHash]
             }]
 
     GetResourcesByTimeline timelineId -> do
         PTrace.trace "Getting resources by timeline..."
         -- Implementation would find all resources in timeline
         pure $ Right [ResourceInfo
-            { resourceId = Common.EntityHash "dummy-resource" -- ResourceHash
-            , resourceOrigin = Common.EntityHash $ T.pack $ show timelineId -- TimelineHash
-            , resourceOwner = Common.EntityHash "dummy-owner" -- ActorHash
+            { resourceId = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "dummy-resource" -- ResourceHash
+            , resourceOrigin = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show timelineId -- TimelineHash
+            , resourceOwner = Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 "dummy-owner" -- ActorHash
             , resourceCapabilities = [] -- List of ResourceCapability
             , resourceMeta = "metadata" -- ByteString
             , resourceSpentBy = Nothing -- Maybe Hash
             , resourceParents = [] -- [ResourceHash]
             , resourceTimestamp = Common.LamportTime 0 -- LamportTime
-            , resourceProvenanceChain = [Common.EntityHash $ T.pack $ show timelineId] -- [TimelineHash]
+            , resourceProvenanceChain = [Common.EntityHash $ Common.computeHash $ TE.encodeUtf8 $ T.pack $ show timelineId] -- [TimelineHash]
             }]
 
 -- | Interpret the LogicalClock effect
-interpretLogicalClock :: IORef.IORef Effects.LamportTime -> Sem (LogicalClock ': r) a -> Sem r a
+interpretLogicalClock :: Member (Embed IO) r => IORef.IORef Effects.LamportTime -> Sem (LogicalClock ': r) a -> Sem r a
 interpretLogicalClock clockRef = interpret $ \case
     GetLamportTime -> embed $ IORef.readIORef clockRef
     IncrementTime -> embed $ do
@@ -799,9 +803,9 @@ interpretLogicalClock clockRef = interpret $ \case
         pure newTime
 
 -- | Interpret the KeyManagement effect
-interpretKeyManagement :: IORef.IORef (Map.Map ActorHash ByteString) -> Sem (KeyManagement ': r) a -> Sem r a
+interpretKeyManagement :: (Member (Embed IO) r, Member (Trace) r) => IORef.IORef (Map.Map String ByteString) -> Sem (KeyManagement ': r) a -> Sem r a
 interpretKeyManagement keyStore = interpret $ \case
-    GenerateKeyPair -> embed $ do
+    GenerateKeyPair -> do
         -- In a real implementation, this would generate a proper key pair
         -- For now, we just return dummy values
         pure (Common.PubKey "dummy-pub", Common.PrivKey "dummy-priv")
@@ -810,7 +814,9 @@ interpretKeyManagement keyStore = interpret $ \case
         keyMap <- IORef.readIORef keyStore
         -- Convert ActorHash to a String key
         let key = T.unpack $ T.pack $ show actorHash
-        let pubKeyBytes = BS.pack $ show pubKey
+        -- Convert PubKey to ByteString - use a safer approach than show
+        let pubKeyBytes = case pubKey of
+                            Common.PubKey bs -> BS.copy bs
         IORef.writeIORef keyStore (MapStrict.insert key pubKeyBytes keyMap)
         pure ()
         
@@ -819,7 +825,7 @@ interpretKeyManagement keyStore = interpret $ \case
         -- Convert ActorHash to a String key
         let key = T.unpack $ T.pack $ show actorHash
         pure $ case Map.lookup key keyMap of
-            Just pubKeyBytes -> Just $ Common.PubKey $ show pubKeyBytes
+            Just pubKeyBytes -> Just $ Common.PubKey pubKeyBytes
             Nothing -> Nothing
             
     SignData privateKey message -> do
@@ -839,12 +845,12 @@ interpretKeyManagement keyStore = interpret $ \case
     LookupActorType actorHash -> do
         PTrace.trace "Looking up actor type..."
         -- Return a dummy actor type for now
-        pure $ Just $ Core.Types.ActorType "dummy-actor-type"
+        pure $ Just $ Types.TimeTraveler
 
 -- | Interpret the P2PNetwork effect
-interpretP2PNetwork :: IORef.IORef [Effects.P2PNode] -> Sem (P2PNetwork ': r) a -> Sem r a
+interpretP2PNetwork :: (Member (Embed IO) r, Member (Trace) r) => IORef.IORef [Effects.P2PNode] -> Sem (P2PNetwork ': r) a -> Sem r a
 interpretP2PNetwork nodesRef = interpret $ \case
-    DiscoverNodes -> embed $ do
+    DiscoverNodes -> do
         -- In a real implementation, this would discover nodes on the network
         -- For now, we just return an empty list
         pure []
@@ -883,15 +889,16 @@ interpretP2PNetwork nodesRef = interpret $ \case
         pure Nothing
 
 -- | Interpret the TransactionEffect effect
-interpretTransactionEffect :: Sem (TransactionEffect ': r) a -> Sem r a
+interpretTransactionEffect :: (Member (Embed IO) r, Member (Trace) r) => Sem (TransactionEffect ': r) a -> Sem r a
 interpretTransactionEffect = interpret $ \case
     BeginTransaction -> do
         PTrace.trace "Beginning transaction..."
         -- In a real implementation, this would start a transaction
         -- and return a transaction ID. For now, we generate a random ID
         -- but don't return it (we just create it as an effect)
-        embed $ do
-            randomBytes <- Random.getStdGen >>= \g -> pure $ take 32 $ show g
+        liftIO $ do
+            g <- Random.getStdGen
+            let randomBytes = take 32 $ show g
             let _ = ByteString.pack randomBytes  -- Generate but ignore the ID
             pure ()
         
@@ -908,7 +915,7 @@ interpretTransactionEffect = interpret $ \case
         pure True
 
 -- | Interpret the EffectHandler effect
-interpretEffectHandler :: Sem (EffectHandler ': r) a -> Sem r a
+interpretEffectHandler :: Member (Trace) r => Sem (EffectHandler ': r) a -> Sem r a
 interpretEffectHandler = interpret $ \case
     ApplyEffect effect metadata -> do
         PTrace.trace $ "Applying effect: " <> show effect
@@ -933,14 +940,27 @@ toEffectResult (Execution.EffectInterpreter.EffectApplied _ _) = CoreEffect.Effe
 toEffectResult (Execution.EffectInterpreter.EffectFailed _) = CoreEffect.EffectFailure "failed"
 toEffectResult (Execution.EffectInterpreter.EffectRejected _) = CoreEffect.EffectFailure "rejected"
 
+-- | Type alias for all application effects in our interpreter
+type InterpreterEffects r =
+    '[ ResourceOps
+     , LogicalClock
+     , KeyManagement
+     , P2PNetwork
+     , TransactionEffect
+     , EffectHandler
+     , Trace
+     , Error AppError
+     , Embed IO
+     ]
+
 -- | Interpret all application effects
 interpretAppEffects :: IORef.IORef ResourceLog
-                     -> IORef.IORef (Map.Map ActorHash ByteString)
+                     -> IORef.IORef (Map.Map String ByteString)
                      -> IORef.IORef Effects.LamportTime
                      -> IORef.IORef [Effects.P2PNode]
-                     -> Sem (Effects.AppEffects r) a
+                     -> Sem (InterpreterEffects r) a
                      -> IO (Either AppError a)
-interpretAppEffects resourceLog keyStore clockRef nodesRef =
+interpretAppEffects resourceLog keyStore clockRef nodesRef program =
     runM
     . runError
     . runTraceIO
@@ -950,15 +970,16 @@ interpretAppEffects resourceLog keyStore clockRef nodesRef =
     . interpretKeyManagement keyStore
     . interpretLogicalClock clockRef
     . interpretResourceOp resourceLog
+    $ program
   where
-    runTraceIO :: Sem (Trace ': r) a -> Sem r a
+    runTraceIO :: Member (Embed IO) r => Sem (Trace ': r) a -> Sem r a
     runTraceIO = interpret $ \case
-        Trace message -> embed $ putStrLn message
+        Trace message -> liftIO $ putStrLn message
 
 -- | Helper function to run a trace effect with configuration
-runTraceWithConfig :: InterpreterConfig -> Sem (Trace ': r) a -> Sem r a
+runTraceWithConfig :: Member (Embed IO) r => InterpreterConfig -> Sem (Trace ': r) a -> Sem r a
 runTraceWithConfig config = interpret $ \case
-    Trace message -> embed $ M.when (traceEnabled config) $ 
+    Trace message -> liftIO $ M.when (traceEnabled config) $ 
         putStrLn $ T.unpack (tracePrefix config) <> message
 
 -- | Trace verbosity configuration
@@ -1002,7 +1023,7 @@ verboseConfig = defaultConfig { icTraceLevel = Verbose }
 silentConfig :: InterpreterConfig
 silentConfig = defaultConfig { icTraceLevel = Silent }
 
--- | Interpret an effect with configuration
+-- | Interpret with configuration
 interpretWithConfig :: InterpreterConfig -> Effect -> IO (CoreEffect.EffectResult)
 interpretWithConfig config effect = do
     -- Create necessary IORef instances
@@ -1014,6 +1035,7 @@ interpretWithConfig config effect = do
     -- Run the effect through the interpreter
     result <- interpretAppEffects resourceLog keyStore clockRef nodesRef $ do
         -- Implementation would go here
+        PTrace.trace "Applying effect with configuration"
         pure $ CoreEffect.EffectSuccess "dummy-result"
         
     case result of
