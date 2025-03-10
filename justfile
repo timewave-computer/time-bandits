@@ -13,3 +13,7 @@ repl *ARGS:
 # Run ghcid -- auto-recompile and run `main` function
 run:
     ghcid -T :main
+
+# Generate test reports with detailed information about all tests
+test-report *ARGS:
+    ./run-test-report {{ ARGS }}

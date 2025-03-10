@@ -30,6 +30,56 @@ nix build
 cabal run time-bandits -- sim in-memory --scenario basic
 ```
 
+### Testing and Test Reports
+
+Time Bandits includes a comprehensive test suite with detailed reporting capabilities. The test suite covers unit tests, integration tests, and component tests for various parts of the system.
+
+#### Running Tests
+
+To run tests with the standard output:
+
+```bash
+# Run tests with cabal
+cabal test
+
+# Run tests with nix
+nix flake check
+```
+
+#### Generating Test Reports
+
+To generate a detailed test report:
+
+```bash
+# Using the unified script (works with both Cabal and Nix)
+./scripts/run-test-report.sh [use_nix]
+
+# Using Nix directly (preferred for Nix users)
+nix run .#test-report-generator
+
+# Or more directly with the minimal report generator
+nix run .#generate-minimal-report -- test-report-out
+```
+
+Where `[use_nix]` is optional and can be set to either `true` or `false` to specify whether to use Nix or Cabal for building and running tests. If Nix fails, the script will automatically fall back to Cabal.
+
+All test reports are stored in the `test-report-out` directory in the project root, with timestamped filenames. A symbolic link `latest_report.md` always points to the most recent report.
+
+To view the latest test report:
+
+```bash
+# Open the latest report
+open test-report-out/latest_report.md
+```
+
+The test reports include:
+- A summary of all tests by module
+- Test pass/fail/skip statistics
+- Detailed output from the test run
+- Information about pending tests
+
+The report is automatically updated each time the tests are run and can be used to track test coverage over time.
+
 ### Documentation
 
 For more detailed information about the Time-Bandits system, please refer to:
