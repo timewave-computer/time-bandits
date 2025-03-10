@@ -67,6 +67,7 @@ module Core.Resource
 
   -- * Extract ResourceId from Resource
   , getResourceId
+  , getResourceIdentifier  -- Renamed to avoid name conflicts
   ) where
 
 import Data.ByteString (ByteString)
@@ -487,3 +488,7 @@ getResourceId (SyntheticInternalMarker txt) =
   case ResourceId.fromText txt of
     Right rid -> rid
     Left _    -> error "Invalid resource ID" 
+
+-- | Alias for getResourceId to maintain backward compatibility
+getResourceIdentifier :: Resource -> ResourceId
+getResourceIdentifier = getResourceId 
