@@ -90,6 +90,49 @@
           tomland = pkgs.haskell.packages.ghc963.tomland;
         };
 
+        # Add generate-test-report executable
+        packages.generate-test-report = pkgs.haskell.packages.ghc963.callCabal2nixWithOptions "generate-test-report" ./. "--subpath=test --flag=-test-doctests" {
+          polysemy = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.callCabal2nixWithOptions "polysemy" (pkgs.fetchFromGitHub {
+                owner = "polysemy-research";
+                repo = "polysemy";
+                rev = "1.9.2.0";
+                sha256 = "0qp6g44hbyjgbw4awpw6aiysv8cjlr0dik94b77mjwvf74lnamj0";
+              }) "--flag=-test-doctests" {}
+            )
+          );
+          polysemy-plugin = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.polysemy-plugin
+            )
+          );
+          tomland = pkgs.haskell.packages.ghc963.tomland;
+        };
+        
+        # Add minimal test report generator
+        packages.generate-minimal-report = pkgs.haskell.packages.ghc963.callCabal2nixWithOptions "generate-minimal-report" ./. "--flag=-test-doctests" {
+          polysemy = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.callCabal2nixWithOptions "polysemy" (pkgs.fetchFromGitHub {
+                owner = "polysemy-research";
+                repo = "polysemy";
+                rev = "1.9.2.0";
+                sha256 = "0qp6g44hbyjgbw4awpw6aiysv8cjlr0dik94b77mjwvf74lnamj0";
+              }) "--flag=-test-doctests" {}
+            )
+          );
+          polysemy-plugin = pkgs.haskell.lib.compose.dontCheck (
+            pkgs.haskell.lib.compose.doJailbreak (
+              pkgs.haskell.packages.ghc963.polysemy-plugin
+            )
+          );
+          tomland = pkgs.haskell.packages.ghc963.tomland;
+        };
+
+        # Add test report generator script
+        packages.test-report-generator = (import ./nix/generate-test-report.nix { inherit pkgs; }).script;
+
         # Add a check to run the test
         checks.test = self'.packages.time-bandits-test;
 
@@ -107,6 +150,8 @@
             ]))
             ghcid
             stack
+            # Add the test report generator
+            self'.packages.test-report-generator
           ];
 
           shellHook = ''
@@ -114,6 +159,13 @@
             export NIX_GHCPKG="$(which ghc-pkg)"
             export NIX_GHC_DOCDIR="$NIX_GHC/../../share/doc/ghc/html"
             export NIX_GHC_LIBDIR="$(ghc --print-libdir)"
+            
+            # Add test report helper function
+            generate_test_report() {
+              local output_dir="''${1:-test-reports}"
+              echo "Generating test report in $output_dir..."
+              ${self'.packages.test-report-generator}/bin/generate-test-report "$output_dir"
+            }
           '';
         };
       };

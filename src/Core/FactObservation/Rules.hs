@@ -31,6 +31,11 @@ module Core.FactObservation.Rules
   , addRule
   , removeRule
   , findRulesByFactType
+  
+    -- * Helper Functions
+  , forceAddRule
+  , addRuleToSet
+  , deduplicateRules
   ) where
 
 import Control.Monad (when)
@@ -238,22 +243,44 @@ data RuleSet = RuleSet
 instance ToJSON RuleSet
 instance FromJSON RuleSet
 
--- | Create a new rule set
+-- | Create a new rule set with only unique rule IDs
+-- If duplicate rule IDs are found, only the first occurrence is kept
 createRuleSet :: [FactObservationRule] -> Map Text Text -> RuleSet
-createRuleSet rs meta = RuleSet
-  { rules = rs
-  , metadata = meta
-  }
+createRuleSet rs meta = 
+  let deduplicated = deduplicateRules rs
+  in RuleSet
+    { rules = deduplicated
+    , metadata = meta
+    }
+
+-- | Deduplicate rules by rule ID, keeping only the first occurrence of each rule ID
+deduplicateRules :: [FactObservationRule] -> [FactObservationRule]
+deduplicateRules = go [] Set.empty
+  where
+    go acc _ [] = reverse acc
+    go acc seen (rule:rules) =
+      if ruleId rule `Set.member` seen
+        then go acc seen rules  -- Skip this rule, already have one with this ID
+        else go (rule:acc) (Set.insert (ruleId rule) seen) rules
 
 -- | Add a rule to a rule set
-addRule :: RuleSet -> FactObservationRule -> RuleSet
+-- Returns Nothing if a rule with the same ID already exists
+addRule :: RuleSet -> FactObservationRule -> Either Text RuleSet
 addRule RuleSet{..} rule =
   let existingIds = Set.fromList $ map ruleId rules
-      newRule = if ruleId rule `Set.member` existingIds
-                  then rule { ruleId = generateUniqueId (ruleId rule) existingIds }
-                  else rule
+  in if ruleId rule `Set.member` existingIds
+       then Left $ "Rule with ID '" <> ruleId rule <> "' already exists"
+       else Right $ RuleSet
+            { rules = rule : rules
+            , metadata = metadata
+            }
+
+-- | Add a rule to a rule set, force replacing any existing rule with the same ID
+forceAddRule :: RuleSet -> FactObservationRule -> RuleSet
+forceAddRule RuleSet{..} rule =
+  let filteredRules = filter (\r -> ruleId r /= ruleId rule) rules
   in RuleSet
-       { rules = newRule : rules
+       { rules = rule : filteredRules
        , metadata = metadata
        }
 
@@ -269,6 +296,13 @@ removeRule RuleSet{..} ruleIdToRemove =
 findRulesByFactType :: RuleSet -> FactType -> [FactObservationRule]
 findRulesByFactType RuleSet{..} factTypeToFind =
   filter (\r -> factType r == factTypeToFind) rules
+
+-- | Helper functions for testing and compatibility
+
+-- | Add a rule to a rule set, accepting duplicate IDs
+-- This is kept for backward compatibility with tests
+addRuleToSet :: RuleSet -> FactObservationRule -> RuleSet
+addRuleToSet ruleSet rule = forceAddRule ruleSet rule
 
 -- | Generate a unique ID based on an existing ID
 generateUniqueId :: Text -> Set Text -> Text

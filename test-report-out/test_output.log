@@ -1,0 +1,84 @@
+Configuration is affected by the following files:
+- cabal.project
+- cabal.project.local
+Build profile: -w ghc-9.6.3 -O1
+In order, the following will be built (use -v for more details):
+ - time-bandits-0.1.0.0 (test:time-bandits-test) (file test/TestReport.hs changed)
+Preprocessing test suite 'time-bandits-test' for time-bandits-0.1.0.0...
+Building test suite 'time-bandits-test' for time-bandits-0.1.0.0...
+[9 of 9] Compiling TestReport       ( test/TestReport.hs, dist-newstyle/build/aarch64-osx/ghc-9.6.3/time-bandits-0.1.0.0/t/time-bandits-test/build/time-bandits-test/time-bandits-test-tmp/TestReport.o ) [Source file changed]
+Warning: supplying the --target argument to a nix-wrapped compiler may not work correctly - cc-wrapper is currently not designed with multi-target compilers in mind. You may want to use an un-wrapped compiler instead.
+[10 of 10] Linking dist-newstyle/build/aarch64-osx/ghc-9.6.3/time-bandits-0.1.0.0/t/time-bandits-test/build/time-bandits-test/time-bandits-test [Objects changed]
+Warning: supplying the --target argument to a nix-wrapped compiler may not work correctly - cc-wrapper is currently not designed with multi-target compilers in mind. You may want to use an un-wrapped compiler instead.
+Warning: supplying the --target argument to a nix-wrapped compiler may not work correctly - cc-wrapper is currently not designed with multi-target compilers in mind. You may want to use an un-wrapped compiler instead.
+Running 1 test suites...
+Test suite time-bandits-test: RUNNING...
+Running Hspec tests for Fact Observation components...
+
+Fact Observation Tests
+  Rules
+    Rule creation and management
+      creates valid rules [✔]
+      adds rules to a ruleset [✔]
+      detects duplicate rule IDs [✔]
+      successfully adds rules with unique IDs [✔]
+  TOML Parser
+    Rule parsing
+      should attempt to parse a rule from TOML text [✔]
+      should attempt to parse a rule from a file [‐]
+        # PENDING: Rule file parsing is currently stubbed
+      should attempt to parse a rule set [✔]
+  Fact Observation Engine
+    Engine initialization
+2025-03-10 14:28:40 [INFO] Rule engine created
+      creates a fact observation engine with default config [✔]
+    Rule evaluation
+      evaluates rules against input data [‐]
+        # PENDING: Rule evaluation implementation issues with data structure - needs further debugging
+      handles rule conditions correctly [‐]
+        # PENDING: Rule condition handling implementation issues with data structure - needs further debugging
+    Rule loading and validation
+      loads rules from a directory [‐]
+        # PENDING: Engine.loadRulesFromDirectory is stubbed or not fully functional (always loads 0 rules)
+      validates rules during loading [‐]
+        # PENDING: Engine.loadRulesFromDirectory is stubbed or not fully functional (validation not working)
+  Fact Observation Integration
+    End-to-end rule processing
+      loads rules from TOML files and evaluates them [‐]
+        # PENDING: End-to-end integration test implemented but not executed due to stubbed engine components
+      processes rules with multiple conditions [‐]
+        # PENDING: Multiple condition test implemented but blocked by engine implementation
+    Configuration integration
+      correctly applies engine configuration [‐]
+        # PENDING: Engine configuration test implemented but blocked by internal API access
+  Fact Observation CLI
+    CLI commands
+      runs with help flag [‐]
+        # PENDING: CLI help flag test to be implemented
+      loads rules from a directory [‐]
+        # PENDING: CLI rule loading test to be implemented
+      validates rules through CLI [‐]
+        # PENDING: CLI rule validation test to be implemented
+    Error handling
+      reports errors for invalid rules [‐]
+        # PENDING: CLI error handling test to be implemented
+  Rules Module
+    can create an empty RuleSet [✔]
+    can create a rule [✔]
+2025-03-10 14:28:40 [INFO] Rule engine created
+2025-03-10 14:28:40 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 14:28:40 [DEBUG] Evaluating data against rule unique-rule-id
+2025-03-10 14:28:40 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 14:28:40 [DEBUG] Evaluating data against rule same-rule-id
+2025-03-10 14:28:40 [DEBUG] Evaluating data against rule unique-rule-id
+    enforces unique rule IDs within a RuleSet [✔]
+
+Finished in 0.0028 seconds
+22 examples, 0 failures, 12 pending
+
+Skipping CLI tests in Nix build environment
+All Hspec tests passed, exiting with success status
+Test suite time-bandits-test: PASS
+Test suite logged to:
+/Users/hxrts/projects/timewave/time-bandits-container/time-bandits/./dist-newstyle/build/aarch64-osx/ghc-9.6.3/time-bandits-0.1.0.0/t/time-bandits-test/test/time-bandits-0.1.0.0-time-bandits-test.log
+1 of 1 test suites (1 of 1 test cases) passed.

@@ -51,6 +51,7 @@ import Data.Time.Format (formatTime, defaultTimeLocale)
 import System.Directory (listDirectory, doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>), takeExtension)
 import System.IO (hPutStrLn, stderr)
+import qualified Data.Set as Set
 
 -- Import from TimeBandits modules
 import Core.FactObservation.Rules
@@ -374,9 +375,13 @@ storeFact engine factResult = do
 -- Helper functions
 
 -- | Merge two rule sets
+-- When there are duplicate rule IDs, only the first occurrence is kept
 mergeRuleSets :: RuleSet -> RuleSet -> RuleSet
 mergeRuleSets (RuleSet rules1 meta1) (RuleSet rules2 meta2) =
-  RuleSet (rules1 ++ rules2) (Map.union meta1 meta2)
+  let existingIds = Set.fromList $ map ruleId rules1
+      uniqueRules2 = filter (\rule -> not (ruleId rule `Set.member` existingIds)) rules2
+      mergedMeta = Map.union meta1 meta2
+  in RuleSet (rules1 ++ uniqueRules2) mergedMeta
 
 -- | Extract data using a path expression
 extractData :: PathExpression -> Value -> IO (Either Text Value)
