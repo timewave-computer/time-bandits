@@ -193,6 +193,37 @@ Scenarios are defined declaratively in TOML files, specifying:
 
 This makes it easy to test causal consistency, failure recovery, and performance characteristics under different deployment conditions.
 
+### Temporal Effect Language (TEL)
+
+The Temporal Effect Language (TEL) is a specialized, expression-oriented language designed specifically for cross-timeline programming. TEL provides a concise and powerful way to express complex workflows that interact with multiple timelines while maintaining causal consistency.
+
+Key features of TEL include:
+
+- **Expression-Oriented**: Everything in TEL evaluates to a value, allowing for compositional programming.
+- **Explicit Effects**: Effects that interact with external systems (like depositing assets or observing events) are explicitly declared.
+- **Pattern Matching**: Comprehensive pattern matching for handling different cases and data structures.
+- **Type Safety**: Strong static typing ensures that programs behave predictably.
+- **Content-Addressable Code**: All TEL expressions are identified by their content hash, enabling immutable, versioned code.
+- **First-Class Time Awareness**: Native support for time relationships, delays, and timeouts.
+
+TEL programs are composed of functions that manipulate values and produce effects. These effects describe how programs interact with resources, timelines, and other systems. The TEL interpreter ensures that effects are applied in a causally consistent order and that all preconditions are satisfied before execution.
+
+Example of a simple TEL program that transfers assets between timelines:
+
+```
+// Declare a cross-chain transfer function
+transfer :: Int -> Text -> Text -> Text -> Effect
+transfer amount source recipient timeline = 
+  deposit amount recipient timeline
+  
+// Use the transfer function in a program
+crossChainSwap amount userA userB chain1 chain2 = do
+  transfer amount userA userB chain1  
+  transfer (amount * 2) userB userA chain2
+```
+
+The TEL interpreter and runtime ensure that these cross-chain operations maintain causal consistency, enforce preconditions, and provide auditability through the unified execution log.
+
 ## Motivation
 
 More and more applications need to operate across multiple blockchains and rollups, but writing these cross-chain programs is far harder than most developers expect. Each chain has its own flavor of virtual machine, authenticated data structure, serialization formats, preferred bridging protocol, RPC interface, etc., meaning dApp developers are forced to juggle all of this before they can write any business logic . Worse, cross-chain interactions are inherently asynchronous—programs must initiate work on one chain, wait for confirmations from another, react to unpredictable reorgs or delays, and somehow ensure all of this resolves into a coherent, auditable flow. The typical tools for async programming—callbacks, retries, tracing, and structured error handling—are almost completely absent when working across decentralized networks, leaving developers to stitch solutions together by hand.

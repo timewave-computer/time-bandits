@@ -44,7 +44,7 @@ Programs are **the units of cross-timeline logic**. A program:
 
 Each traveler has exactly **one account program**. This program:
 
-- Holds all the traveler’s resources (multi-timeline wallet).
+- Holds all the traveler's resources (multi-timeline wallet).
 - Acts as a message gateway — all **inbound and outbound messages pass through it**.
 - Maintains a **causal log of all asset transfers and message exchanges**.
 - Enforces **traveler-defined policies** (e.g., multi-sig, rate limits).
@@ -230,6 +230,50 @@ Upgrades always leave **effect traces** in the unified log.
 
 ---
 
+## Temporal Effect Language (TEL)
+
+The **Temporal Effect Language (TEL)** is the primary programming language for Time Bandits. It is designed specifically for cross-timeline programming with an emphasis on explicit effects, strong typing, and causal consistency.
+
+### Key Features
+
+| Feature | Description |
+|---|---|
+| Expression-Oriented | Everything in TEL evaluates to a value, supporting compositional programming. |
+| Explicit Effects | Effects that interact with external systems are clearly marked and managed. |
+| Pattern Matching | Comprehensive pattern matching for data transformation and control flow. |
+| Strong Typing | Static type system ensures program correctness before execution. |
+| Content-Addressable | All code is identified by its content hash through the content-addressable code system. |
+| First-Class Time | Native support for time relationships, delays, timeouts, and timeline interactions. |
+
+### Core Language Components
+
+The TEL language consists of:
+
+1. **Values and Expressions**: Basic building blocks including literals, variables, functions, and more complex data structures.
+2. **Patterns**: Patterns for destructuring and matching against values.
+3. **Effects**: Explicit effect operations that interact with timelines and resources.
+4. **Programs**: Collections of function definitions that can be deployed to the Time Bandits network.
+
+### Execution Model
+
+TEL code is interpreted by the **TEL Interpreter**, which:
+
+1. Parses and type-checks TEL code.
+2. Evaluates expressions in a causally consistent manner.
+3. Manages effects through a specialized effect system.
+4. Integrates with the Time Bandits runtime for deployment and execution.
+
+### Integration with Time Bandits Core
+
+TEL is deeply integrated with the Time Bandits core systems:
+
+- **Resource System**: TEL provides first-class operations for working with resources.
+- **Effect System**: TEL effects are processed through the Time Bandits effect handler.
+- **Content-Addressable Code**: TEL leverages the content-addressable code system for immutable, hash-addressed code.
+- **Time Map**: TEL programs interact with the Time Map for causally consistent timeline observations.
+
+---
+
 ## P2P System
 
 The **P2P Network** operated by Time Bandits is the communication, synchronization, and execution backbone of the system. It is responsible for ensuring that all Bandits (the decentralized executor nodes) collectively maintain:
@@ -268,12 +312,12 @@ All data flowing through Time Bandits is **content-addressed**, meaning:
 - Programs, Effects, Facts, and Time Maps are all **hashed into unique identifiers**.
 - Data is stored in **content-addressed logs** maintained by Bandits.
 - Transient storage (effect queues, message inboxes, etc.) also uses content addressing.
-- When Bandits communicate, they **share content hashes first**, only fetching actual content if it’s missing locally.
+- When Bandits communicate, they **share content hashes first**, only fetching actual content if it's missing locally.
 
 This provides:
 
 - Strong deduplication.  
-- Efficient gossip (only send what’s missing).  
+- Efficient gossip (only send what's missing).  
 - Built-in integrity (hash mismatch = data corruption).  
 - Causal traceability (each effect links to its parent hash).  
 

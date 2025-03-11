@@ -76,4 +76,27 @@ A storage system that organizes code by content hash rather than by name, enabli
 The process of associating a human-readable name with a content hash, allowing code to be referenced by name while maintaining hash-based dependencies.
 
 ### Content-Addressable Executor
-A runtime component that can execute code retrieved by its content hash, maintaining execution context across invocations. 
+A runtime component that can execute code retrieved by its content hash, maintaining execution context across invocations.
+
+## Temporal Effect Language (TEL)
+
+### Temporal Effect Language (TEL)
+A specialized programming language designed for cross-timeline programming in the Time Bandits system, with explicit effects, strong typing, and causal consistency.
+
+### Expression
+The basic unit of computation in TEL, which always evaluates to a value.
+
+### Pattern Matching
+A mechanism in TEL for destructuring and analyzing values, enabling conditional logic and data transformation.
+
+### Effect Expression
+A specialized TEL expression that describes an interaction with external timelines or resources, such as deposit, withdraw, transfer, observe, or emit.
+
+### TEL Interpreter
+The component that evaluates TEL expressions, manages effects, and integrates with the Time Bandits runtime.
+
+### TEL Type System
+The static type checking system that ensures TEL programs are well-formed and type-safe before execution.
+
+### TEL Program
+A collection of function definitions in the Temporal Effect Language that can be deployed to the Time Bandits network. 
