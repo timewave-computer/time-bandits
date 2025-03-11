@@ -120,6 +120,17 @@ Effects are the only way programs can change state. Each effect:
 
 Effects are intentionally simple and composable. Travelers write programs by composing sequences of effects, rather than writing arbitrary code.
 
+### Content-Addressable Code System
+
+Time Bandits incorporates a content-addressable code storage system where code is identified by a unique hash of its content rather than by name. This approach provides several key advantages:
+
+- **Immutable Definitions**: Code definitions are immutable; any change creates a new version with a distinct hash.
+- **Elimination of Dependency Conflicts**: Precise dependency resolution through content hashes prevents version conflicts.
+- **Simplified Refactoring**: Names are metadata associated with content hashes, allowing for safe refactoring without breaking references.
+- **Direct Execution**: The system executes code based on its content hash, eliminating traditional build processes.
+
+Developers can interact with the content-addressable code system through dedicated utilities to store, look up, and execute code by either name or content hash. This system ensures that the exact versions of functions and modules used in a program are preserved indefinitely, enhancing stability and reproducibility.
+
 ### Map of Time
 
 The time map is the core causal clock of Time Bandits. It tracks:
@@ -151,7 +162,7 @@ Time Bandits includes a flexible simulation environment for developing, testing,
 - Local Multi-Process Simulation: Each actor runs as a separate `nix run` process on the same machine, communicating through actual message passing. This simulates real network behavior without requiring multiple hosts.
 - Geo-Distributed Simulation: Each actor runs on a different machine, and the controller orchestrates remote startup, shutdown, and monitoring. This allows full end-to-end distributed system testing.
 
-Scenarios are defined declaratively in YAML, specifying:
+Scenarios are defined declaratively in TOML files, specifying:
 - The actors to spawn.
 - The timelines to watch.
 - The programs to deploy.

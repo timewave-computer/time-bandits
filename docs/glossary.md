@@ -59,4 +59,21 @@ A specification of a timeline's properties, including its branching model, conse
 A component that translates abstract effects into concrete operations on a specific timeline.
 
 ### Program Precondition
-A condition that must be satisfied before a program can be executed on a timeline. 
+A condition that must be satisfied before a program can be executed on a timeline.
+
+## Content-Addressable Code System
+
+### Content Hash
+A cryptographic hash derived from the content of a code definition, used as a unique identifier independent of names.
+
+### Code Definition
+A unit of code (function or module) stored in the content-addressable system, identified by its content hash.
+
+### Content-Addressable Repository
+A storage system that organizes code by content hash rather than by name, enabling immutability and precise dependency resolution.
+
+### Name Registration
+The process of associating a human-readable name with a content hash, allowing code to be referenced by name while maintaining hash-based dependencies.
+
+### Content-Addressable Executor
+A runtime component that can execute code retrieved by its content hash, maintaining execution context across invocations. 
