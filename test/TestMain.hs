@@ -25,6 +25,7 @@ main = Tasty.defaultMain $ Tasty.testGroup "Time Bandits Tests"
       [ TimelineDescriptorTest.timelineDescriptorTests
       , Tasty.testGroup "TEL" 
         [ Tasty.testGroup "Language" [TELTest.testTEL]
+        , Tasty.testGroup "Tasty-Based Tests" [TELTest.tests]  
         , Tasty.testGroup "Interpreter" [TELInterpreterTest.testTELInterpreter]
         , Tasty.testGroup "Content Addressable" [TELContentAddressableTest.testTELContentAddressable]
         ]

@@ -21,14 +21,14 @@ main = do
   case testToRun of
     "all" -> do
       runSchemaTest
-      runTECLTest
+      runTELTest
       runFactObservationTest
       runNetworkTest
       runLogTest
       runTimelineTest
       runConsensusTest
     "schema" -> runSchemaTest
-    "tecl" -> runTECLTest
+    "tel" -> runTELTest
     "fact" -> runFactObservationTest
     "network" -> runNetworkTest
     "log" -> runLogTest
@@ -36,7 +36,7 @@ main = do
     "consensus" -> runConsensusTest
     _ -> do
       putStrLn $ "Unknown test: " ++ testToRun
-      putStrLn "Available tests: all, schema, tecl, fact, network, log, timeline, consensus"
+      putStrLn "Available tests: all, schema, tel, fact, network, log, timeline, consensus"
       exitFailure
 
 -- Run the Schema test
@@ -46,11 +46,11 @@ runSchemaTest = do
   result <- system "ghc -outputdir test/bin -o test/bin/mini_schema_test test/MiniSchemaTest.hs && test/bin/mini_schema_test"
   when (result /= 0) exitFailure
   
--- Run the TECL test
-runTECLTest :: IO ()
-runTECLTest = do
-  putStrLn "\n------ Running TECL Parser Tests ------"
-  result <- system "ghc -outputdir test/bin -o test/bin/mini_tecl_test test/MiniTECLTest.hs && test/bin/mini_tecl_test"
+-- Run the TEL test
+runTELTest :: IO ()
+runTELTest = do
+  putStrLn "\n------ Running TEL Parser Tests ------"
+  result <- system "ghc -outputdir test/bin -o test/bin/mini_tel_test test/MiniTELTest.hs && test/bin/mini_tel_test"
   when (result /= 0) exitFailure
 
 -- Run the FactObservation test

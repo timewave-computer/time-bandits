@@ -9,7 +9,7 @@ Time Bandits includes the following key components:
 1. **Core Effect System**: The foundation for representing and managing temporal effects.
 2. **Timeline Management**: Handling divergent timelines and their relationships.
 3. **Resource Accounting**: Managing resources across timelines.
-4. **TECL Language**: The Temporal Effect Combinator Language for declaring cross-timeline workflows.
+4. **Temporal Effect Language (TEL)**: The language for declaring cross-timeline workflows, unifying and replacing the earlier TECL implementation.
 5. **Schema Evolution**: Supporting schema changes across timeline evolutions.
 6. **Program Model**: The programming model for creating time-aware applications.
 
@@ -49,9 +49,9 @@ Time Bandits is designed with a modular architecture that separates concerns and
                   +------------+
 ```
 
-## Directory Structure
+## Source Code Structure
 
-The codebase is organized as follows:
+The Time Bandits codebase is organized into the following main directories:
 
 ```
 time-bandits/
@@ -64,7 +64,6 @@ time-bandits/
 │   │   ├── Common/       Shared utilities and types
 │   │   ├── Effect/       Effect system implementation
 │   │   ├── TEL/          Temporal Effect Language
-│   │   ├── TECL/         Temporal Effect Combinator Language
 │   │   ├── Timeline/     Timeline management
 │   │   └── Resource/     Resource handling system
 │   ├── Execution/        Execution engine
@@ -82,8 +81,7 @@ The `Core` module contains fundamental components that form the backbone of the 
 
 - **Common**: Shared utilities, types, and functions used throughout the codebase.
 - **Effect**: The effect system implementation that defines and manages temporal effects.
-- **TEL**: The Temporal Effect Language implementation, including parser, interpreter, and type checker.
-- **TECL**: The Temporal Effect Combinator Language, a precursor to TEL with a more minimal feature set.
+- **TEL**: The Temporal Effect Language implementation, including parser, interpreter, and type checker. This module unifies and replaces the earlier TECL (Temporal Effect Combinator Language) implementation.
 - **Timeline**: Timeline management components for tracking and manipulating timelines.
 - **Resource**: Resource handling system for managing assets across timelines.
 
@@ -117,7 +115,7 @@ This design enables several powerful features:
 
 ### Temporal Effect Language (TEL)
 
-The Temporal Effect Language (TEL) implementation is a core component of the Time Bandits system, providing a specialized language for cross-timeline programming:
+The Temporal Effect Language (TEL) implementation is a core component of the Time Bandits system, providing a specialized language for cross-timeline programming. TEL unifies and replaces the earlier TECL (Temporal Effect Combinator Language) implementation, combining its strengths while providing a more comprehensive feature set.
 
 ```
 Core/

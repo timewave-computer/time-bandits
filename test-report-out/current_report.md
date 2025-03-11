@@ -1,6 +1,6 @@
 # 🧪 Time Bandits Test Results
 
-🕐 **Generated on:** Mon Mar 10 16:49:40 EST 2025
+🕐 **Generated on:** Tue Mar 11 06:22:04 EST 2025
 📋 **Status:** ✅ PASSED
 
 ## 📊 Summary
@@ -45,15 +45,15 @@
 | Standalone Tests / Schema Evolution Tests | Schema evolution tests | Validates Schema evolution tests functionality | 2025-03-07 | ✅ |
 | Standalone Tests / Schema Evolution Tests | adding a nullable field to a schema | Tests adding a nullable field to a schema | 2025-03-07 | ✅ |
 | Standalone Tests / Schema Evolution Tests | adding a required field (should fail) | Tests adding a required field (should fail) | 2025-03-07 | ✅ |
-| Standalone Tests / TECL Parser Tests | Invalid type conversion | Verifies type conversion validation | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | TECL parsing | Tests TECL parsing | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | TECL parsing | Verifies successful TECL parsing | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | TECL tests | Validates TECL tests functionality | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | TECL type checking | Tests TECL type checking | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | TECL type checking | Verifies successful TECL type checking | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | TECL type conversion | Tests TECL type conversion | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | Type conversion - Int to string: 42 | Tests TECL type conversion | 2025-03-05 | ✅ |
-| Standalone Tests / TECL Parser Tests | Type conversion - String to int: 123 | Tests TECL type conversion | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | Invalid type conversion | Verifies type conversion validation | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | TEL parsing | Tests TEL parsing | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | TEL parsing | Verifies successful TEL parsing | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | TEL tests | Validates TEL tests functionality | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | TEL type checking | Tests TEL type checking | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | TEL type checking | Verifies successful TEL type checking | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | TEL type conversion | Tests TEL type conversion | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | Type conversion - Int to string: 42 | Tests TEL type conversion | 2025-03-05 | ✅ |
+| Standalone Tests / TEL Parser Tests | Type conversion - String to int: 123 | Tests TEL type conversion | 2025-03-05 | ✅ |
 | TOML Parser / Rule parsing | should attempt to parse a rule from TOML text | Tests the parser's ability to handle TOML text input | 2025-03-03 | ✅ |
 | TOML Parser / Rule parsing | should attempt to parse a rule from a file | Validates parsing rules from TOML files | 2025-03-03 | ✅ |
 | TOML Parser / Rule parsing | should attempt to parse a rule set | Tests parsing complete rulesets from TOML | 2025-03-03 | ✅ |
@@ -81,7 +81,7 @@
 | Additional Tests / MiniLog | MiniLogTest | Tests MiniLog functionality | 2025-02-15 | ✅ |
 | Additional Tests / MiniNetwork | MiniNetworkTest | Tests MiniNetwork functionality | 2025-02-15 | ✅ |
 | Additional Tests / MiniSchema | MiniSchemaTest | Tests MiniSchema functionality | 2025-02-15 | ✅ |
-| Additional Tests / MiniTECL | MiniTECLTest | Tests MiniTECL functionality | 2025-02-15 | ✅ |
+| Additional Tests / MiniTEL | MiniTELTest | Tests MiniTEL functionality | 2025-02-15 | ✅ |
 | Additional Tests / MiniTimeline | MiniTimelineTest | Tests MiniTimeline functionality | 2025-02-15 | ✅ |
 
 ## 📝 Test Output
