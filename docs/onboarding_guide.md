@@ -101,7 +101,57 @@ fact = { balance = { asset = "USDC", amount = 100 } }
 
 To create a new scenario, copy an existing one and modify it for your needs.
 
-## Testing the System
+## Working with Content-Addressable Code
+
+Time-Bandits implements a content-addressable code storage system, which identifies code by content hash rather than by name. This approach provides significant advantages when working on the codebase:
+
+### Basic Operations
+
+To interact with the content-addressable code system, use the `content-addressable-tool` utility:
+
+```bash
+# Store a code file in the repository
+cabal run content-addressable-tool -- store path/to/file.hs
+
+# Look up code by name or hash
+cabal run content-addressable-tool -- lookup nameOrHash
+
+# Execute code by name or hash
+cabal run content-addressable-tool -- execute nameOrHash
+```
+
+### Key Benefits for Developers
+
+1. **Dependency Precision**: When referring to code, you can specify the exact version by its content hash.
+2. **Safe Refactoring**: Renaming functions or reorganizing modules won't break existing code references.
+3. **Multiple Versions**: You can maintain multiple versions of the same function and use them simultaneously.
+4. **Immutable History**: Code definitions are never overwritten, preserving the entire development history.
+
+### Programming Model
+
+When developing new modules:
+
+1. Each function or module gets a unique content hash based on its implementation.
+2. Names are lightweight metadata pointers to the underlying code.
+3. References between modules use content hashes for stability.
+4. The content-addressable executor handles resolving and executing code by hash.
+
+### Example Workflow
+
+```haskell
+-- Define a function (will be assigned a content hash)
+let functionName = "calculateTotal"
+let functionBody = "values.reduce((a, b) => a + b, 0)"
+let functionHash = hashFunction functionName functionBody
+
+-- Store with a name
+registerName repo functionName functionHash
+
+-- Later, you can "rename" without changing the implementation
+registerName repo "computeSum" functionHash  -- Both names point to the same code
+```
+
+## Running Tests
 
 ### Running the Test Suite
 

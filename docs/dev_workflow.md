@@ -70,6 +70,91 @@ This document describes common workflows for developing the Time-Bandits codebas
 
 5. **Document Changes**: Update the relevant documentation to explain the contract changes.
 
+## Working with Content-Addressable Code
+
+1. **Define a New Code Definition**: To create a new function or module in the content-addressable system:
+
+   ```haskell
+   import Core.CodeAddress
+   import qualified Data.Text as T
+   
+   -- Create a repository if needed
+   repo <- newCodeRepository
+   
+   -- Define a new function
+   let functionName = "calculateTotal"
+       functionBody = T.pack "x + y"
+       functionHash = hashFunction functionName functionBody
+       functionDef = CodeDefinition functionHash functionBody FunctionDef
+   
+   -- Store the function in the repository
+   _ <- storeDefinition repo functionDef
+   registerName repo functionName functionHash
+   ```
+
+2. **Look Up Code by Name or Hash**:
+
+   ```haskell
+   -- Look up by name
+   resultByName <- lookupByName repo functionName
+   case resultByName of
+     Just def -> -- Use the definition
+     Nothing -> -- Handle not found
+   
+   -- Look up by hash
+   resultByHash <- lookupByHash repo functionHash
+   case resultByHash of
+     Just def -> -- Use the definition
+     Nothing -> -- Handle not found
+   ```
+
+3. **Execute Content-Addressable Code**:
+
+   ```haskell
+   import Execution.ContentAddressableExecutor
+   
+   -- Create an executor
+   executor <- newExecutor repo
+   
+   -- Create an execution context
+   let context = newContext
+   
+   -- Execute by name
+   (resultByName, newContext) <- executeByName executor functionName context
+   
+   -- Execute by hash
+   (resultByHash, newContext) <- executeByHash executor functionHash context
+   ```
+
+4. **Refactoring Code Safely**:
+
+   When refactoring, you can create new names for existing functionality without breaking references:
+   
+   ```haskell
+   -- "Rename" a function by registering a new name for the same hash
+   registerName repo "newFunctionName" existingFunctionHash
+   
+   -- Split a module into smaller modules while maintaining references
+   -- Each module still refers to functions by hash, preserving dependencies
+   ```
+
+5. **Dependency Management**:
+
+   ```haskell
+   -- Define a module that depends on specific function versions
+   let moduleName = "Calculator"
+       moduleBody = T.unlines [
+         "Module that uses specific function versions by hash",
+         "Uses function with hash: " `T.append` (T.pack $ show functionHash)
+       ]
+       moduleHash = hashModule moduleName [] moduleBody
+       moduleDef = CodeDefinition moduleHash moduleBody ModuleDef
+   
+   -- Store the module
+   _ <- storeDefinition repo moduleDef
+   registerName repo moduleName moduleHash
+   ```
+
 ## Adding a Property Test for an Invariant
 
 1. **Identify the Invariant**: Clearly define the invariant you want to test.

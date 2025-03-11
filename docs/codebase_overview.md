@@ -87,10 +87,40 @@ Core/
 ├── AccountProgram.hs # Account program implementation
 ├── Common.hs         # Common utilities and functions
 ├── Log.hs            # Logging infrastructure
+├── CodeAddress.hs    # Content-addressable code storage
+├── CodeAddressUtil.hs # Utilities for content-addressable code
 └── Utils.hs          # General utility functions
 ```
 
 **Dependencies**: None (except standard libraries)
+
+### Content-Addressable Code System
+
+The Content-Addressable Code system is a key architectural component that enables code immutability, eliminates dependency conflicts, and simplifies refactoring:
+
+```
+Core/
+├── CodeAddress.hs       # Core content-addressable storage system
+├── CodeAddressUtil.hs   # Utilities for working with content-addressable code
+└── ...
+
+Execution/
+├── ContentAddressableExecutor.hs  # Execution engine for content-addressable code
+└── ...
+```
+
+This system provides:
+
+- **Hash-Based Identification**: Code is uniquely identified by its content hash
+- **Immutable Code Storage**: Modifications create new versions with unique hashes
+- **Decoupled Naming**: Names are metadata pointing to content hashes
+- **Dependency Resolution**: Different versions of the same code can coexist
+
+This design enables several powerful features:
+- Dependencies are resolved with perfect precision
+- Code can be reliably shared across different contexts
+- Refactoring is safer and more straightforward
+- Exact code versions are preserved indefinitely
 
 ### Programs Layer
 
