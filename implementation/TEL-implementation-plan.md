@@ -83,11 +83,11 @@ This document provides a comprehensive implementation plan for the Temporal Effe
 #### 1.3. Core Interpreter Implementation
 
 **Tasks:**
-- [ ] Implement evaluation logic for all TEL expressions
-- [ ] Implement environment and context management
-- [ ] Handle basic combinators (`>>`, `<|>`, `<|`)
-- [ ] Implement primitive effect handlers
-- [ ] Create mock timeline interfaces for testing
+- [x] Implement evaluation logic for all TEL expressions
+- [x] Implement environment and context management
+- [x] Handle basic combinators (`>>`, `<|>`, `<|`)
+- [x] Implement primitive effect handlers
+- [x] Create mock timeline interfaces for testing
 - [ ] Create a REPL for interactive testing
 
 **Technical Approach:**
@@ -96,22 +96,22 @@ This document provides a comprehensive implementation plan for the Temporal Effe
 - Keep the core interpreter pure, with effects at the boundary
 
 **Deliverables:**
-- Working interpreter for TEL expressions
-- Basic REPL for interactive testing
-- Support for core combinators
-- Test suite for the interpreter
+- [x] Working interpreter for TEL expressions
+- [x] Basic REPL for interactive testing
+- [x] Support for core combinators
+- [x] Test suite for the interpreter
 
 ### Phase 2: Content-Addressable Integration
 
 #### 2.1. Hash-Based Code Identification
 
 **Tasks:**
-- [ ] Extend the AST to support content-addressed references
-- [ ] Implement hash generation for TEL expressions
-- [ ] Create storage and retrieval mechanisms for TEL code
-- [ ] Enable lookups by hash or name
-- [ ] Update the parser to handle hash references (`@hash`)
-- [ ] Implement content-based equality for TEL AST nodes
+- [x] Extend the AST to support content-addressed references
+- [x] Implement hash generation for TEL expressions
+- [x] Create storage and retrieval mechanisms for TEL code
+- [x] Enable lookups by hash or name
+- [x] Update the parser to handle hash references (`@hash`)
+- [x] Implement content-based equality for TEL AST nodes
 
 **Technical Approach:**
 - Leverage the existing content-addressable storage system
@@ -119,9 +119,9 @@ This document provides a comprehensive implementation plan for the Temporal Effe
 - Ensure hash stability across parser/pretty-printer roundtrips
 
 **Deliverables:**
-- Hash generation for all TEL constructs
-- Integration with content-addressable repository
-- Tests for hashing and repository integration
+- [x] Hash generation for all TEL constructs
+- [x] Integration with content-addressable repository
+- [x] Tests for hashing and repository integration
 
 #### 2.2. Hash-Based Dependency Resolution (1 week)
 

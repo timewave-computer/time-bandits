@@ -33,6 +33,8 @@ import qualified Core.FactObservation.IntegrationSpec as IntegrationSpec
 import qualified Core.FactObservation.CLISpec as CLISpec
 import qualified Core.ContentAddressableTest as ContentAddressableTest
 import qualified Core.ContentAddressableSystemTest as ContentAddressableSystemTest
+import qualified Core.TEL.InterpreterTest as InterpreterTest
+import qualified Core.TELTest as TELTest
 
 main :: IO ()
 main = do
@@ -86,4 +88,12 @@ spec = do
       ContentAddressableTest.testContentAddressable
       
       -- Comprehensive tests that validate the ADR-011 requirements
-      ContentAddressableSystemTest.testContentAddressableSystem 
+      ContentAddressableSystemTest.testContentAddressableSystem
+      
+    -- Temporal Effect Language tests
+    Hspec.describe "Temporal Effect Language Tests" $ do
+      -- TEL Interpreter tests
+      InterpreterTest.testInterpreter
+      
+      -- TEL framework tests
+      TELTest.testTEL 

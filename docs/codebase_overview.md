@@ -55,44 +55,37 @@ The codebase is organized as follows:
 
 ```
 time-bandits/
-├── src/           # Source code
-│   ├── Core/      # Core types and data structures
-│   ├── Programs/  # Program model and state management
-│   ├── Execution/ # Program execution and effect handling
-│   ├── Adapters/  # External system interfaces
-│   ├── Actors/    # Actor model implementations
-│   ├── Simulation/# Simulation framework
-│   ├── Proofs/    # Cryptographic proofs and verification
-│   └── CLI/       # Command-line interface
-├── test/          # Test suite
-├── docs/          # Documentation
-└── examples/      # Example programs and scenarios
+├── src/                  Main source code
+│   ├── TimeBandits.hs    Main entry point
+│   ├── Actors/           Actor system implementation
+│   ├── Adapters/         Timeline and protocol adapters
+│   ├── CLI/              Command line interface
+│   ├── Core/             Core system components
+│   │   ├── Common/       Shared utilities and types
+│   │   ├── Effect/       Effect system implementation
+│   │   ├── TEL/          Temporal Effect Language
+│   │   ├── TECL/         Temporal Effect Combinator Language
+│   │   ├── Timeline/     Timeline management
+│   │   └── Resource/     Resource handling system
+│   ├── Execution/        Execution engine
+│   └── Types/            Common type definitions
+├── test/                 Test suite
+├── docs/                 Documentation
+└── scripts/              Utility scripts
 ```
 
 ## Module Dependencies
 
-### Core Layer
+### Core Module
 
-The Core layer forms the foundation of the Time Bandits system:
+The `Core` module contains fundamental components that form the backbone of the Time Bandits system, including:
 
-```
-Core/
-├── Timeline.hs       # Timeline representation and operations
-├── Resource.hs       # Resource management primitives
-├── TimeMap.hs        # Timeline relationship tracking
-├── Types.hs          # Fundamental type definitions
-├── TECL.hs           # Temporal Effect Combinator Language parser and interpreter
-├── Schema.hs         # Schema definition and evolution
-├── Effect.hs         # Effect representation and processing
-├── AccountProgram.hs # Account program implementation
-├── Common.hs         # Common utilities and functions
-├── Log.hs            # Logging infrastructure
-├── CodeAddress.hs    # Content-addressable code storage
-├── CodeAddressUtil.hs # Utilities for content-addressable code
-└── Utils.hs          # General utility functions
-```
-
-**Dependencies**: None (except standard libraries)
+- **Common**: Shared utilities, types, and functions used throughout the codebase.
+- **Effect**: The effect system implementation that defines and manages temporal effects.
+- **TEL**: The Temporal Effect Language implementation, including parser, interpreter, and type checker.
+- **TECL**: The Temporal Effect Combinator Language, a precursor to TEL with a more minimal feature set.
+- **Timeline**: Timeline management components for tracking and manipulating timelines.
+- **Resource**: Resource handling system for managing assets across timelines.
 
 ### Content-Addressable Code System
 
@@ -121,6 +114,43 @@ This design enables several powerful features:
 - Code can be reliably shared across different contexts
 - Refactoring is safer and more straightforward
 - Exact code versions are preserved indefinitely
+
+### Temporal Effect Language (TEL)
+
+The Temporal Effect Language (TEL) implementation is a core component of the Time Bandits system, providing a specialized language for cross-timeline programming:
+
+```
+Core/
+├── TEL/
+│   ├── AST.hs              # Abstract Syntax Tree definitions
+│   ├── Parser.hs           # Parser for TEL code
+│   ├── TypeChecker.hs      # Type checking and inference
+│   ├── Interpreter.hs      # Expression evaluation and effect handling
+│   ├── PrettyPrinter.hs    # Code formatting and display
+│   ├── REPL.hs             # Interactive Read-Eval-Print Loop
+│   ├── ContentAddressable.hs # Integration with content-addressable code
+│   └── ...
+├── TEL.hs                  # Main entry point for TEL functionality
+└── ...
+```
+
+The TEL implementation includes:
+
+- **Parser**: Converts TEL source code into an Abstract Syntax Tree (AST)
+- **Type Checker**: Ensures type safety and correctness before execution
+- **Interpreter**: Evaluates expressions and manages effects
+- **Pretty Printer**: Formats TEL code for display and debugging
+- **REPL**: Interactive environment for testing and experimenting with TEL
+- **Content-Addressable Integration**: Connects TEL with the content-addressable code system
+
+TEL is designed to be:
+- **Expression-oriented**: Everything evaluates to a value
+- **Strongly typed**: Type errors are caught at compile time
+- **Effect-aware**: Effects are explicitly declared and managed
+- **Pattern-matching focused**: Comprehensive support for pattern matching
+- **Content-addressable**: All code is identified by its content hash
+
+The TEL implementation is tightly integrated with other Time Bandits components, particularly the effect system, resource management, and timeline operations.
 
 ### Programs Layer
 
