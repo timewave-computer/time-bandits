@@ -214,6 +214,53 @@ Safe state requires:
 
 ---
 
+# Content-Addressable Code
+
+## Overview
+
+Time Bandits implements a content-addressable code storage system, where code is identified by its content hash rather than by name. This approach ensures immutability, eliminates dependency conflicts, and simplifies refactoring.
+
+## Components
+
+### Code Repository
+
+```haskell
+data CodeDefinition = CodeDefinition
+    { cdHash :: CodeHash       -- Content hash of the code
+    , cdSource :: Text         -- Source code
+    , cdType :: DefType        -- Type of definition (function or module)
+    }
+
+data DefType = FunctionDef | ModuleDef
+```
+
+### Hash-Based Identification
+
+- Each function or module is identified by a cryptographic hash of its content.
+- Any change to code results in a new hash, creating a new immutable definition.
+- Hash generation ensures deterministic outputs for the same input.
+
+### Decoupled Naming System
+
+- Names are separate from code identities, serving as metadata pointers to content hashes.
+- Renaming code does not break references, as all dependencies link to content hashes.
+- Multiple names can point to the same code definition.
+
+### Content-Aware Execution
+
+- Code is executed by its content hash through the ContentAddressableExecutor.
+- Execution context maintains state during evaluation.
+- Both hash-based and name-based execution entry points are supported.
+
+## Benefits
+
+- **Dependency Conflict Resolution**: Different versions of code with the same name can coexist.
+- **Code Immutability**: Once defined, code cannot be altered, enhancing stability.
+- **Simplified Refactoring**: Renaming and restructuring become trivial operations.
+- **Version Precision**: Programs can specify exact versions of dependencies by their content hash.
+
+---
+
 # Fact Management
 
 - Facts are observed by keepers.
