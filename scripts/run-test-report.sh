@@ -386,7 +386,7 @@ create_minimal_report() {
       if [ "$failed_count" -gt 0 ]; then
         failed_tests="$failed_count"
       else
-        failed_tests="1+"
+    failed_tests="1+"
       fi
     fi
   fi
