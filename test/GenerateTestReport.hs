@@ -31,6 +31,8 @@ import qualified Core.FactObservation.TOMLParserSpec as TOMLParserSpec
 import qualified Core.FactObservation.EngineSpec as EngineSpec
 import qualified Core.FactObservation.IntegrationSpec as IntegrationSpec
 import qualified Core.FactObservation.CLISpec as CLISpec
+import qualified Core.ContentAddressableTest as ContentAddressableTest
+import qualified Core.ContentAddressableSystemTest as ContentAddressableSystemTest
 
 main :: IO ()
 main = do
@@ -59,7 +61,7 @@ main = do
       }
   
   -- Run Hspec tests
-  putStrLn "Running Hspec tests for Fact Observation components..."
+  putStrLn "Running Hspec tests for components..."
   Hspec.withArgs [] $ Hspec.runSpec spec hspecConfig
   
   putStrLn $ "Test reports generated in: " ++ reportPath
@@ -69,9 +71,19 @@ main = do
 spec :: Hspec.Spec
 spec = do
   Hspec.describe "Time Bandits Test Report" $ do
-    -- Include all the spec modules
-    RulesSpec.spec
-    TOMLParserSpec.spec
-    EngineSpec.spec
-    IntegrationSpec.spec
-    CLISpec.spec 
+    -- Fact Observation tests
+    Hspec.describe "Fact Observation Tests" $ do
+      -- Include all the fact observation spec modules
+      RulesSpec.spec
+      TOMLParserSpec.spec
+      EngineSpec.spec
+      IntegrationSpec.spec
+      CLISpec.spec
+    
+    -- Content-Addressable Code tests
+    Hspec.describe "Content-Addressable Code Tests" $ do
+      -- Basic tests for the content-addressable code implementation
+      ContentAddressableTest.testContentAddressable
+      
+      -- Comprehensive tests that validate the ADR-011 requirements
+      ContentAddressableSystemTest.testContentAddressableSystem 

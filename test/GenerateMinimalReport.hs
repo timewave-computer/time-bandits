@@ -17,6 +17,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Environment (lookupEnv)
 import Data.Maybe (isJust)
+import Data.List (unwords)
 
 -- Helper for string to text conversion
 toText :: String -> Text
@@ -72,7 +73,7 @@ runTestCommand = do
       args = if isNix then ["build", ".#time-bandits-test"] else ["test"]
       
       cmdLine :: String
-      cmdLine = command ++ " " ++ unwords args
+      cmdLine = command ++ " " ++ Data.List.unwords args
   
   putStrLn $ "Running " ++ cmdLine ++ "..."
   
@@ -120,6 +121,21 @@ generateReport exitCode stdout stderr = do
         , ""
         , testResults
         , ""
+        , "## Test Categories"
+        , ""
+        , "### Fact Observation Tests"
+        , "- Rules, schemas, and fact observation engine tests"
+        , "- TOML parsing and integration tests"
+        , "- CLI functionality tests"
+        , ""
+        , "### Content-Addressable Code Tests"
+        , "- Hash-based code identification tests"
+        , "- Immutable code definition tests"
+        , "- Decoupled naming system tests"
+        , "- Dependency conflict resolution tests"
+        , "- Content-aware execution tests"
+        , "- Refactoring support tests"
+        , ""
         , "## Raw Output"
         , ""
         , "```"
@@ -157,6 +173,8 @@ extractTestResults output =
 isTestResult :: Text -> Bool
 isTestResult line =
   let 
-    indicators = ["test", "spec", "should", "✓", "✗", "PASS", "FAIL"]
+    indicators = ["test", "spec", "should", "✓", "✗", "PASS", "FAIL", 
+                  "Content-Addressable", "Immutability", "Decoupled Naming", 
+                  "Dependency Conflict", "Refactoring"]
   in
     any (`T.isInfixOf` line) indicators 

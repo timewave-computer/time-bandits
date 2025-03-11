@@ -32,6 +32,8 @@ import qualified Core.FactObservation.TOMLParserSpec as TOMLParserSpec
 import qualified Core.FactObservation.EngineSpec as EngineSpec
 import qualified Core.FactObservation.IntegrationSpec as IntegrationSpec
 import qualified Core.FactObservation.CLISpec as CLISpec
+import qualified Core.ContentAddressableTest as ContentAddressableTest
+import qualified Core.ContentAddressableSystemTest as ContentAddressableSystemTest
 
 -- | Find the fact-observation-cli executable path
 findCliExecutable :: IO (Maybe String)
@@ -241,6 +243,14 @@ spec = do
         -- This tests that the engine processes all rules regardless of ID uniqueness
         -- for now, this is what the engine currently does
         duplicateCount `Hspec.shouldBe` 3
+
+  -- Content-Addressable Code tests
+  Hspec.describe "Content-Addressable Code Tests" $ do
+    -- Basic tests for the content-addressable code implementation
+    ContentAddressableTest.testContentAddressable
+    
+    -- Comprehensive tests that validate the ADR-011 requirements
+    ContentAddressableSystemTest.testContentAddressableSystem
 
 -- CLI tests that verify the functionality of fact-observation-cli
 cliTests :: String -> TestTree
