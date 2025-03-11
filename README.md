@@ -140,15 +140,38 @@ The time map is the core causal clock of Time Bandits. It tracks:
 
 Every applied effect references a specific time map snapshot, ensuring that no effect can be applied out of causal order.
 
-### Execution Log
+### Unified Log (Execution Log)
 
-Every applied effect is recorded in a content-addressed, append-only log, linked to its causal parent. Each entry contains:
+While the Map of Time tracks the observable state of external timelines, the Unified Log (Execution Log) records the history of program execution itself. This content-addressed, append-only log links each effect to its causal parent, creating an unbroken chain of execution.
+
+Each log entry contains:
 - The effect applied.
-- The time map observed.
+- The time map observed at execution time.
 - A proof that the effect was applied correctly.
 - The resulting program state hash.
 
-This log makes every program fully replayable and auditable, even across different nodes.
+The key distinction between the Map of Time and Unified Log is that the former tracks the external world state (blockchains, event logs), while the latter captures the internal program execution history. Together, they ensure that programs are fully replayable and auditable, even across different nodes.
+
+### Lamport Clocks and Causal Consistency
+
+Lamport clocks are a crucial mechanism for ensuring causal consistency in the distributed Time Bandits system. They provide:
+
+- A partial ordering of events across disconnected timelines.
+- Guaranteed "happens-before" relationships between causally related effects.
+- Prevention of temporal paradoxes where effects might depend on future states.
+
+Each time a program interacts with a timeline or applies an effect, the Lamport clock is incremented, ensuring that later operations have higher logical timestamps. This creates a consistent causal framework even when real-time ordering might be ambiguous due to network delays or blockchain reorganizations.
+
+### P2P Network
+
+Time Bandits operates on a peer-to-peer network architecture that enables:
+
+- Decentralized execution without single points of failure.
+- Distribution of the unified log across multiple nodes.
+- Consensus on program execution and state transitions.
+- Resilience against censorship or manipulation attempts.
+
+The P2P network coordinates Time Bandits nodes that validate effects, maintain the unified log, and generate proofs of correct execution. This distributed execution environment ensures that even if some nodes are compromised or unavailable, the system continues to operate correctly as long as a quorum of honest nodes remains active.
 
 ### Timeline Adapters
 
