@@ -17,12 +17,12 @@ main = do
   case testToRun of
     "all" -> do
       runStandaloneSchemaTest
-      runStandaloneTECLTest
+      runStandaloneTELTest
     "schema" -> runStandaloneSchemaTest
-    "tecl" -> runStandaloneTECLTest
+    "tel" -> runStandaloneTELTest
     _ -> do
       putStrLn $ "Unknown test: " ++ testToRun
-      putStrLn "Available tests: all, schema, tecl"
+      putStrLn "Available tests: all, schema, tel"
       exitFailure
 
 -- Run the standalone Schema test
@@ -32,11 +32,11 @@ runStandaloneSchemaTest = do
   result <- system "ghc -o mini_schema_test test/MiniSchemaTest.hs && ./mini_schema_test"
   when (result /= 0) exitFailure
   
--- Run the standalone TECL test
-runStandaloneTECLTest :: IO ()
-runStandaloneTECLTest = do
-  putStrLn "\n------ Running TECL Parser Tests ------"
-  result <- system "ghc -o mini_tecl_test test/MiniTECLTest.hs && ./mini_tecl_test"
+-- Run the standalone TEL test
+runStandaloneTELTest :: IO ()
+runStandaloneTELTest = do
+  putStrLn "\n------ Running TEL Parser Tests ------"
+  result <- system "ghc -o mini_tel_test test/MiniTELTest.hs && ./mini_tel_test"
   when (result /= 0) exitFailure
 
 -- Helper to run shell commands and capture exit code

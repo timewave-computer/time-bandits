@@ -179,8 +179,6 @@ library
     Core.Concurrency.EffectLog
     Core.Concurrency.Distributed
     Core.Concurrency.Combinators
-    Core.TECL.Concurrency
-    Core.TECL
     Core.TEL
     Core.TEL.AST
     Core.TEL.Parser
@@ -189,6 +187,7 @@ library
     Core.TEL.Interpreter
     Core.TEL.REPL
     Core.TEL.ContentAddressable
+    Core.TEL.Concurrency
     Core.FactObservation.Rules
     Core.FactObservation.Schema
     Core.FactObservation.TOMLParser
@@ -294,6 +293,7 @@ test-suite time-bandits-test
                      , Core.TELTest
                      , Core.TEL.InterpreterTest
                      , Core.TEL.ContentAddressableTest
+                     , SimpleTELTest
                      , TestReport
                      , HspecReporter
                      , TastyReporter

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- A minimal standalone test for TECL functionality, with minimal dependencies
+-- A minimal standalone test for TEL functionality, with minimal dependencies
 
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
@@ -11,7 +11,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 
--- Simplified TECL AST types
+-- Simplified TEL AST types
 data LiteralValue
   = IntLit Int
   | TextLit Text
@@ -19,26 +19,26 @@ data LiteralValue
   | DecimalLit Double
   deriving (Show, Eq)
 
-data TECLExpression
+data TELExpression
   = Literal LiteralValue
   | Variable Text
-  | BinaryOp Text TECLExpression TECLExpression
-  | FunctionCall Text [TECLExpression]
-  | TypeCast Text TECLExpression  -- Added for type conversion
+  | BinaryOp Text TELExpression TELExpression
+  | FunctionCall Text [TELExpression]
+  | TypeCast Text TELExpression  -- Added for type conversion
   deriving (Show, Eq)
 
-data TECLEffect = TECLEffect
+data TELEffect = TELEffect
   { effectName :: Text
-  , assignments :: Map Text TECLExpression
+  , assignments :: Map Text TELExpression
   } deriving (Show, Eq)
 
-data TECLStatement
-  = Let Text TECLExpression
-  | Effect TECLEffect
+data TELStatement
+  = Let Text TELExpression
+  | Effect TELEffect
   deriving (Show, Eq)
 
-data TECLAST = TECLAST
-  { statements :: [TECLStatement]
+data TELAST = TELAST
+  { statements :: [TELStatement]
   } deriving (Show, Eq)
 
 data ParseError
@@ -47,16 +47,16 @@ data ParseError
   | UndefinedVariable Text
   deriving (Show, Eq)
 
--- Simplified TECL parser (just for testing)
-parseTECL :: ByteString -> Either ParseError TECLAST
-parseTECL bs =
+-- Simplified TEL parser (just for testing)
+parseTEL :: ByteString -> Either ParseError TELAST
+parseTEL bs =
   -- This is a simplified mock parser that always returns a fixed AST
   if BS.null bs 
     then Left $ InvalidSyntax "Empty input"
-    else Right $ TECLAST 
+    else Right $ TELAST 
       [ Let "x" (Literal (IntLit 42))
       , Let "name" (Literal (TextLit "John"))
-      , Effect $ TECLEffect "UpdateBalance" $ Map.fromList
+      , Effect $ TELEffect "UpdateBalance" $ Map.fromList
           [ ("balance", BinaryOp "+" (Variable "balance") (Literal (IntLit 100)))
           , ("lastUpdated", FunctionCall "now" [])
           ]
@@ -69,8 +69,8 @@ data TypeCheckError
   | InvalidCast Text Text
   deriving (Show, Eq)
 
-typecheckTECL :: TECLAST -> Either TypeCheckError ()
-typecheckTECL ast =
+typecheckTEL :: TELAST -> Either TypeCheckError ()
+typecheckTEL ast =
   -- Simple mock validation that always succeeds for non-empty ASTs
   if null (statements ast)
     then Left $ UndefinedRef "Empty program"
@@ -91,10 +91,10 @@ convertType val targetType =
     (BoolLit b, "int") -> Right $ IntLit $ if b then 1 else 0
     _ -> Left $ InvalidCast (T.pack $ show val) targetType
 
--- Test TECL parsing
+-- Test TEL parsing
 testParsing :: IO ()
 testParsing = do
-  putStrLn "Testing TECL parsing..."
+  putStrLn "Testing TEL parsing..."
   
   let code = pack $ unlines
         [ "// Comment"
@@ -107,33 +107,33 @@ testParsing = do
         , "}"
         ]
   
-  case parseTECL code of
+  case parseTEL code of
     Left err -> putStrLn $ "Parsing failed: " ++ show err
     Right ast -> do
       putStrLn "Parsing succeeded!"
       putStrLn $ "Number of statements: " ++ show (length $ statements ast)
       putStrLn "Test passed!"
 
--- Test TECL type checking
+-- Test TEL type checking
 testTypeChecking :: IO ()
 testTypeChecking = do
-  putStrLn "Testing TECL type checking..."
+  putStrLn "Testing TEL type checking..."
   
-  let ast = TECLAST
+  let ast = TELAST
         [ Let "x" (Literal (IntLit 42))
         , Let "y" (BinaryOp "+" (Variable "x") (Literal (IntLit 10)))
-        , Effect $ TECLEffect "UpdateCounter" $ Map.fromList
+        , Effect $ TELEffect "UpdateCounter" $ Map.fromList
             [ ("counter", BinaryOp "+" (Variable "x") (Variable "y")) ]
         ]
   
-  case typecheckTECL ast of
+  case typecheckTEL ast of
     Left err -> putStrLn $ "Type checking failed: " ++ show err
     Right () -> putStrLn "Type checking succeeded!"
 
 -- Test type conversion
 testTypeConversion :: IO ()
 testTypeConversion = do
-  putStrLn "Testing TECL type conversion..."
+  putStrLn "Testing TEL type conversion..."
   
   -- Test int to string conversion
   let intVal = IntLit 42
@@ -159,7 +159,7 @@ testTypeConversion = do
 
 main :: IO ()
 main = do
-  putStrLn "Running simplified TECL tests"
+  putStrLn "Running simplified TEL tests"
   testParsing
   testTypeChecking
   testTypeConversion 

@@ -1,24 +1,25 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main where
+module SimpleTELTest where
 
-import Core.TECL
+import Core.TEL
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.String (fromString)
 
 main :: IO ()
 main = do
-  putStrLn "Running simple TECL parser tests"
+  putStrLn "Running simple TEL parser tests"
   testBasicParsing
   testTypeChecking
 
 testBasicParsing :: IO ()
 testBasicParsing = do
-  putStrLn "Testing basic TECL parsing..."
+  putStrLn "Testing basic TEL parsing..."
   
-  let teclCode = BS.pack $ concat
+  let telCode = fromString $ concat
         [ "// This is a comment\n"
         , "let x = 42;\n"
         , "let name = \"John\";\n"
@@ -29,19 +30,19 @@ testBasicParsing = do
         , "}\n"
         ]
   
-  case parseTECL teclCode of
+  case parseTEL "<test>" telCode of
     Left err -> putStrLn $ "Parsing failed: " ++ show err
     Right ast -> do
       putStrLn "Parsing succeeded!"
-      putStrLn $ "Number of statements: " ++ show (length $ statements ast)
+      putStrLn $ "Number of definitions: " ++ show (length $ programDefinitions ast)
   
   putStrLn "Basic parsing test passed!"
 
 testTypeChecking :: IO ()
 testTypeChecking = do
-  putStrLn "Testing TECL type checking..."
+  putStrLn "Testing TEL type checking..."
   
-  let teclCode = BS.pack $ concat
+  let telCode = fromString $ concat
         [ "let x = 42;\n"
         , "let y = x + 10;\n"
         , "\n"
@@ -50,10 +51,10 @@ testTypeChecking = do
         , "}\n"
         ]
   
-  case parseTECL teclCode of
+  case parseTEL "<test>" telCode of
     Left err -> putStrLn $ "Parsing failed: " ++ show err
     Right ast -> do
-      case typecheckTECL ast of
+      case typeCheck ast of
         Left err -> putStrLn $ "Type checking failed: " ++ show err
         Right _ -> putStrLn "Type checking succeeded!"
   

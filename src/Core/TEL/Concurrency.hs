@@ -3,16 +3,16 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {- |
-Module      : Core.TECL.Concurrency
-Description : TECL language support for concurrency primitives
+Module      : Core.TEL.Concurrency
+Description : TEL language support for concurrency primitives
 Copyright   : (c) Time Bandits, 2023-2024
 License     : MIT
 Maintainer  : time-bandits@example.com
 
-This module extends the TECL language with concurrency primitives, enabling
+This module extends the TEL language with concurrency primitives, enabling
 the expression of concurrent workflows using temporal combinators.
 -}
-module Core.TECL.Concurrency
+module Core.TEL.Concurrency
   ( -- * Concurrency Statements
     ConcurrencyStatement(..)
   , Condition(..)
@@ -20,6 +20,7 @@ module Core.TECL.Concurrency
   
     -- * Parsing
   , parseConcurrencyStatement
+  , ConcurrencyParseError(..)
   
     -- * Evaluation
   , evaluateConcurrencyStatement
@@ -40,7 +41,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 -- Import from TimeBandits modules
-import Core.TECL (ParseError(..))
+import Core.TEL.AST (Expression(..), Program(..), TypeExpr(..))
 import Core.ProgramId (ProgramId)
 import Types.EffectTypes (EffectType)
 import Core.Effect (Effect)
@@ -51,7 +52,13 @@ import Core.Concurrency.Combinators
     , ResourceCondition(..)
     )
 
--- | TECL concurrency statement
+-- | Error type for concurrency statement parsing
+data ConcurrencyParseError = ConcurrencyParseError
+  { errorMessage :: Text
+  , errorContext :: Text
+  } deriving (Show)
+
+-- | TEL concurrency statement
 data ConcurrencyStatement
   = WatchStatement Condition Block             -- ^ Watch for a condition
   | BarrierStatement [Condition] Block         -- ^ Wait for multiple conditions
@@ -63,7 +70,7 @@ data ConcurrencyStatement
 -- Standalone deriving declaration for ConcurrencyStatement
 deriving instance Show Condition => Show ConcurrencyStatement
 
--- | TECL block (sequence of statements)
+-- | TEL block (sequence of statements)
 data Block = Block [Text]
   deriving (Show)
 
@@ -71,8 +78,8 @@ data Block = Block [Text]
 newtype InvocationRef = InvocationRef Text
   deriving (Show)
 
--- | Parse a concurrency statement from TECL
-parseConcurrencyStatement :: Text -> Either ParseError ConcurrencyStatement
+-- | Parse a concurrency statement from TEL
+parseConcurrencyStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseConcurrencyStatement text =
   if "watch" `T.isPrefixOf` text
     then parseWatchStatement text
@@ -86,14 +93,10 @@ parseConcurrencyStatement text =
     then parseInvokeStatement text
   else if "callback" `T.isPrefixOf` text
     then parseCallbackStatement text
-  else Left ParseError 
-         { errorMessage = "Not a concurrency statement"
-         , errorLocation = Nothing
-         , errorContext = text
-         }
+  else Left (ConcurrencyParseError "Not a concurrency statement" text)
 
 -- | Parse a watch statement
-parseWatchStatement :: Text -> Either ParseError ConcurrencyStatement
+parseWatchStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseWatchStatement text = do
   -- In a real implementation, this would use a proper parser
   -- For now, we just simulate parsing a watch statement
@@ -113,7 +116,7 @@ parseWatchStatement text = do
   return $ WatchStatement condition (Block blockLines)
 
 -- | Parse a barrier statement
-parseBarrierStatement :: Text -> Either ParseError ConcurrencyStatement
+parseBarrierStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseBarrierStatement text = do
   -- Placeholder parsing logic
   let conditions = [ResourceCond $ ResourceCondition
@@ -127,7 +130,7 @@ parseBarrierStatement text = do
   return $ BarrierStatement conditions (Block blockLines)
 
 -- | Parse a race statement
-parseRaceStatement :: Text -> Either ParseError ConcurrencyStatement
+parseRaceStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseRaceStatement text = do
   -- Placeholder parsing logic
   let blocks = [Block ["branch1()"], Block ["branch2()"]]  -- Placeholder
@@ -136,7 +139,7 @@ parseRaceStatement text = do
   return $ RaceStatement blocks resultBlock
 
 -- | Parse a fork statement
-parseForkStatement :: Text -> Either ParseError ConcurrencyStatement
+parseForkStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseForkStatement text = do
   -- Placeholder parsing logic
   let blockLines = ["doAsync()"]  -- Placeholder
@@ -144,7 +147,7 @@ parseForkStatement text = do
   return $ ForkStatement (Block blockLines)
 
 -- | Parse an invoke statement
-parseInvokeStatement :: Text -> Either ParseError ConcurrencyStatement
+parseInvokeStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseInvokeStatement text = do
   -- Placeholder parsing logic
   let programId = error "Not a real program ID"
@@ -154,7 +157,7 @@ parseInvokeStatement text = do
   return $ InvokeStatement programId invocationData (Block blockLines)
 
 -- | Parse a callback statement
-parseCallbackStatement :: Text -> Either ParseError ConcurrencyStatement
+parseCallbackStatement :: Text -> Either ConcurrencyParseError ConcurrencyStatement
 parseCallbackStatement text = do
   -- Placeholder parsing logic
   let invocationRef = InvocationRef "invoc-12345"  -- Placeholder
