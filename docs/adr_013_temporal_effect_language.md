@@ -392,3 +392,83 @@ withdrawOptimalAmount source destination = do
 ## Conclusion
 
 The proposed Temporal Effect Language (TEL) provides an expressive, safe way to write cross-timeline programs within the Time Bandits system. By leveraging our content-addressable code system and focusing on composition, the language enables developers to create complex workflows with strong guarantees about correctness and determinism. Syntax should be familiar to functional programmers while maintaining the benefits of homoiconicity and content-addressing.
+
+## Integration with Core Effect System
+
+This section provides an overview of how the Temporal Effect Language (TEL) integrates with the Core effect system.
+
+### Effect Conversion
+
+The key integration point between TEL and the Core effect system is the `toEffect` function, which converts TEL-specific effect types to Core effect system types. This enables TEL programs to be executed within the broader effect system.
+
+#### Basic Effects
+
+TEL supports several basic effect types:
+
+- **Deposit Effects**: Add resources to a specified resource ID
+- **Withdraw Effects**: Remove resources from a specified resource ID
+- **Transfer Effects**: Move resources from one resource ID to another
+
+These basic effects are converted directly to their Core effect system equivalents.
+
+#### Composite Effects
+
+TEL also supports composition of effects through various operators:
+
+- **Sequence (`>>`)**: Execute one effect after another
+- **Parallel (`<|>`)**: Execute effects in parallel
+- **Choice (`<|`)**: Choose between alternative effects
+
+These composite effects are converted to `CompositeEffect` in the Core effect system, which provides support for these composition patterns.
+
+### Example Usage
+
+Here's an example of how to use TEL to define and compose effects:
+
+```haskell
+-- Define a deposit effect
+let deposit = deposit 100 to "resource1" from "program1"
+
+-- Define a withdrawal effect
+let withdraw = withdraw 50 from "resource1" to "program2"
+
+-- Sequence these effects
+let sequence = deposit >> withdraw
+
+-- Convert to Core effect system
+let coreEffect = toEffect sequence
+```
+
+### Integration with Logical Clock
+
+TEL also integrates with the `LogicalClock` effect, which provides support for Lamport timestamps. This is essential for correctly ordering effects in a distributed system.
+
+The interpreter ensures that effects are properly timestamped and ordered according to their temporal relationships.
+
+### Effect Interpretation
+
+The TEL interpreter handles the evaluation of TEL expressions, including effect expressions. It uses the Polysemy effect system to manage the various effects involved in interpretation, including:
+
+- Environment reading (`Reader`)
+- Error handling (`Error`)
+- State management (`State`)
+- Resource operations (`ResourceOps`)
+- Effect handling (`EffectHandler`)
+- Logical clock operations (`LogicalClock`)
+
+### Testing
+
+The integration between TEL and the Core effect system is verified through a comprehensive test suite, which includes:
+
+- Tests for basic effect conversion
+- Tests for composite effect handling
+- Tests for the full interpretation pipeline
+
+### Future Improvements
+
+Potential areas for future enhancement include:
+
+- Extended effect types for more specialized operations
+- Enhanced type safety at the integration boundaries
+- More sophisticated composition patterns
+- Enhanced visualization and debugging tools for composite effects

@@ -1,4 +1,4 @@
-# ADR-002: Time Model (Updated)
+# ADR-002: Time Model
 
 
 ## Status

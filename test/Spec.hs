@@ -34,6 +34,8 @@ import qualified Core.FactObservation.IntegrationSpec as IntegrationSpec
 import qualified Core.FactObservation.CLISpec as CLISpec
 import qualified Core.ContentAddressableTest as ContentAddressableTest
 import qualified Core.ContentAddressableSystemTest as ContentAddressableSystemTest
+import qualified Core.TEL.ToEffectTest as ToEffectTest
+import qualified Core.TEL.CompositeEffectTest as CompositeEffectTest
 
 -- | Find the fact-observation-cli executable path
 findCliExecutable :: IO (Maybe String)
@@ -251,6 +253,14 @@ spec = do
     
     -- Comprehensive tests that validate the ADR-011 requirements
     ContentAddressableSystemTest.testContentAddressableSystem
+    
+  -- TEL toEffect function tests
+  Hspec.describe "TEL Effect Conversion Tests" $ do
+    -- Test the toEffect function
+    ToEffectTest.testToEffect
+    
+    -- Test composite effects handling
+    CompositeEffectTest.testCompositeEffects
 
 -- CLI tests that verify the functionality of fact-observation-cli
 cliTests :: String -> TestTree

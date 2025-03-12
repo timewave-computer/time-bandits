@@ -11,31 +11,26 @@ module Core.TEL.REPL
   , Command(..)
   ) where
 
-import qualified Polysemy as P
-import qualified Polysemy.Error as P
-import qualified Polysemy.Reader as PR
-import qualified Polysemy.State as PS
 import Prelude hiding (get, modify, runReader, evalState)
-import Relude hiding (get, modify, evalState, runReader, foldM)
-
-import Core.TEL.AST
-import Core.TEL.Parser
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Map.Strict as Map
+import System.Console.Haskeline (InputT, defaultSettings, runInputT)
+import Control.Monad.Trans.State.Strict (StateT, evalStateT)
+import Core.TEL.AST (Identifier, Program)
+import Core.TEL.Parser (parseExpr, errorBundlePretty)
+import qualified Core.TEL.Interpreter as Interp
 import Core.TEL.PrettyPrinter
 import qualified Core.TEL.TypeChecker as TC
-import qualified Core.TEL.Interpreter as Interp
-import Core.Effects
 import Core.Common (LamportTime(..))
 import qualified Data.ByteString.Char8 as C8
 import Control.Monad (foldM)
 import qualified Core.CodeAddress as CA
 
-import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
 import qualified Text.Megaparsec as MP
 import qualified Text.Megaparsec.Char as MP
 import qualified Text.Megaparsec.Char.Lexer as L
 import Data.Void (Void)
-import System.Console.Haskeline
 
 -- | REPL state
 data REPLState = REPLState
