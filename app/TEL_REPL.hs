@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Core.TEL.REPL (startREPL)
+import Core.TEL.REPL (runREPL)
 
 main :: IO ()
-main = startREPL 
+main = runREPL 

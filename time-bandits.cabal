@@ -293,6 +293,7 @@ test-suite time-bandits-test
                      , Core.TELTest
                      , Core.TEL.InterpreterTest
                      , Core.TEL.ContentAddressableTest
+                     , Core.TEL.ToEffectTest
                      , SimpleTELTest
                      , TestReport
                      , HspecReporter
@@ -314,6 +315,8 @@ test-suite time-bandits-test
                      , bytestring
                      , data-default
                      , QuickCheck
+                     , polysemy
+                     , polysemy-plugin
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
@@ -331,6 +334,7 @@ executable generate-test-report
                  , Core.TELTest
                  , Core.TEL.InterpreterTest
                  , Core.TEL.ContentAddressableTest
+                 , Core.TEL.ToEffectTest
                  , TestReport
                  , HspecReporter
                  , TastyReporter
@@ -351,6 +355,8 @@ executable generate-test-report
                  , bytestring
                  , data-default
                  , QuickCheck
+                 , polysemy
+                 , polysemy-plugin
   ghc-options:     -threaded -rtsopts -with-rtsopts=-N
   default-language: Haskell2010
 
@@ -379,3 +385,5 @@ executable tel-repl
     , haskeline >= 0.8.2
     , directory
   ghc-options:    -threaded
+                     , Core.TEL.CompositeEffectTest
+                 , Core.TEL.CompositeEffectTest

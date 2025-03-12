@@ -1,16 +1,16 @@
 # 🧪 Time Bandits Test Results
 
-🕐 **Generated on:** Tue Mar 11 06:22:04 EST 2025
-📋 **Status:** ✅ PASSED
+🕐 **Generated on:** Wed Mar 12 07:29:32 EST 2025
+📋 **Status:** ❌ BUILD FAILED
 
 ## 📊 Summary
 
 | Metric | Count |
 |--------|-------|
-| Test Suites | 1 |
-| Test Cases | 1 |
-| Passed | All ✅ |
-| Failed | 0  |
+| Test Suites | Unknown |
+| Test Cases | Unknown |
+| Passed | 0  |
+| Failed | 0 (build issues) ❌ |
 | Pending | 0  |
 | Stubbed | 0  |
 
@@ -18,16 +18,7 @@
 
 ## 📚 Module Status
 
-| Module | Status |
-|--------|--------|
-| Fact Observation components | ✅ PASS |
-| Standalone Tests | ✅ PASS |
-| Unit Tests | ✅ PASS |
-| Log Tests | ✅ PASS |
-| Simulation Tests | ✅ PASS |
-| Core Tests | ✅ PASS |
-| Network Tests | ✅ PASS |
-| Mini Tests | ✅ PASS |
+No detailed module information available.
 
 
 
@@ -87,7 +78,7 @@
 ## 📝 Test Output
 
 ```
-Test output not available
+
 ```
 
 For complete test output, see the test_output.log file.
