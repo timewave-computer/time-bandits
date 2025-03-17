@@ -1,12 +1,12 @@
 # shell.nix
-let
-  pkgs = import <nixpkgs> { };
+{ pkgs ? import <nixpkgs> { } }:
 
-  # Use GHC 9.6.4 specifically for polysemy compatibility
-  hsPkgs = pkgs.haskell.packages.ghc964;
+let
+  # Use GHC 9.6.3 for compatibility with the current project
+  hsPkgs = pkgs.haskell.packages.ghc963;
 
   # Create a Haskell environment with the packages we need
-  ghc = hsPkgs.ghcWithPackages (ps: with ps; [
+  haskellDeps = ps: with ps; [
     cabal-install
     polysemy
     polysemy-plugin
@@ -21,7 +21,10 @@ let
     time
     transformers
     with-utf8
-  ]);
+  ];
+
+  # Create a custom GHC with the packages we need
+  ghc = hsPkgs.ghcWithPackages haskellDeps;
 
 in
 pkgs.mkShell {
@@ -33,11 +36,18 @@ pkgs.mkShell {
     pkgs.ghcid
   ];
 
+  # Add any system libraries needed
+  nativeBuildInputs = with pkgs; [
+    zlib
+  ];
+
+  # Set up the environment
   shellHook = ''
-    # Set up GHC environment
-    export PATH="${ghc}/bin:${hsPkgs.cabal-install}/bin:$PATH"
-    export GHC="${ghc}/bin/ghc"
-    export GHC_PACKAGE_PATH="${ghc}/lib/ghc-9.6.4/package.conf.d"
-    export HIE_BIOS_GHC="${ghc}/bin/ghc"
+    echo "Entering Time Bandits development environment..."
+    export NIX_GHC="${ghc}/bin/ghc"
+    export NIX_GHCPKG="${ghc}/bin/ghc-pkg"
+    export NIX_GHC_DOCDIR="${ghc}/share/doc/ghc/html"
+    export NIX_GHC_LIBDIR="${ghc}/lib/ghc-9.6.3"
+    export PATH="$PWD/dist/build/time-bandits:$PATH"
   '';
 }

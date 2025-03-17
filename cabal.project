@@ -1,2 +1,25 @@
 packages:
-  . 
+  .
+
+tests: True
+
+constraints: 
+  attoparsec >=0.10,
+  regex-base >=0.94,
+  th-lift >=0.8,
+  regex-pcre -any
+
+allow-newer: 
+  *:containers,
+  *:bytestring,
+  *:time,
+  *:template-haskell,
+  *:aeson,
+  *:attoparsec,
+  *:text,
+  *:base,
+  *:QuickCheck,
+  *:regex-base,
+  *:regex-pcre,
+  *:th-lift,
+  *:aeson-schema 

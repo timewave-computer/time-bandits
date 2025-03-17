@@ -1,1 +1,0 @@
-module Adapters.EthereumAdapter where

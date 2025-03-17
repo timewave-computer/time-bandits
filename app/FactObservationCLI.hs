@@ -39,10 +39,10 @@ import System.IO (hPutStrLn, stderr)
 import qualified Data.List as List
 
 -- Import from TimeBandits modules
-import qualified Core.FactObservation.Rules as Rules
-import Core.FactObservation.TOMLParser (parseRuleSetFromFile)
-import qualified Core.FactObservation.Engine as Engine
-import Core.FactObservation.Schema (validateRuleAgainstSchema, validateRuleSetAgainstSchema)
+import qualified TimeBandits.Core.FactObservation.Rules as Rules
+import TimeBandits.Core.FactObservation.TOMLParser (parseRuleSetFromFile)
+import qualified TimeBandits.Core.FactObservation.Engine as Engine
+import TimeBandits.Core.FactObservation.Schema (validateRuleAgainstSchema, validateRuleSetAgainstSchema)
 
 -- | CLI options
 data Options = Options

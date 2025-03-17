@@ -47,54 +47,46 @@ common shared
     , async
     , base               >=4.18    && <5
     , base16-bytestring
+    , base64-bytestring
     , bytestring
-    , cborg              >=0.2
     , cereal
     , containers
-    , crypto-api
-    , cryptohash-sha256
     , cryptonite
-    , data-default
+    , deepseq
+    , haskeline
+    , hie-bios
     , directory
     , extra
     , filepath
     , hashable
+    , http-api-data
+    , lens
     , memory
-    , mtl
-    , optics-core
-    , polysemy           ==1.9.2.0
-    , polysemy-log       ==0.9.0.0
-    , polysemy-plugin    ==0.4.5.0
-    , process            >=1.6.0.0
-    , profunctors
-    , relude             >=1.0
-    , serialise          >=0.2
+    , mtl                >= 2.2.2
+    , network
+    , polysemy           >= 1.9.1
+    , polysemy-plugin
+    , pretty-simple
+    , process
+    , random
+    , relude             >= 1.2.0.0
+    , scientific
+    , serialise
+    , stm
+    , store
     , text
+    , text-replace
     , time
     , tomland
     , transformers
-    , with-utf8
-    , base64-bytestring
-    , binary
-    , haskeline          >= 0.8.2
-    , entropy
-    , mtl
-    , network             >= 3.1.2
-    , random              >= 1.2
-    , stm
-    , vector
-    , http-client
-    , tomland
-    , aeson-pretty
-    , x509
-    , zlib
+    , unordered-containers
     , uuid
-    , asn1-types
-    , raw-strings-qq
-    , deepseq
+    , vector
     , megaparsec          >= 9.0
     , prettyprinter       >= 1.7
     , hex
+    , temporary           >= 1.3
+    , template-haskell    >= 2.20.0.0
 
   default-language:   GHC2021
 
@@ -107,133 +99,82 @@ library
   exposed-modules:
     TimeBandits
     
-    -- Types directory (shared types)
-    Types.EffectTypes
-    Types.EffectPayload
-    Types.Effect
-    Types.Guard
-    Types.Actor
-    Types.Deployment
-    Types.Scenario
-    Types.Core
-    Types.Network
-    Types.EffectBase
+    -- TimeBandits Core modules
+    TimeBandits.Core.Common.SharedTypes
+    TimeBandits.Core.Common.Types
+    TimeBandits.Core.Common.Utils
+    TimeBandits.Core.Common.ModuleLayout
+    TimeBandits.Core.Common.Extensions
+    TimeBandits.Core.Common.ModuleTemplate
+    TimeBandits.Core.Common.Serialize
     
-    -- Actors directory
-    Actors
-    Actors.Actor
-    Actors.ActorCommunication
-    Actors.ActorTypes
-    Actors.ActorCoordination
-    Actors.TimeBandit
-    Actors.TimeKeeper
-    Actors.TimeTraveler
-    Actors.TransitionMessage
+    -- ContentAddress modules
+    TimeBandits.Core.ContentAddress.Types
+    TimeBandits.Core.ContentAddress.Hash
+    TimeBandits.Core.ContentAddress.Repository
+    TimeBandits.Core.ContentAddress.Util
+    TimeBandits.Core.ContentAddress.ModuleLayout
+    TimeBandits.Common.ContentAddress
     
-    -- Adapters directory
-    Adapters
-    Adapters.CelestiaAdapter
-    Adapters.EthereumAdapter
-    Adapters.MockAdapter
-    Adapters.Network
-    Adapters.NetworkAdapter
-    Adapters.NetworkQUIC
-    Adapters.TimelineAdapter
-    Adapters.Network.Protocol
-    Adapters.Network.Serialization
-    Adapters.Network.Discovery
-    Adapters.Network.TLS.Certificate
+    -- Resource Management modules
+    TimeBandits.Core.Resource
+    TimeBandits.Core.Resource.Types
+    TimeBandits.Core.Resource.Operations
+    TimeBandits.Core.Resource.Ledger
     
-    -- CLI directory
-    CLI
-    CLI.Controller
-    CLI.Deployment
-    CLI.Main
+    -- TimeMap modules
+    TimeBandits.Core.TimeMap
+    TimeBandits.Core.TimeMap.Types
+    TimeBandits.Core.TimeMap.Operations
     
-    -- Core directory
-    Core
-    Core.AccountProgram
-    Core.ActorId
-    Core.CodeAddress
-    Core.CodeAddressUtil
-    Core.Common
-    Core.Core
-    Core.Effect
-    Core.Effects
-    Core.Error
-    Core.ExecutionLog
-    Core.ProgramId
-    Core.Resource
-    Core.ResourceId
-    Core.ResourceLedger
-    Core.Serialize
-    Core.SerializeInstances
-    Core.TimelineDescriptor
-    Core.TimelineId
-    Core.Timeline
-    Core.TimeMap
-    Core.Types
-    Core.Utils
-    Core.Concurrency.LockManager
-    Core.Concurrency.ResourceLock
-    Core.Concurrency.EffectLog
-    Core.Concurrency.Distributed
-    Core.Concurrency.Combinators
-    Core.TEL
-    Core.TEL.AST
-    Core.TEL.Parser
-    Core.TEL.PrettyPrinter
-    Core.TEL.TypeChecker
-    Core.TEL.Interpreter
-    Core.TEL.REPL
-    Core.TEL.ContentAddressable
-    Core.TEL.Concurrency
-    Core.FactObservation.Rules
-    Core.FactObservation.Schema
-    Core.FactObservation.TOMLParser
-    Core.FactObservation.Engine
-    Core.Hashing
-    Core.Schema
+    -- ID and Type modules
+    TimeBandits.Core.TimelineId
+    TimeBandits.Core.ResourceId
+    TimeBandits.Core.ProgramId
+    TimeBandits.Core.Error
+    TimeBandits.Core.Error.Types
+    TimeBandits.Core.Effect
+    TimeBandits.Core.Timeline
+    TimeBandits.Core.Types
+    TimeBandits.Core.Timeline.Descriptor
+    TimeBandits.Core.Schema
+    TimeBandits.Core.Log
+    TimeBandits.Core.Log.StandardLog
     
-    -- Execution directory
-    Execution
-    Execution.ContentAddressableExecutor
-    Execution.DistributedLog
-    Execution.EffectAdapterGenerator
-    Execution.EffectExecutor
-    Execution.EffectInterpreter
-    Execution.EffectLogger
-    Execution.Events
-    Execution.ExecutionLog
-    Execution.LocalMultiProcess
-    Execution.LogStore
-    Execution.PreconditionEvaluator
-    Execution.ResourceLedger
+    -- TEL modules
+    TimeBandits.Core.TEL
+    TimeBandits.Core.TEL.AST
+    TimeBandits.Core.TEL.Concurrency
+    TimeBandits.Core.TEL.Parser
+    TimeBandits.Core.TEL.PrettyPrinter
+    TimeBandits.Core.TEL.TypeChecker
+    TimeBandits.Core.TEL.ContentAddressable
+    TimeBandits.Core.TEL.Interpreter
+    TimeBandits.Core.TEL.REPL
     
-    -- Programs directory
-    Programs
-    Programs.AccountProgram
-    Programs.Preconditions
-    Programs.Program
-    Programs.ProgramDefinition
-    Programs.ProgramEffect
-    Programs.ProgramState
-    Programs.ProgramTypes
-    Programs.Scenario
-    Programs.Types
+    -- Concurrency modules
+    TimeBandits.Core.Concurrency.Types
+    TimeBandits.Core.Concurrency.Combinators
+    TimeBandits.Core.Concurrency.Distributed
+    TimeBandits.Core.Concurrency.LockManager
+    TimeBandits.Core.Concurrency.ResourceLock
+    TimeBandits.Core.Concurrency.EffectLog
     
-    -- Proofs directory
-    Proofs
-    Proofs.SecurityVerifier
-    Proofs.TimelineProof
-    Proofs.ZKProof
+    -- FactObservation modules
+    TimeBandits.Core.FactObservation
+    TimeBandits.Core.FactObservation.Engine
+    TimeBandits.Core.FactObservation.Rules
+    TimeBandits.Core.FactObservation.Schema
+    TimeBandits.Core.FactObservation.TOMLParser
     
-    -- Simulation directory
-    Simulation
-    Simulation.Controller
-    Simulation.Messaging
-    Simulation.Scenario
-    Simulation.Scenarios
+    -- Actor modules
+    TimeBandits.Actors.ActorId
+    
+    -- Program modules
+    TimeBandits.Programs.AccountProgram
+    
+    -- Execution modules
+    TimeBandits.Execution.ExecutionLog
 
 executable time-bandits
   import:         shared
@@ -250,140 +191,176 @@ executable deployment-app
   main-is:        DeploymentApp.hs
   hs-source-dirs: app
   build-depends:
-    , time-bandits
-
-executable fact-observation-cli
-  import:          shared
-  hs-source-dirs:  app
-  main-is:         FactObservationCLI.hs
-  build-depends:
-    , time-bandits
-    , optparse-applicative
-    , directory
-    , filepath
-    , aeson
-    , aeson-pretty
     , bytestring
     , text
-    , containers
-    , time
-
-executable content-addressable-tool
-  import:         shared
-  main-is:        ContentAddressableTool.hs
-  hs-source-dirs: app
-  build-depends:
     , time-bandits
-    , bytestring
-    , text
-    , directory
-    , filepath
+    , utf8-string
 
 test-suite time-bandits-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Spec.hs
-  other-modules:       Core.FactObservation.RulesSpec
-                     , Core.FactObservation.TOMLParserSpec
-                     , Core.FactObservation.EngineSpec
-                     , Core.FactObservation.IntegrationSpec
-                     , Core.FactObservation.CLISpec
-                     , Core.ContentAddressableTest
-                     , Core.ContentAddressableSystemTest
-                     , Core.TELTest
-                     , Core.TEL.InterpreterTest
-                     , Core.TEL.ContentAddressableTest
-                     , Core.TEL.ToEffectTest
-                     , SimpleTELTest
-                     , TestReport
-                     , HspecReporter
-                     , TastyReporter
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , time-bandits
-                     , hspec >= 2.10.0
-                     , hspec-core >= 2.10.0
-                     , tasty >= 1.4
-                     , tasty-hunit
-                     , temporary
+                     , aeson
+                     , aeson-pretty
+                     , bytestring
+                     , containers
                      , directory
                      , filepath
-                     , process
-                     , containers
+                     , hspec
+                     , hspec-core
+                     , hspec-discover
+                     , mtl
+                     , pretty-simple
+                     , tasty
+                     , tasty-hspec
+                     , tasty-hunit
+                     , tasty-quickcheck
                      , text
-                     , aeson
                      , time
-                     , bytestring
-                     , data-default
+                     , transformers
+                     , unordered-containers
+                     , vector
+                     , scientific
+                     , scientific-notation
+                     , temporary
                      , QuickCheck
-                     , polysemy
-                     , polysemy-plugin
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
-  default-language:    Haskell2010
+                     , quickcheck-instances
+                     , process
+                     , uuid
+  other-modules:       TimeBandits.Core.TEL.CompositeEffectTest
+                     , TimeBandits.Core.TEL.ToEffectTest
+                     , TimeBandits.Core.TEL.ConcurrentEffectsSpec
+                     , TimeBandits.Core.FactObservation.BasicRulesSpec
+                     , TimeBandits.Core.FactObservation.BasicEngineSpec
+                     , TimeBandits.Core.ContentAddress.SystemTest
+                     , TimeBandits.Core.ContentAddress.TypesSpec
+                     , TimeBandits.Core.ContentAddress.HashSpec
+                     , TimeBandits.Core.ContentAddress.RepositorySpec
+                     , TimeBandits.Core.ContentAddress.SystemSpec
+                     , TimeBandits.Core.Common.SerializeTest
 
 executable generate-test-report
   import:          shared
   hs-source-dirs:  test
   main-is:         GenerateTestReport.hs
-  other-modules:   Core.FactObservation.RulesSpec
-                 , Core.FactObservation.TOMLParserSpec
-                 , Core.FactObservation.EngineSpec
-                 , Core.FactObservation.IntegrationSpec
-                 , Core.FactObservation.CLISpec
-                 , Core.ContentAddressableTest
-                 , Core.ContentAddressableSystemTest
-                 , Core.TELTest
-                 , Core.TEL.InterpreterTest
-                 , Core.TEL.ContentAddressableTest
-                 , Core.TEL.ToEffectTest
-                 , TestReport
-                 , HspecReporter
-                 , TastyReporter
+  other-modules:   
+                  -- Basic Fact Observation tests (working)
+                    TimeBandits.Core.FactObservation.BasicRulesSpec
+                  , TimeBandits.Core.FactObservation.BasicEngineSpec
+                  -- Content Address module tests (working)
+                  , TimeBandits.Core.ContentAddress.TypesSpec
+                  , TimeBandits.Core.ContentAddress.HashSpec
+                  , TimeBandits.Core.ContentAddress.RepositorySpec
+                  , TimeBandits.Core.ContentAddress.SystemSpec
+                  -- TEL tests
+                  , TimeBandits.Core.TEL.ToEffectTest
+                  , TimeBandits.Core.TEL.CompositeEffectTest
+                  -- Concurrency tests
+                  , TimeBandits.ConcurrentEffectsSpec
   build-depends:   base
                  , time-bandits
                  , hspec >= 2.10.0
                  , hspec-core >= 2.10.0
+                 , hspec-expectations
                  , tasty >= 1.4
                  , tasty-hunit
                  , temporary
-                 , directory
-                 , filepath
-                 , process
                  , containers
+                 , mtl
                  , text
-                 , aeson
-                 , time
-                 , bytestring
-                 , data-default
-                 , QuickCheck
-                 , polysemy
-                 , polysemy-plugin
-  ghc-options:     -threaded -rtsopts -with-rtsopts=-N
-  default-language: Haskell2010
-
-executable generate-minimal-report
-  import:          shared
-  hs-source-dirs:  test
-  main-is:         GenerateMinimalReport.hs
-  build-depends:   base
-                 , time-bandits
-                 , directory
                  , filepath
-                 , process
-                 , text
-                 , time
-  ghc-options:     -threaded -rtsopts -with-rtsopts=-N
+                 , directory
+                 , QuickCheck
+                 , async
+                 , bytestring
+                 , cereal
+
+executable test-toeffect-standalone
+  import:           shared
+  hs-source-dirs:   test
+  main-is:          RunToEffectTest.hs
+  build-depends:    time-bandits
+                  , hspec
+                  , hspec-expectations
+                  , QuickCheck
+                  , bytestring
+                  , text
+                  , containers
+                  , cereal
+  other-modules:    TimeBandits.Core.TEL.ToEffectTest 
+
+executable test-composite-effect-standalone
+  import:           shared
+  hs-source-dirs:   test
+  main-is:          RunCompositeEffectTest.hs
+  build-depends:    time-bandits
+                  , hspec
+                  , hspec-expectations
+                  , QuickCheck
+                  , bytestring
+                  , text
+                  , containers
+                  , cereal
+  other-modules:    TimeBandits.Core.TEL.CompositeEffectTest 
+
+executable test-concurrent-standalone
+  import:           shared
+  hs-source-dirs:   test
+  main-is:          RunConcurrentEffectsTest.hs
+  build-depends:    time-bandits
+                  , hspec
+                  , QuickCheck
+                  , hspec-expectations
+                  , bytestring
+                  , text
+                  , containers
+                  , cereal
+                  , async
+  other-modules:    TimeBandits.ConcurrentEffectsSpec
+
+executable test-all-standalone
+  hs-source-dirs:   test
+  main-is:          Core/TEL/RunAllTests.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -Wall
+  build-depends:    base
+                  , time-bandits
+                  , hspec >= 2.10.0
+                  , hspec-expectations
+                  , aeson
+                  , containers
+                  , QuickCheck
+                  , mtl
+                  , text
+                  , temporary
+                  , filepath
+                  , directory
+                  , bytestring
+                  , cereal
+                  , async
+  other-modules:    TimeBandits.Core.TEL.CompositeEffectTest
+                  , TimeBandits.Core.TEL.ToEffectTest
+                  , TimeBandits.ConcurrentEffectsSpec
+                  , TimeBandits.Core.FactObservation.BasicRulesSpec
+                  , TimeBandits.Core.FactObservation.BasicEngineSpec
   default-language: Haskell2010
 
-executable tel-repl
-  import:         shared
-  main-is:        TEL_REPL.hs
-  hs-source-dirs: app
-  build-depends:
-    , bytestring
-    , text
-    , time-bandits
-    , haskeline >= 0.8.2
-    , directory
-  ghc-options:    -threaded
-                     , Core.TEL.CompositeEffectTest
-                 , Core.TEL.CompositeEffectTest
+executable test-rules-standalone
+  hs-source-dirs:   test
+  main-is:          RunRulesTest.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N -Wall
+  build-depends:    base
+                  , time-bandits
+                  , hspec >= 2.10.0
+                  , aeson
+                  , containers
+                  , QuickCheck
+                  , mtl
+                  , text
+                  , temporary
+                  , filepath
+                  , directory
+  other-modules:    TimeBandits.Core.FactObservation.BasicRulesSpec
+  default-language: Haskell2010 

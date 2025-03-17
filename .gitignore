@@ -55,4 +55,9 @@ test/bin/
 
 # Test reports - ignore timestamped reports but keep current report
 /test-report-out/test_report_*.md
-!/test-report-out/test_report_current.md
+/test-report-out/test_output.log
+/test-report-out/failed_tests.log
+!/test-report-out/current_report.md
+
+# Reporter backups
+/.reporter-backup/

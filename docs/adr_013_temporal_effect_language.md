@@ -351,7 +351,7 @@ arbitrageOpportunity token amount minProfit timeoutMins = do
   let potentialProfit = (priceOf bestSell - priceOf bestBuy) * amount
   
   -- Execute arbitrage if profitable, with timeout protection
-  if potentialProfit > minProfit
+  if potentialProfit => minProfit
     then timeout timeoutMins minutes $ do
       withdraw amount from account on (dexOf bestBuy)
       swapResult <- swap amount token on (dexOf bestBuy)
