@@ -9,7 +9,7 @@ A sequence of states that represents the evolution of a system over time. Timeli
 An actor that can navigate between states in a timeline and execute programs that manipulate resources.
 
 ### Time Keeper
-An actor responsible for maintaining the consistency and integrity of timelines. Time Keepers validate operations and prevent invalid state transitions.
+An actor responsible for maintaining the consistency and integrity of timelines. Time Keepers validate operations and prevent invalid state transitions. Time Keepers implement the Controller interface for their respective timelines.
 
 ### Time Bandit
 An actor that attempts to exploit vulnerabilities in timelines, often trying to execute double-spend attacks or other manipulation of timeline states.
@@ -18,7 +18,16 @@ An actor that attempts to exploit vulnerabilities in timelines, often trying to 
 A primitive operation that can be performed on a timeline, such as reading a resource, writing a resource, or branching a timeline.
 
 ### Resource
-An object that exists within a timeline and can be manipulated by programs. Resources have a unique identifier and a value.
+A formalized tuple with defined properties including resource logic, fungibility domain, quantity, metadata, and unique identifiers. Resources track their provenance through controller labels and are subject to conservation laws that ensure their total amount remains constant across operations.
+
+### Controller
+An entity responsible for managing a timeline and enforcing its rules. Controllers are classified as Safe, Live, or Byzantine based on their security properties and can endorse other controllers' states to enable state reduction optimizations.
+
+### Controller Label
+A data structure that tracks the history of a resource as it crosses between timelines, recording the creating controller, terminal controller, affecting controllers, and backup controllers.
+
+### Resource Delta
+The net change in resource quantity during an operation. The system enforces that all operations must have a total delta of zero, ensuring conservation of resources.
 
 ### Time Map
 A data structure that maps timeline states to resources, tracking where resources exist across different timeline states.
@@ -45,6 +54,18 @@ An attack where a Time Bandit attempts to use the same resource twice by exploit
 
 ### Temporal Consistency
 The property that effects in a timeline are ordered in a way that respects causality.
+
+### Ancestral Validation
+A validation mechanism that verifies the provenance of resources by checking their controller history through controller labels.
+
+### Dual Validation
+The combination of temporal validation (ensuring causal consistency via time maps) and ancestral validation (verifying controller history), providing defense in depth for cross-timeline operations.
+
+### Resource Commitment
+A cryptographic commitment to a resource's existence, derived from its properties. Used to prove resource existence without revealing all details.
+
+### Resource Nullifier
+A unique value that marks a resource as consumed, preventing double-spending. Created using the resource and a nullifier key.
 
 ### Timeline Proof
 A cryptographic proof that verifies the validity of a timeline state or state transition.

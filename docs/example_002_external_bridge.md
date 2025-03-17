@@ -15,10 +15,13 @@ If an adapter is missing, the developer would implement it:
 module TimeBandits.Adapters.NewTimelineAdapter where
 
 import TimeBandits.Adapters.TimelineAdapter
+import TimeBandits.Resources.Formalized
+import TimeBandits.Controllers.Interface
 
 data NewTimelineAdapter = NewTimelineAdapter {
   rpcEndpoint :: Text,
-  networkId :: Int
+  networkId :: Int,
+  controllerType :: ControllerType  -- Safe, Live, or Byzantine
 }
 
 instance TimelineAdapter NewTimelineAdapter where
@@ -33,374 +36,279 @@ instance TimelineAdapter NewTimelineAdapter where
       
       -- Other effects handled by default implementation
       _ -> defaultEffectHandler effect accountState timeline
+  
+  -- Resource delta validation for the timeline    
+  validateResourceDelta :: Effect -> Bool
+  validateResourceDelta effect = 
+    let delta = computeEffectDelta effect
+    in delta == 0  -- Ensure all resources are balanced
       
   -- Other required interface methods with default implementations
   validateProof = defaultProofValidator
   observeFact = defaultFactObserver
+  
+-- Implement Controller interface for the Timeline Adapter
+instance Controller NewTimelineAdapter where
+  getControllerID adapter = ControllerID $ "timeline:" <> show adapter.networkId
+  getControllerType adapter = adapter.controllerType
+  getStateRoots adapter = fetchLatestBlockHeaders adapter.rpcEndpoint
+  getEndorsements adapter = fetchStoredEndorsements adapter.rpcEndpoint
 ```
 
-## Step 2: Define the Bridge Effect in TEL with Refund Handling
+## Step 2: Define the Bridge Effect in TEL with Refund Handling and Resource Formalization
 
-With adapters in place, the developer defines the external bridge effect with refund support:
+With adapters in place, the developer defines the external bridge effect with refund support and formalized resources:
 
 ```haskell
--- Define the bridge effect type with refund monitoring
+-- Define the bridge effect type with refund monitoring and resource formalization
 type ExternalBridge = {
   sourceTimeline :: Timeline,
   destinationTimeline :: Timeline,
-  sourceAsset :: Asset,
-  destinationAsset :: Asset,
-  amount :: Amount,
+  sourceResource :: Resource,  -- Formalized resource definition
+  destinationResource :: Resource,  -- Formalized resource definition
   bridgeAddress :: Address,
   observationTimeout :: Int,  -- In seconds
-  refundMonitoringPeriod :: Int  -- In seconds, how long to monitor for refunds
+  refundMonitoringPeriod :: Int,  -- In seconds, how long to monitor for refunds
+  controllerLabel :: ControllerLabel  -- Track resource provenance across chains
 }
 
--- Define enhanced result type with refund information
-type BridgeResult = 
-  | BridgeSuccess { txHash :: Hash }
-  | BridgeFailed { reason :: Text }
-  | BridgeTimedOut
-  | BridgeRefunded { refundTxHash :: Hash }
+-- Formalized resource definition
+type Resource = {
+  resourceLogic :: Logic,         -- Predicate controlling resource consumption
+  fungibilityDomain :: Label,     -- Determines equivalence classes (e.g., "USDC")
+  quantity :: Quantity,           -- Numerical representation of amount
+  metadata :: Value,              -- Associated resource data
+  ephemeral :: Bool,              -- Whether existence must be verified
+  nonce :: Nonce,                 -- Uniqueness identifier
+  nullifierPubKey :: NullifierPK, -- For verifying consumption
+  randomnessSeed :: Seed          -- For deriving randomness
+}
 
--- Define the bridge function
-bridgeViaExternal :: ExternalBridge -> Effect BridgeResult
-bridgeViaExternal bridge = emit (CustomEffect "ExternalBridge" bridge)
-```
+-- Controller label for tracking resource provenance
+type ControllerLabel = {
+  creatingController :: ControllerID,
+  terminalController :: ControllerID,
+  affectingControllers :: [ControllerID],
+  backupControllers :: [ControllerID]
+}
 
-## Step 3: Implement Fact Observation Rules for Both Mint and Refund
+-- Define enhanced result type with refund information and dual validation
+type BridgeResult = {
+  success :: Bool,
+  sourceTransactionHash :: Text,
+  destinationTransactionHash :: Maybe Text,
+  refundTransactionHash :: Maybe Text,
+  resourceCommitment :: Commitment,  -- Commitment to the bridged resource
+  validationResult :: ValidationResult  -- Results of temporal and ancestral validation
+}
 
-The developer creates fact observation rules for both the mint event and potential refund:
+-- Dual validation result
+type ValidationResult = {
+  temporalResult :: TemporalResult,
+  ancestralResult :: AncestralResult
+}
 
-```toml
-# Rule for observing mints on destination chain
-[[rules]]
-rule_id = "external-bridge-mint-observation"
-fact_type = "MintObservation"
-proof = "InclusionProof"
-enabled = true
-description = "Observes token mints on destination chain from external bridge"
-
-path.source = "${destinationTimeline}"
-path.selector = "contract.event"
-
-[path.parameters]
-contract_address = "${bridgeAddress}"
-event_name = "TokensMinted"
-
-[[conditions]]
-field = "token"
-operator = "=="
-value = "${destinationAsset}"
-
-[[conditions]]
-field = "origin_chain"
-operator = "=="
-value = "${sourceTimeline}"
-
-[[conditions]]
-field = "amount"
-operator = "=="
-value = "${amount}"
-
-# Rule for observing refunds on source chain
-[[rules]]
-rule_id = "external-bridge-refund-observation"
-fact_type = "RefundObservation" 
-proof = "InclusionProof"
-enabled = true
-description = "Observes token refunds on source chain from external bridge"
-
-path.source = "${sourceTimeline}"
-path.selector = "contract.event"
-
-[path.parameters]
-contract_address = "${bridgeAddress}"
-event_name = "BridgeRefunded"
-
-[[conditions]]
-field = "token"
-operator = "=="
-value = "${sourceAsset}"
-
-[[conditions]]
-field = "destination_chain"
-operator = "=="
-value = "${destinationTimeline}"
-
-[[conditions]]
-field = "amount"
-operator = "=="
-value = "${amount}"
-```
-
-## Step 4: Create a Bridge Module using TEL with Refund Handling
-
-The developer creates a reusable TEL module with comprehensive refund handling:
-
-```haskell
-module ExternalBridges where
-
-import TimeBandits.Core.TEL
-
--- Higher-level utility function for bridging tokens with refund monitoring
-bridgeToken :: Asset -> Asset -> Timeline -> Timeline -> Amount -> Effect BridgeResult
-bridgeToken sourceAsset destAsset sourceChain destChain amount = do
-  -- 1. Get the appropriate bridge address based on assets and chains
-  bridgeAddr <- getBridgeAddress sourceAsset destAsset sourceChain destChain
+-- Implementation of the bridge effect
+externalBridge :: ExternalBridge -> Effect BridgeResult
+externalBridge params = do
+  -- Check if source resource is valid
+  let sourceResource = params.sourceResource
+  let sourceCommitment = commitment sourceResource
+  let sourceNullifier = nullifier sourceResource.nullifierPubKey sourceResource
   
-  -- 2. Withdraw the source asset from the account program
-  withdrawResult <- withdraw amount sourceAsset sourceChain
+  -- Create controller label for cross-chain transfer
+  let controllerLabel = params.controllerLabel {
+    affectingControllers = params.destinationTimeline : params.controllerLabel.affectingControllers
+  }
   
-  case withdrawResult of
-    Left err -> return $ BridgeFailed { reason = "Withdrawal failed: " ++ show err }
-    Right _ -> do
-      -- 3. Set up the bridge parameters
-      let bridge = ExternalBridge {
-        sourceTimeline = sourceChain,
-        destinationTimeline = destChain,
-        sourceAsset = sourceAsset,
-        destinationAsset = destAsset,
-        amount = amount,
-        bridgeAddress = bridgeAddr,
-        observationTimeout = 3600,  -- 1 hour timeout for mint
-        refundMonitoringPeriod = 86400  -- 24 hours to monitor for refunds
+  -- Get current time map for temporal validation
+  timeMap <- getCurrentTimeMap
+  
+  -- Execute the bridge transaction on source chain
+  sourceTx <- execBridgeTx params.sourceTimeline params.bridgeAddress sourceResource
+  
+  -- Record the nullifier to mark the source resource as consumed
+  recordNullifier sourceNullifier
+  
+  -- Monitor for transaction confirmation on source chain
+  sourceReceipt <- monitorTx params.sourceTimeline sourceTx params.observationTimeout
+  
+  -- If source transaction failed or timed out, return failure
+  if not sourceReceipt.success
+    then return { 
+      success = False, 
+      sourceTransactionHash = sourceTx,
+      destinationTransactionHash = Nothing,
+      refundTransactionHash = Nothing,
+      resourceCommitment = sourceCommitment,
+      validationResult = ValidationResult 
+        { temporalResult = TemporallyValid (getTimelineHeight timeMap params.sourceTimeline) 
+        , ancestralResult = AncestrallyInvalid "Source transaction failed"
+        }
+    }
+    else do
+      -- Monitor destination chain for incoming bridge transfer
+      destTx <- monitorBridgeDestination 
+        params.destinationTimeline 
+        params.sourceResource.fungibilityDomain 
+        params.sourceResource.quantity 
+        sourceReceipt.blockHeight
+        params.observationTimeout
+      
+      -- Create destination resource with updated controller label
+      let destResource = params.destinationResource {
+        controllerLabel = controllerLabel {
+          terminalController = params.destinationTimeline
+        }
       }
       
-      -- 4. Execute the bridge effect
-      bridgeResult <- bridgeViaExternal bridge
-      
-      case bridgeResult of
-        BridgeSuccess txHash -> do
-          -- 5. Race between watching for mint and watching for refund
-          raceResult <- race
-            -- Watch for mint on destination chain
-            (do
-              mintFact <- observe (MintObservation destChain destAsset amount) on destChain
-              return $ Left mintFact)
-            
-            -- Watch for refund on source chain
-            (do
-              refundFact <- observe (RefundObservation sourceChain sourceAsset amount) on sourceChain
-              return $ Right refundFact)
+      -- Perform dual validation
+      validationResult <- validateCrossChainResource 
+        (BridgeEffect sourceResource destResource) 
+        destResource 
+        timeMap 
+        controllerLabel
+        
+      case destTx of
+        -- Bridge transfer completed successfully
+        Just txHash -> return { 
+          success = True, 
+          sourceTransactionHash = sourceTx,
+          destinationTransactionHash = Just txHash,
+          refundTransactionHash = Nothing,
+          resourceCommitment = commitment destResource,
+          validationResult = validationResult
+        }
+        
+        -- Bridge transfer not detected, monitor for refund
+        Nothing -> do
+          refundTx <- monitorForRefund 
+            params.sourceTimeline 
+            params.sourceResource.fungibilityDomain
+            params.sourceResource.quantity
+            params.refundMonitoringPeriod
           
-          case raceResult of
-            Left mintFact -> do
-              -- 6a. Mint succeeded - deposit tokens to account program on destination
-              deposit amount destAsset destChain
-              return $ BridgeSuccess { txHash = txHash }
-              
-            Right refundFact -> do
-              -- 6b. Bridge refunded tokens - handle the refund
-              let refundTxHash = getRefundTxHash refundFact
-              -- Process the refund (add to account balance)
-              processRefund amount sourceAsset sourceChain refundTxHash
-              return $ BridgeRefunded { refundTxHash = refundTxHash }
-        
-        other -> return other
-
--- Helper function to get appropriate bridge address
-getBridgeAddress :: Asset -> Asset -> Timeline -> Timeline -> Effect Address
-getBridgeAddress sourceAsset destAsset sourceChain destChain = do
-  -- This could query a registry or use a predefined mapping
-  return $ case (sourceAsset, destAsset, sourceChain, destChain) of
-    ("USDC", "USDC", "ethereum", "celestia") -> "0x1234...5678"
-    ("USDC", "USDC", "ethereum", "solana") -> "0xabcd...efgh"
-    -- Add more bridge addresses as needed
-    _ -> error "Unsupported bridge combination"
-
--- Helper to extract refund transaction hash from fact
-getRefundTxHash :: Fact -> Hash
-getRefundTxHash fact = fact.refundTxHash  -- Simplified; actual implementation would extract from fact payload
-
--- Process refund by updating account program balance
-processRefund :: Amount -> Asset -> Timeline -> Hash -> Effect ()
-processRefund amount asset timeline refundTxHash = do
-  -- Create a deposit effect to account program for the refunded tokens
-  deposit amount asset timeline
-  -- Emit refund received event
-  emit $ "Refund received: " ++ show amount ++ " " ++ asset ++ " on " ++ timeline
+          return { 
+            success = False, 
+            sourceTransactionHash = sourceTx,
+            destinationTransactionHash = Nothing,
+            refundTransactionHash = refundTx,
+            resourceCommitment = sourceCommitment,
+            validationResult = ValidationResult 
+              { temporalResult = TemporallyValid (getTimelineHeight timeMap params.sourceTimeline)
+              , ancestralResult = AncestrallyInvalid "Bridge transfer failed, refund detected" 
+              }
+          }
 ```
 
-## Step 5: Add Fallback and Timeout Handling
+## Step 3: Set Up Observability and Retries
 
-The developer enhances the bridge module with comprehensive timeout and fallback logic:
+With resource formalization in place, the developer adds observability patterns, including delta calculation and validation:
 
 ```haskell
--- Enhanced bridging function with comprehensive fallback handling
-bridgeTokenWithFallbacks :: Asset -> Asset -> Timeline -> Timeline -> Amount -> Effect BridgeResult
-bridgeTokenWithFallbacks sourceAsset destAsset sourceChain destChain amount = do
-  -- First try regular bridging
-  bridgeResult <- bridgeToken sourceAsset destAsset sourceChain destChain amount
+-- Monitor a bridge transaction with full observability
+monitorBridgeDestination :: Timeline -> Label -> Quantity -> Int -> Int -> Effect (Maybe Text)
+monitorBridgeDestination destTimeline asset amount sourceHeight timeout = do
+  -- Set up initial resource delta tracker
+  let initialDelta = Delta (-amount)  -- Initial negative delta from source chain
   
-  case bridgeResult of
-    BridgeSuccess txHash -> return $ BridgeSuccess txHash
-    BridgeRefunded refundTxHash -> return $ BridgeRefunded refundTxHash
-    
-    -- For failures or timeouts, implement fallback logic
-    BridgeFailed reason -> do
-      -- Log the failure
-      emit $ "Bridge failed: " ++ reason
+  -- Start observation loop
+  startTime <- now
+  loop startTime initialDelta
+  where
+    loop startTime currentDelta = do
+      -- Check if we've detected the transfer
+      transfers <- queryCrossChainTransfers destTimeline asset
       
-      -- Monitor for possible refund for an extended period
-      extendedResult <- timeout (7 * 24 * 3600) seconds $ do
-        refundFact <- observe (RefundObservation sourceChain sourceAsset amount) on sourceChain
-        let refundTxHash = getRefundTxHash refundFact
-        processRefund amount sourceAsset sourceChain refundTxHash
-        return $ BridgeRefunded { refundTxHash = refundTxHash }
+      -- Filter transfers by approximate amount and time window
+      relevantTransfers <- filterRelevant transfers amount sourceHeight
       
-      -- If no refund observed after extended period, report final failure
-      case extendedResult of
-        Some result -> return result
-        None -> do
-          -- Final failure - might need manual intervention
-          emit $ "Bridge failed and no refund detected after extended monitoring"
-          return $ BridgeFailed { reason = reason ++ " (no refund detected)" }
-    
-    BridgeTimedOut -> do
-      -- For timeouts, continue monitoring for either success or refund
-      emit "Bridge timed out, continuing to monitor for completion or refund"
-      
-      extendedRaceResult <- race
-        -- Keep watching for mint for extended period
-        (do
-          mintFact <- timeout (48 * 3600) seconds $ 
-            observe (MintObservation destChain destAsset amount) on destChain
-          case mintFact of
-            Some fact -> do
-              deposit amount destAsset destChain
-              return $ Left $ BridgeSuccess { txHash = extractTxHash fact }
-            None -> return $ Left $ BridgeTimedOut)
-        
-        -- Keep watching for refund for extended period
-        (do
-          refundFact <- timeout (7 * 24 * 3600) seconds $ 
-            observe (RefundObservation sourceChain sourceAsset amount) on sourceChain
-          case refundFact of
-            Some fact -> do
-              let refundTxHash = getRefundTxHash fact
-              processRefund amount sourceAsset sourceChain refundTxHash
-              return $ Right $ BridgeRefunded { refundTxHash = refundTxHash }
-            None -> return $ Right $ BridgeTimedOut)
-      
-      case extendedRaceResult of
-        Left result -> return result
-        Right result -> return result
-
--- Helper to extract transaction hash from fact
-extractTxHash :: Fact -> Hash
-extractTxHash fact = fact.txHash  -- Simplified; actual implementation would extract from fact payload
+      case relevantTransfers of
+        -- Found a transfer, calculate the positive delta to balance the negative source delta
+        (transfer:_) -> do
+          let positiveDelta = Delta amount
+          let totalDelta = combineDelta currentDelta positiveDelta
+          
+          -- Validate that resource deltas balance to zero
+          if totalDelta == Delta 0
+            then return (Just transfer.txHash)
+            else throwError $ DeltaImbalance currentDelta positiveDelta
+            
+        -- No transfer found, check timeout
+        [] -> do
+          currentTime <- now
+          if diffTime currentTime startTime > timeout
+            then return Nothing
+            else do
+              sleep 10  -- Sleep and retry
+              loop startTime currentDelta
 ```
 
-## Step 6: Register and Publish the Bridge Module
+## Step 4: Use in a Program with Dual Validation
 
-The developer registers the module in the content-addressable code system:
+Finally, the developer can use the custom bridge effect within a program:
 
 ```haskell
-import Core.CodeAddress
-
--- Store the bridge module
-storeAndRegisterBridgeModule :: CodeRepository -> IO CodeHash
-storeAndRegisterBridgeModule repo = do
-  let moduleName = "ExternalBridges"
-      moduleSource = "-- Full module source code here..."
+-- Example usage in a program
+crossChainSwap :: Token -> Amount -> Account -> Account -> Effect SwapResult
+crossChainSwap token amount fromAccount toAccount = do
+  -- Get the timeline controllers
+  ethController <- getController "ethereum"
+  polyController <- getController "polygon"
   
-  moduleHash <- hashModule moduleName [] moduleSource
-  moduleDef <- CodeDefinition moduleHash moduleSource ModuleDef
+  -- Create source resource
+  let sourceResource = Resource {
+    resourceLogic = TokenLogic,
+    fungibilityDomain = token,
+    quantity = amount,
+    metadata = emptyValue,
+    ephemeral = False,
+    nonce = generateNonce,
+    nullifierPubKey = fromAccount.nullifierKey,
+    randomnessSeed = generateSeed
+  }
   
-  _ <- storeDefinition repo moduleDef
-  registerName repo moduleName moduleHash
+  -- Create destination resource (same properties but different controller)
+  let destResource = sourceResource {
+    nonce = generateNonce,  -- New nonce for destination
+    nullifierPubKey = toAccount.nullifierKey
+  }
   
-  -- Notify users that the module is available
-  putStrLn $ "Bridge module published with hash: " ++ show moduleHash
+  -- Create controller label for cross-chain transfer
+  let controllerLabel = ControllerLabel {
+    creatingController = ethController,
+    terminalController = polyController,
+    affectingControllers = [ethController],
+    backupControllers = []
+  }
   
-  return moduleHash
+  -- Execute the bridge with resource formalization
+  bridgeResult <- externalBridge {
+    sourceTimeline = "ethereum",
+    destinationTimeline = "polygon",
+    sourceResource = sourceResource,
+    destinationResource = destResource,
+    bridgeAddress = "0x1234...5678",
+    observationTimeout = 3600,  -- 1 hour
+    refundMonitoringPeriod = 86400,  -- 24 hours
+    controllerLabel = controllerLabel
+  }
+  
+  -- Validate the result using dual validation
+  case bridgeResult.validationResult of
+    ValidationResult (TemporallyValid _) (AncestrallyValid _) ->
+      -- Both validations passed, continue with the post-bridge operation
+      -- The final delta will be 0, ensuring resource conservation
+      performPostBridgeAction destResource amount toAccount
+      
+    -- Handle validation failures
+    _ -> throwError $ ValidationFailure bridgeResult.validationResult
 ```
 
-## Step 7: Use the Bridge in a Program with Refund Handling
+This example demonstrates how to implement a custom cross-chain bridge effect with the formalized resource model, including:
 
-Other developers can now use the bridge module with comprehensive refund handling:
-
-```haskell
--- Import the bridge module by name or content hash
-import ExternalBridges
-
--- Cross-chain arbitrage with refund handling
-crossChainArbitrageWithRefundHandling :: Amount -> Effect Profit
-crossChainArbitrageWithRefundHandling amount = do
-  -- 1. Bridge USDC from Ethereum to Celestia with refund handling
-  bridgeResult <- ExternalBridges.bridgeTokenWithFallbacks "USDC" "USDC" "ethereum" "celestia" amount
-  
-  case bridgeResult of
-    BridgeSuccess _ -> do
-      -- 2. Continue with arbitrage on destination chain
-      arbitrageOnDestination amount
-      
-    BridgeRefunded refundTxHash -> do
-      -- Handle refund case - maybe try an alternative route or strategy
-      emit $ "Bridge was refunded with tx: " ++ show refundTxHash
-      -- Maybe try an alternative arbitrage path
-      alternativeArbitrage amount
-      
-    BridgeFailed reason -> do
-      emit $ "Bridge failed permanently: " ++ reason
-      return 0  -- No profit
-      
-    BridgeTimedOut -> do
-      emit "Bridge timed out even after extended monitoring"
-      return 0  -- No profit
-
--- Arbitrage implementation on destination chain
-arbitrageOnDestination :: Amount -> Effect Profit
-arbitrageOnDestination amount = do
-  -- Swap and arbitrage implementation
-  -- ...
-  return calculatedProfit
-
--- Alternative arbitrage path when primary route fails
-alternativeArbitrage :: Amount -> Effect Profit
-alternativeArbitrage amount = do
-  -- Try different route
-  -- ...
-  return altProfit
-```
-
-## Real-World Example: USDC Bridge with Refund Handling
-
-Here's a concrete example of implementing a bridge for USDC between Ethereum and Celestia with comprehensive refund handling:
-
-```haskell
--- Safe USDC bridge that handles all possible outcomes
-safeUSDCBridge :: Amount -> Effect (Either BridgeResult Amount)
-safeUSDCBridge amount = do
-  -- Use the enhanced bridge function with fallbacks
-  bridgeResult <- bridgeTokenWithFallbacks "USDC" "USDC" "ethereum" "celestia" amount
-  
-  case bridgeResult of
-    BridgeSuccess _ -> do
-      -- Bridge succeeded - return success with the bridged amount
-      return $ Right amount
-      
-    BridgeRefunded refundTxHash -> do
-      -- Bridge refunded - return the refunded amount
-      emit $ "Bridge refunded: " ++ show refundTxHash
-      return $ Right amount
-      
-    _ -> do
-      -- Bridge failed or timed out - return the failure
-      return $ Left bridgeResult
-```
-
-## How This Handles External Bridge Failures
-
-This implementation handles the following scenarios:
-
-1. **Normal Success Path**: Tokens are locked on source chain and minted on destination chain
-2. **Immediate Refund Path**: Bridge detects an issue and immediately refunds on source chain
-3. **Delayed Refund Path**: Bridge attempts to process but eventually refunds after some time
-4. **Extended Monitoring**: Continues to watch for either completion or refund for days/weeks
-5. **Ultimate Timeout**: After exhaustive monitoring, reports final status for manual resolution
-
-The content-addressable nature of the code ensures that users can trust the exact implementation they're using, and the bridge module can evolve over time with new versions without breaking existing programs.
-
-This approach allows third-party developers to build robust bridge integrations that gracefully handle all potential failure modes, including extended downtime of external systems.
+1. Resource formalization with proper tuples
+2. Controller labels for tracking resource provenance
+3. Dual validation (temporal and ancestral)
+4. Resource delta tracking to ensure conservation
+5. Resource commitments and nullifiers for security

@@ -1,199 +1,110 @@
-# ADR 006: Resource Ownership and the Role of Account Programs
+# ADR 006: Resource Ownership
 
 ## Status
 
-Proposed
-
+Accepted, with register-based extensions
 
 ## Context
 
-In earlier iterations of Time Bandits, **programs owned resources directly**. Programs themselves maintained token balances and directly managed deposits, withdrawals, and transfers. This model was simple but introduced **several critical issues**:
+Time Bandits programs need to interact with resources on external blockchains, including:
 
-- **Concurrency Hazards:** If multiple programs interacted with the same resource (a token or position), they could race to apply effects.
-- **Schema Evolution Pain:** Each program defined its own internal resource schema, which made upgrading programs difficult because every schema had to evolve separately.
-- **Cross-Timeline Complexity:** Programs had to be aware of which timeline they were interacting with, embedding **timeline-specific logic** into business logic.
-- **Replay Ambiguity:** Inconsistent handling of deposits and withdrawals across programs made it hard to reconstruct accurate historical state.
-- **Sovereignty Problems:** Programs were either tightly coupled to their original deployment timeline, or required custom bridging logic for every cross-chain case.
+- Fungible tokens (e.g., ERC-20)
+- Non-fungible tokens (e.g., ERC-721)
+- Native chain assets (e.g., ETH, BTC)
+- Data items (e.g., price feeds, oracle responses)
+- State commitments (e.g., Merkle roots)
 
-### New Approach: Account Programs Own All External Resources
+In previous iterations, resources were directly associated with programs, leading to:
 
-We now introduce **account programs** as **the sole owners of resources** in the system.  
-Programs themselves do not own resources — they **request resource operations via their account program**.
+1. Unclear ownership boundaries
+2. Difficulties in tracking causal dependencies
+3. Complex access control patterns
+4. Security vulnerabilities from direct resource manipulation
 
+## Decision
 
-# Decision
+We will transition to a **register-based resource ownership model** where:
 
-## Account Program Definition
+1. **Account Programs Own Registers**: Each account program manages a set of registers.
+2. **Registers Hold Resources**: External resources are held in registers with clear ownership.
+3. **Register Operations Control Access**: Resources are accessed through formally verified register operations.
+4. **ZK Proofs Ensure Correctness**: Register operations are verified with zero-knowledge proofs.
 
-Each time traveler (developer deploying a program) has a dedicated **account program**, which:
+### Resource Register Structure
 
-- Holds all **assets/resources** for that traveler’s programs.
-- Exposes a standard **deposit/withdrawal API**.
-- Tracks **balances per timeline**.
-- Can delegate **resources to programs** as inputs to their effect pipelines.
-- Logs all resource changes into its own **Effect DAG** (separate from individual program DAGs).
-- Is **content-addressed** and **fully replayable**.
-
-
-## Core Data Structures
-
-### AccountProgram
+Resources will be held in registers with the following structure:
 
 ```haskell
-data AccountProgram = AccountProgram
-    { accountID :: AccountID
-    , owner :: TravelerID
-    , balances :: Map (TimelineID, Asset) Amount
-    , effectDAG :: EffectDAG
+data Register = Register
+    { registerId :: RegisterID
+    , owner :: Address
+    , contents :: RegisterContents
+    , lastUpdated :: BlockHeight
+    , metadata :: Map Text Value
+    , controllerLabel :: Maybe ControllerLabel
     }
+
+data RegisterContents 
+    = FormalizedResource Resource
+    | TokenBalance TokenType Address Amount
+    | NFTContent CollectionAddress TokenId
+    | StateCommitment CommitmentType ByteString
+    | DataObject DataFormat ByteString
+    | CompositeContents [RegisterContents]
 ```
 
-- `accountID`: Unique identifier for the account.
-- `owner`: The traveler who owns this account.
-- `balances`: Per-timeline balances.
-- `effectDAG`: Full causal history of deposits, withdrawals, and cross-program transfers.
+### Resource Access Patterns
 
+Access to resources follows these patterns:
 
-### Account Effects
+1. **Creation**: Resources are created as registers by account programs.
+2. **Authorization**: Register operations require explicit authorization.
+3. **Operations**: Resources can be manipulated through authorized register operations.
+4. **Transfer**: Resources can be transferred between registers with appropriate authorization.
+5. **Cross-Chain Movement**: Resources can move across chains through register transfers with controller labels.
+
+### Authorization Methods
+
+Register operations can be authorized through various methods:
 
 ```haskell
-data AccountEffect
-    = Deposit { timeline :: TimelineID, asset :: Asset, amount :: Amount }
-    | Withdraw { timeline :: TimelineID, asset :: Asset, amount :: Amount, destination :: Address }
-    | TransferToProgram { programID :: ProgramID, asset :: Asset, amount :: Amount }
-    | ReceiveFromProgram { programID :: ProgramID, asset :: Asset, amount :: Amount }
+data AuthorizationMethod
+    = ZKProofAuthorization VerificationKey Proof
+    | TokenOwnershipAuthorization TokenAddress Amount
+    | NFTOwnershipAuthorization CollectionAddress TokenId
+    | MultiSigAuthorization [Address] Int [Signature]
+    | DAOAuthorization DAOAddress ProposalId
+    | TimelockAuthorization Address Timestamp
+    | CompositeAuthorization [AuthorizationMethod] AuthCombinator
 ```
 
+### Conservation Laws
 
-## Interface with Programs
+All register operations must satisfy resource conservation laws:
 
-When a program needs resources (e.g., for trading or cross-program calls), it **requests resource inputs from its account program**.  
-The program itself does not have a balance table — it receives **resources embedded inside effects** during its invocation.
+1. **Creation Conservation**: Resources can only be created with valid external proofs.
+2. **Transfer Conservation**: Transfers must preserve total resource amounts.
+3. **Destruction Conservation**: Resources can only be destroyed with valid external proofs.
+4. **Cross-Chain Conservation**: Cross-chain transfers must preserve controller labels for ancestral validation.
 
+## Consequences
 
-## Interface with Timelines (Keepers)
+### Positive
 
-When a timeline (via a Time Keeper) observes an external deposit or withdrawal, it **posts an observed fact to the relevant account program**.  
-The account program applies this fact as an `ObservedDeposit` or `ObservedWithdrawal` effect in its own DAG.
+- Clear resource ownership boundaries
+- Improved security through formalized access control
+- Better tracking of resource provenance
+- Simplified resource management for program developers
+- Enhanced auditability through register operations log
+- ZK proofs provide strong correctness guarantees
 
+### Negative
 
-## Interface with Bandits (P2P)
+- Additional complexity in resource access patterns
+- Performance overhead from ZK proof generation and verification
+- Learning curve for developers accustomed to direct resource access
 
-Bandits do **not propose resource operations directly to programs**.  
-Instead, Bandits:
-- Propose effects directly to **account programs**.
-- Programs **reference account effects causally** inside their own effect DAGs.
+### Neutral
 
-
-# How This Changes the System
-
-| Component | Before | Now |
-|---|---|---|
-| Programs | Owned resources directly | Request resource flows via accounts |
-| Timelines | Deposited directly into programs | Deposit into accounts only |
-| Bandits | Applied deposits directly to programs | Apply deposits only to accounts |
-| Effect DAGs | Mixed resource and program effects | Separate DAG for accounts and programs |
-
-
-# Example Flow: Cross-Timeline Swap
-
-1. Traveler deploys `SwapProgram`.
-2. Traveler deposits USDC into their account program on Ethereum.
-3. SwapProgram calls `withdraw` on account program to get USDC.
-4. SwapProgram swaps USDC for SOL via external protocol.
-5. SwapProgram deposits SOL back into account program (on Solana).
-6. Account program logs:
-    - Deposit (USDC)
-    - Withdrawal (USDC)
-    - Receive (SOL)
-
-
-# Benefits
-
-- Simplified Program Logic - Programs focus on **effects and logic**, not asset management.  
-- Standard Interface - All programs use the **same deposit/withdrawal API** regardless of timeline.  
-- Full Replayability - Every asset flow is logged causally in account program effect DAGs.  
-- Schema Stability - Account programs have a **fixed schema**, so schema evolution focuses on logic programs.  
-- Cross-Timeline Abstraction - Programs remain **timeline-agnostic** — only accounts deal with external chains.  
-- Developer Experience - Travelers have a **single account per identity**, simplifying asset management.
-
-
-# Interaction with Other Parts of the System
-
-| Component | Relationship to Account Programs |
-|---|---|
-| Program Execution | Reads from account to get input assets, logs effects referencing account transactions |
-| Fact Observation | Timelines post facts directly into accounts |
-| Invocation Pipeline | Programs invoke accounts for deposits/withdrawals instead of handling them internally |
-| Replay Engine | Replays account effects separately from program logic |
-| Observers | Observe both program effects and account effects, treating accounts as **first-class actors** |
-| Safe State Management | Accounts help enforce **no pending returns** by acting as a neutral asset ledger |
-
-
-# New Standard Account Program API
-
-### Deposit
-
-```json
-{
-    "type": "Deposit",
-    "timeline": "Ethereum",
-    "asset": "USDC",
-    "amount": "100"
-}
-```
-
-### Withdraw
-
-```json
-{
-    "type": "Withdraw",
-    "timeline": "Ethereum",
-    "asset": "USDC",
-    "amount": "50",
-    "destination": "0xabc..."
-}
-```
-
-### Transfer to Program
-
-```json
-{
-    "type": "TransferToProgram",
-    "programID": "swap123",
-    "asset": "USDC",
-    "amount": "50"
-}
-```
-
-
-# New Standard Account Program TOML Manifest
-
-```toml
-[program]
-name = "TravelerAccount"
-type = "AccountProgram"
-version = "1.0.0"
-owner = "traveler:alice"
-timelines = ["Ethereum", "Solana"]
-```
-
-
-# Success Criteria
-
-- Each traveler has exactly one account program per deployment context.  
-- All cross-timeline deposits/withdrawals pass through accounts.  
-- No program owns external balances directly.  
-- Account effects are causally linked to program effects when consumed.  
-- Account programs are fully replayable.
-
-
-# Migration Plan
-
-- Programs must drop internal balance tracking.
-- Timeline keepers must deposit to accounts instead of programs.
-- Effect pipeline must split into:
-    - Account Effects (managed by account programs).
-    - Program Effects (managed by programs themselves).
-- Replay engine must replay account effects first, then program effects.
-- Simulation system must launch account programs as first-class actors.
+- Requires standardized register interfaces across blockchains
+- May need periodic updates to authorization methods as security practices evolve

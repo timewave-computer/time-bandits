@@ -20,13 +20,149 @@ This makes it essential for Time Bandits to maintain **a unified and causally co
 - **Provide replayable proofs of external facts.**
 - **Preserve internal causal ordering between program effects.**
 
+Programs need to reason about time across timelines to ensure:
+
+1. Causal consistency
+2. Temporal ordering
+3. Finality tracking
+4. Cross-timeline coordination
+
 
 ## Decision
 
-### Core Concept: The **Time Map**
+We will use a unified time model that combines:
 
-The **Time Map** is the canonical record of the **latest observed state across all timelines**. It serves as the **bridge between internal program time and external timeline time**.
+1. **Timeline-local Time**: Each timeline maintains its own Lamport clock
+2. **Cross-Timeline Time Maps**: Programs track relative time positions across timelines
+3. **Register-Based Time Commitments**: Time maps stored in registers and verified with ZK proofs
 
+### Time Model Components
+
+```haskell
+-- Timeline-local Lamport clock
+data LamportClock = LamportClock
+  { timelineID :: TimelineID
+  , counter :: Counter
+  }
+
+-- Map of timeline positions
+data TimeMap = TimeMap
+  { positions :: Map TimelineID Height
+  , observedAt :: LamportTime
+  , commitments :: Map TimelineID Commitment
+  }
+
+-- Register-based time commitment
+data TimeMapCommitment = TimeMapCommitment
+  { registerId :: RegisterID
+  , timeMap :: TimeMap
+  , proof :: Proof
+  , lastUpdated :: BlockHeight
+  }
+```
+
+### Time Operations
+
+```haskell
+-- Update local Lamport clock
+tickClock :: LamportClock -> LamportClock
+tickClock clock = clock { counter = clock.counter + 1 }
+
+-- Merge two time maps, taking the later position for each timeline
+mergeTimeMaps :: TimeMap -> TimeMap -> TimeMap
+mergeTimeMaps tm1 tm2 = TimeMap
+  { positions = Map.unionWith max tm1.positions tm2.positions
+  , observedAt = max tm1.observedAt tm2.observedAt
+  , commitments = Map.union tm1.commitments tm2.commitments
+  }
+
+-- Check if a time map is ahead of another for all timelines
+isAheadOf :: TimeMap -> TimeMap -> Bool
+isAheadOf tm1 tm2 = 
+  all (\(tid, h) -> Map.findWithDefault 0 tid tm1.positions >= h) 
+      (Map.toList tm2.positions)
+
+-- Create a time map commitment in a register
+commitTimeMap :: TimeMap -> IO TimeMapCommitment
+commitTimeMap tm = do
+  proof <- generateTimeMapProof tm
+  regId <- createRegister (TimeMapContents tm.positions tm.commitments)
+  return TimeMapCommitment
+    { registerId = regId
+    , timeMap = tm
+    , proof = proof
+    , lastUpdated = getCurrentHeight()
+    }
+
+-- Verify a time map commitment
+verifyTimeMapCommitment :: TimeMapCommitment -> IO Bool
+verifyTimeMapCommitment tmc = do
+  registerExists <- checkRegisterExists tmc.registerId
+  proofValid <- verifyProof tmc.proof tmc.timeMap
+  return (registerExists && proofValid)
+```
+
+### Register-Based Time Maps
+
+Time maps will be stored in registers to enable:
+
+1. **On-chain verification**: Timelines can verify time maps in smart contracts
+2. **ZK proof generation**: Generate ZK proofs of time map correctness
+3. **Cross-timeline coordination**: Share time maps between timelines securely
+4. **Temporal validation**: Verify temporal ordering of operations
+5. **Auditability**: Track when timelines have been observed
+
+### ZK Circuit for Time Map Verification
+
+```haskell
+-- ZK circuit for verifying time map updates
+verifyTimeMapUpdate :: Circuit
+verifyTimeMapUpdate = Circuit
+  { name = "TimeMapUpdate"
+  , inputs = 
+      [ "oldTimeMap" # commitment
+      , "newTimeMap" # commitment
+      , "timelineUpdates" # list (pair timelineId height)
+      ]
+  , outputs = 
+      [ "valid" # boolean
+      ]
+  , constraints =
+      [ "valid" === allUpdatesValid "oldTimeMap" "newTimeMap" "timelineUpdates"
+      ]
+  }
+
+-- Generate a proof for a time map update
+generateTimeMapProof :: TimeMap -> TimeMap -> [(TimelineID, Height)] -> IO Proof
+generateTimeMapProof oldTm newTm updates = do
+  -- Generate ZK proof that newTm is a valid update to oldTm
+  circuit <- compileCircuit verifyTimeMapUpdate
+  witness <- generateWitness circuit
+    [ "oldTimeMap" := oldTm
+    , "newTimeMap" := newTm
+    , "timelineUpdates" := updates
+    ]
+  generateProof circuit witness
+```
+
+### Cross-Timeline Temporal Validation
+
+```haskell
+-- Validate that an operation respects temporal ordering
+validateTemporalOrdering :: TimeMap -> Operation -> TimeMap -> IO Bool
+validateTemporalOrdering requiredTm op actualTm = do
+  -- Check if actual time map is ahead of required time map
+  let temporallyValid = isAheadOf actualTm requiredTm
+  
+  -- For register operations, verify time map commitment
+  case op of
+    RegisterOp regId _ _ -> do
+      commitment <- getRegisterTimeMapCommitment regId
+      commitmentValid <- verifyTimeMapCommitment commitment
+      return (temporallyValid && commitmentValid)
+    
+    _ -> return temporallyValid
+```
 
 ## Time Map Components
 
@@ -108,12 +244,12 @@ This protects programs against:
 Each Time Map is **content-addressed**:
 
 ```haskell
-timeMapHash = hash(all timelines’ heights, hashes, timestamps)
+timeMapHash = hash(all timelines' heights, hashes, timestamps)
 ```
 
 This hash is:
 
-- Stored directly in every applied effect’s log entry.
+- Stored directly in every applied effect's log entry.
 - Included in every effect proof.
 - Passed into proof-of-correct-execution for zk generation.
 
@@ -229,6 +365,103 @@ observeFact :: FactQuery -> IO (ObservedFact, TimeMap)
 - Every fact and observation passes through Time Keepers — no direct timeline RPC in programs.  
 - Time Maps are **content-addressed and signed**.
 
+## Mock ZK Proof Implementation
+
+For development and testing purposes, the Time Map system integrates with a mock ZK proof and verification system that provides the same logical interfaces as actual ZK proofs while simplifying the cryptographic aspects.
+
+### Mock ZK Store
+
+Each timeline maintains a key-value store for verification keys and proofs:
+
+```haskell
+-- Mock ZK system key-value store
+data MockZKStore = MockZKStore
+  { verificationKeys :: Map VerificationKey CircuitType
+  , proofPairs :: Map VerificationKey ProofData
+  , validationResults :: Map (ProofData, ByteString) Bool
+  }
+
+type VerificationKey = ByteString  -- Random string mimicking a real verification key
+type ProofData = ByteString  -- Random string mimicking a real ZK proof
+```
+
+### Verification Key Generation
+
+Prior to timeline instantiation, the system generates random strings to serve as verification keys:
+- Each verification key is associated with a specific circuit type
+- These keys are stored in the timeline's key-value store
+- The keys mimic real ZK verification keys without requiring actual cryptographic operations
+
+### Proof Generation and Validation
+
+For each verification key, the system generates a corresponding proof string:
+
+```haskell
+-- Generate mock proof
+generateMockProof :: TimeMap -> VerificationKey -> IO ProofData
+generateMockProof timeMap verificationKey = do
+  -- Generate random string as mock proof
+  proofData <- generateRandomBytes 32
+  -- Store association between verification key and proof
+  storeProofPair verificationKey proofData
+  -- Return the mock proof
+  return proofData
+
+-- Mock prove function
+mockProve :: TimeMap -> ByteString -> VerificationKey -> ProofData -> IO Bool
+mockProve timeMap computationOutput verificationKey proofData = do
+  -- Look up verification key
+  foundKey <- lookupVerificationKey verificationKey
+  
+  -- Get expected proof for this key
+  expectedProof <- lookupProofForKey foundKey
+  
+  -- Validate computation against Time Map
+  timeMapValid <- validateAgainstTimeMap timeMap computationOutput
+  
+  -- Check if proof matches and computation is valid
+  let result = proofData == expectedProof && timeMapValid
+  
+  -- Record validation result
+  storeValidationResult (proofData, computationOutput) result
+  
+  return result
+```
+
+### Time Map Integration
+
+The mock ZK system integrates with the Time Map in several key ways:
+
+1. **Time Map Inclusion**: Each mock proof contains a reference to the Time Map hash, ensuring that proofs are associated with a specific observed state.
+
+2. **Temporal Validation**: The mock proof system validates that the computation output is consistent with the observed Time Map.
+
+3. **Cross-Timeline Operations**: For operations spanning multiple timelines, the system verifies that Time Maps across timelines are consistent, as part of the validation process.
+
+### Resource Conservation Validation
+
+For resource operations that must maintain conservation (ΔTX = 0):
+
+```haskell
+validateResourceOperation :: TimeMap -> [ResourceOp] -> IO (Either ValidationError ProofData)
+validateResourceOperation timeMap operations = do
+  -- Calculate resource delta
+  let delta = calculateDelta operations
+  
+  -- Choose appropriate verification key
+  vk <- getVerificationKeyForResourceOps operations
+  
+  if delta == 0
+    then do
+      -- Generate valid proof for conservative operations
+      proof <- generateMockProof timeMap vk
+      return (Right proof)
+    else
+      -- Return error for non-conservative operations
+      return (Left $ ConservationViolation delta)
+```
+
+This integration ensures that all temporal proofs (based on the Time Map) and resource conservation proofs work together, maintaining the same logical guarantees that real ZK proofs would provide, while simplifying development and testing.
 
 ## Benefits
 
