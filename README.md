@@ -100,9 +100,9 @@ Additional documentation including Architecture Decision Records (ADRs) and Prod
 
 **Time Travelers** are the entities who deploy programs and submit state transition messages to timelines. They initiate program execution by creating signed messages that propose new effects, attach necessary proofs, and commit any required resources. Time Travelers never directly modify program state—instead, they act as external proposers who trigger causally consistent updates.
 
-**Time Keepers** are timeline-specific actors responsible for maintaining the integrity of individual timelines. Each Time Keeper observes a particular blockchain, rollup, or event log, validating new messages (like deposits, claims, and cross-program calls) and ensuring they follow that timeline's rules. Time Keepers also expose query interfaces so Time Bandits can request proofs, balances, and other timeline state needed to validate preconditions.
+**Time Keepers** are light clients that maintain connections to specific blockchains. Each Time Keeper observes a particular blockchain, rollup, or event log, validating new messages (like deposits, claims, and cross-program calls) and ensuring they follow that timeline's rules. Time Keepers also expose query interfaces so Time Bandits can request proofs, balances, and other blockchain state needed to validate preconditions.
 
-**Time Bandits** operate the P2P execution network that applies program effects, generates cryptographic proofs, and maintains the immutable execution log. They observe incoming messages, apply valid effects to program state, and link each effect to its causal predecessor. Time Bandits are responsible for enforcing all cross-program and cross-timeline security properties, ensuring that programs only advance if all preconditions are satisfied, time maps are up to date, and every resource transfer follows strict ownership rules.
+**Time Bandits** are the full nodes that power the distributed program runtime. They operate the P2P overlay network, store data, manage I/O with blockchains, and apply program effects. They observe incoming messages, apply valid effects to program state, generate cryptographic proofs, and maintain the immutable execution log. Time Bandits link each effect to its causal predecessor and are responsible for enforcing all cross-program and cross-timeline security properties, ensuring that programs only advance if all preconditions are satisfied, time maps are up to date, and every resource transfer follows strict ownership rules.
 
 ### Programs
 
@@ -134,7 +134,7 @@ Developers can interact with the content-addressable code system through dedicat
 ### Map of Time
 
 The time map is the core causal clock of Time Bandits. It tracks:
-- The latest observed block or event for every external timeline.
+- The latest observed block or event for every external blockchain.
 - Real-world timestamps for these observations.
 - A logical Lamport clock that tracks causal ordering across chains.
 
@@ -142,7 +142,7 @@ Every applied effect references a specific time map snapshot, ensuring that no e
 
 ### Unified Log (Execution Log)
 
-While the Map of Time tracks the observable state of external timelines, the Unified Log (Execution Log) records the history of program execution itself. This content-addressed, append-only log links each effect to its causal parent, creating an unbroken chain of execution.
+While the Map of Time tracks the observable state of external blockchains, the Unified Log (Execution Log) records the history of program execution itself. This content-addressed, append-only log links each effect to its causal parent, creating an unbroken chain of execution.
 
 Each log entry contains:
 - The effect applied.

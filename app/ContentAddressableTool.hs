@@ -14,9 +14,11 @@ import System.IO (hPutStrLn, stderr)
 import qualified System.Exit as Exit
 import qualified System.Environment as Env
 
-import Core.CodeAddress (CodeDefinition(..), 
-                         newCodeRepository, lookupByHash, lookupByName)
-import Core.CodeAddressUtil (addFileToRepository)
+import TimeBandits.Core.ContentAddress.Types (CodeDefinition(..), CodeRepository, unCodeHash)
+import TimeBandits.Core.Common.Types (unHash)
+import TimeBandits.Core.ContentAddress.Hash (mkCodeHash)
+import TimeBandits.Core.ContentAddress.Repository (newCodeRepository, lookupByHash, lookupByName)
+import TimeBandits.Core.ContentAddress.Util (addFileToRepository)
 import Execution.ContentAddressableExecutor (newExecutor, executeByHash, executeByName,
                                             newContext)
 
@@ -57,7 +59,7 @@ lookupCode identifier = do
   case nameResult of
     Just def -> do
       putStrLn $ "Found by name: " ++ identifier
-      putStrLn $ "Hash: " ++ C8.unpack (cdHash def)
+      putStrLn $ "Hash: " ++ C8.unpack (unHash (unCodeHash (cdHash def)))
       putStrLn $ "Type: " ++ show (cdType def)
       putStrLn "Source:"
       TIO.putStrLn (cdSource def)
@@ -65,7 +67,8 @@ lookupCode identifier = do
     
     Nothing -> do
       -- Try to look up by hash
-      hashResult <- lookupByHash repo (C8.pack identifier)
+      let codeHash = mkCodeHash (C8.pack identifier)
+      hashResult <- lookupByHash repo codeHash
       case hashResult of
         Just def -> do
           putStrLn $ "Found by hash: " ++ identifier
@@ -92,7 +95,8 @@ executeCode identifier = do
     
     (Nothing, _) -> do
       -- Try to execute by hash
-      hashResult <- executeByHash executor (C8.pack identifier) context
+      let codeHash = mkCodeHash (C8.pack identifier)
+      hashResult <- executeByHash executor codeHash context
       case hashResult of
         (Just output, _) -> do
           putStrLn "Executed by hash:"
