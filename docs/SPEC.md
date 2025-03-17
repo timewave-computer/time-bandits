@@ -4,7 +4,7 @@
 
 ## Version
 
-**Current Revision:** 2025-03-07
+**Current Revision:** 2025-03-15
 
 ---
 
@@ -43,6 +43,8 @@ Time Bandits provides a **secure, provable, and composable execution environment
 - Validate and timestamp facts.
 - Append facts to per-timeline **FactLog**.
 - Respond to fact queries from programs and bandits.
+- Observe register state and verify register operations with ZK proofs.
+- Maintain register state synchronization across the network.
 
 ## Time Bandits
 
@@ -52,6 +54,8 @@ Time Bandits provides a **secure, provable, and composable execution environment
 - Generate ZK proofs of execution.
 - Maintain **unified logs** for all programs and account programs.
 - Disseminate facts and effects across the P2P network.
+- Coordinate register operations and execution sequences.
+- Verify ZK proofs for register state transitions.
 
 ---
 
@@ -65,17 +69,20 @@ Time Bandits provides a **secure, provable, and composable execution environment
     - Schema (state format).
     - Safe state policy.
     - Evolution rules.
+- Interact with registers through the register interface.
 
 ## Account Programs
 
 - Each traveler has one account program per deployment context.
-- Owns all external assets (tokens, balances) across timelines.
+- Owns all external assets (tokens, balances) across timelines through registers.
 - Exposes:
     - Deposit API.
     - Withdrawal API.
     - Cross-program transfer API.
     - Balance query API.
+    - Register creation and management API.
 - Tracks causal history in its own effect DAG.
+- Manages register authorization and operations.
 
 ---
 
@@ -94,8 +101,6 @@ data Fact = Fact
     }
 ```
 
----
-
 ## Effect
 
 ```haskell
@@ -106,10 +111,62 @@ data Effect
     | ObserveFact { factID :: FactID }
     | Invoke { targetProgram :: ProgramID, invocation :: Invocation }
     | EvolveSchema { oldSchema :: Schema, newSchema :: Schema, evolutionResult :: EvolutionResult }
+    | RegisterOp { registerID :: RegisterID, operation :: RegisterOperation, authMethod :: AuthorizationMethod }
+    | RegisterCreate { owner :: Address, contents :: RegisterContents }
+    | RegisterTransfer { sourceRegID :: RegisterID, targetChain :: TimelineID, controllerLabel :: ControllerLabel }
     | CustomEffect Text Value
 ```
 
----
+## Register
+
+```haskell
+data Register = Register
+    { registerId :: RegisterID
+    , owner :: Address
+    , contents :: RegisterContents
+    , lastUpdated :: BlockHeight
+    , metadata :: Map Text Value
+    , controllerLabel :: Maybe ControllerLabel
+    }
+
+data RegisterContents 
+    = FormalizedResource Resource
+    | TokenBalance TokenType Address Amount
+    | NFTContent CollectionAddress TokenId
+    | StateCommitment CommitmentType ByteString
+    | TimeMapCommitment BlockHeight ByteString
+    | DataObject DataFormat ByteString
+    | EffectDAG EffectID ByteString
+    | ResourceNullifier NullifierKey ByteString
+    | ResourceCommitment CommitmentKey ByteString
+    | CompositeContents [RegisterContents]
+```
+
+## Authorization Method
+
+```haskell
+data AuthorizationMethod
+    = ZKProofAuthorization VerificationKey Proof
+    | TokenOwnershipAuthorization TokenAddress Amount
+    | NFTOwnershipAuthorization CollectionAddress TokenId
+    | MultiSigAuthorization [Address] Int [Signature]
+    | DAOAuthorization DAOAddress ProposalId
+    | TimelockAuthorization Address Timestamp
+    | CompositeAuthorization [AuthorizationMethod] AuthCombinator
+```
+
+## Register Operation
+
+```haskell
+data RegisterOperation = RegisterOperation
+    { opType :: OperationType
+    , registers :: [RegisterID]
+    , newContents :: Maybe RegisterContents
+    , authorization :: Authorization
+    , proof :: Proof
+    , resourceDelta :: Delta
+    }
+```
 
 ## FactSnapshot (causal dependency record)
 
@@ -117,10 +174,9 @@ data Effect
 data FactSnapshot = FactSnapshot
     { observedFacts :: [FactID]
     , observer :: KeeperID
+    , registerObservations :: Map RegisterID ByteString
     }
 ```
-
----
 
 ## Program State
 
@@ -130,10 +186,9 @@ data ProgramState = ProgramState
     , safeStatePolicy :: SafeStatePolicy
     , effectDAG :: EffectDAG
     , factSnapshots :: Map EffectID FactSnapshot
+    , managedRegisters :: Map RegisterID RegisterCapabilities
     }
 ```
-
----
 
 ## Account Program State
 
@@ -141,6 +196,32 @@ data ProgramState = ProgramState
 data AccountProgramState = AccountProgramState
     { balances :: Map (TimelineID, Asset) Amount
     , effectDAG :: EffectDAG
+    , managedRegisters :: Map RegisterID RegisterCapabilities
+    , zkCapabilities :: Map CircuitType VerificationKey
+    , timeMapCommitment :: TimeMapCommitment
+    , executionSequences :: Map SequenceID ExecutionStatus
+    }
+```
+
+## Execution Sequence
+
+```haskell
+data ExecutionSequence = ExecutionSequence
+    { sequenceId :: SequenceID
+    , nodes :: Map NodeID ExecutionNode
+    , edges :: [Edge]
+    , entryPoints :: [NodeID]
+    , exitPoints :: [NodeID]
+    , commitment :: ByteString
+    }
+
+data ExecutionNode = ExecutionNode
+    { nodeId :: NodeID
+    , nodeType :: NodeType
+    , operation :: Operation
+    , registerDependencies :: [RegisterID]
+    , completionProof :: Maybe Proof
+    , metadata :: Map Text Value
     }
 ```
 
@@ -152,6 +233,7 @@ data AccountProgramState = AccountProgramState
 - Every effect depends on a **FactSnapshot** — facts observed before the effect applied.
 - Effects are **content-addressed** — their hash becomes part of the DAG.
 - Effects are gossiped across the Bandit network before being finalized.
+- Register operations are validated with ZK proofs and incorporated into the effect DAG.
 
 ---
 
@@ -162,6 +244,8 @@ Each program and account program maintains an **append-only, content-addressed l
 - Applied effects.
 - Observed facts.
 - Lifecycle events (e.g., schema upgrade, safe state transition).
+- Register operations and ZK proof verifications.
+- Execution sequence progress and completions.
 
 Each log segment is:
 
@@ -179,15 +263,32 @@ Each log segment is:
     - Program state root hash (proof of caller state).
 - Responses are returned as **observed facts**.
 - Invocations are **asynchronous** — the caller may continue execution while awaiting response.
+- Register-based invocations can utilize execution sequences for complex dependencies.
 
 ---
 
 # Resource Ownership
 
 - **Programs do not own external resources directly.**
-- All cross-timeline assets are held in **account programs**.
-- Logic programs interact with account programs via `Deposit`, `Withdraw`, and `Transfer` effects.
-- Account programs have standardized schemas and upgrade rules.
+- All cross-timeline assets are held in **registers** managed by account programs.
+- Registers provide a clear boundary between "inside" the system (resources, effect DAGs) and "outside" (on-chain tokens, state).
+- Logic programs interact with account programs via register operations.
+- Account programs authorize register operations using flexible methods, including ZK proofs.
+- Register operations maintain resource conservation guarantees through delta tracking.
+- Cross-timeline resource transfers include controller labels for ancestral validation.
+
+---
+
+# Register System
+
+- Registers are on-chain containers that hold formalized resources or data.
+- Each register has a unique ID, generated sequentially for each blockchain.
+- Register operations require authorization through various methods.
+- ZK proofs verify the correctness of register state transitions.
+- Registers maintain resource conservation through delta validation.
+- Cross-timeline register transfers undergo dual validation:
+  - Temporal validation using time maps.
+  - Ancestral validation using controller labels.
 
 ---
 
@@ -200,6 +301,7 @@ Safe state requires:
 - No pending cross-program calls.
 - No pending asset transfers.
 - No unobserved external facts referenced in the current effect.
+- No incomplete register operations or execution sequences.
 
 ---
 
@@ -271,6 +373,27 @@ data DefType = FunctionDef | ModuleDef
 - Programs consume facts through:
     - `ObserveFact` effects.
     - Fact queries to the FactLog.
+- Register-related facts include:
+    - Register creation observations.
+    - Register state updates.
+    - ZK proof verifications.
+    - Execution sequence progress.
+
+---
+
+# ZK Proof System
+
+- ZK proofs verify the correctness of:
+  - Register state transitions.
+  - Resource conservation.
+  - Execution sequence steps.
+  - Time map commitments.
+- Proofs are generated off-chain but verified on-chain.
+- The proof system supports:
+  - Different circuit types for various operations.
+  - Batch verification for efficiency.
+  - Proof composition for complex operations.
+  - Integration with the Time Map for temporal validation.
 
 ---
 
@@ -279,10 +402,12 @@ data DefType = FunctionDef | ModuleDef
 - Program state is **fully reconstructible** from:
     - Unified program log (effects, facts, events).
     - Timeline FactLogs.
+    - Register operations and proofs.
 - Replay applies:
     - Facts in observed order.
     - Effects in causal order.
     - Schema changes exactly as they occurred.
+    - Register operations in correct dependency order.
 - No external queries are allowed during replay — all required state is logged.
 
 ---
@@ -292,14 +417,16 @@ data DefType = FunctionDef | ModuleDef
 ## System-Level Concurrency
 
 - Bandits execute multiple programs concurrently.
-- Programs contend for access to shared account programs.
+- Programs contend for access to shared account programs and registers.
 - Cross-program calls are asynchronous and mediated by logs.
+- Register operations use execution sequences to manage dependencies.
 
 ## Program-Level Concurrency
 
 - Programs can spawn concurrent child programs.
 - Programs can branch into concurrent workflows, provided:
     - Each branch has disjoint fact/resource dependencies.
+    - Register dependencies are properly tracked in execution sequences.
 
 ---
 
@@ -313,6 +440,7 @@ data DefType = FunctionDef | ModuleDef
 - Cross-timeline events respect:
     - External timeline ordering (fact observation).
     - Internal causal ordering (effect DAG).
+- Time Map commitments are stored in registers and verified with ZK proofs.
 
 ---
 
@@ -322,9 +450,11 @@ data DefType = FunctionDef | ModuleDef
 - Travelers must explicitly approve:
     - Schema upgrades.
     - Logic upgrades.
+    - Register authorization changes.
 - Bandits enforce:
     - Schema compatibility.
     - Protocol version compatibility.
+    - ZK proof verification.
 - Programs pinned to old schemas can continue to run, provided:
     - They are supported by at least one Bandit.
 - Time travelers may opt out of new protocol versions at the cost of reduced Bandit support.
@@ -340,6 +470,11 @@ data DefType = FunctionDef | ModuleDef
 | invokeProgram | Send an invocation to another program. |
 | evolveSchema | Propose a schema change. |
 | checkSafeState | Verify safe state before privileged operations. |
+| createRegister | Create a new register with initial contents. |
+| updateRegister | Update register contents with authorization. |
+| verifyProof | Verify a ZK proof against public inputs. |
+| createExecutionSequence | Create a new execution sequence with nodes and edges. |
+| executeSequence | Execute a sequence of register operations. |
 
 ---
 
@@ -351,4 +486,9 @@ data DefType = FunctionDef | ModuleDef
 | withdraw | Withdraw asset from account. |
 | transfer | Transfer asset to another program. |
 | queryBalance | Query per-timeline balances. |
+| createRegister | Create a new register for the account. |
+| manageRegister | Manage register authorization methods. |
+| authorizeRegisterOp | Authorize a register operation. |
+| createExecutionSequence | Create execution sequences for complex operations. |
+| generateProof | Generate a ZK proof for register operations. |
 

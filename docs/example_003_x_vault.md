@@ -1,6 +1,6 @@
 # Example 003: Implementing Cross-Chain Vaults in Time Bandits
 
-This document outlines how a developer would implement a cross-chain vault system using Time Bandits, inspired by the Valence cross-chain vault architecture. In this system, a vault contract on one chain (source chain) manages assets that are actually deployed to a different vault on another chain (destination chain) to generate yield.
+This document outlines how a developer would implement a cross-chain vault system using Time Bandits, inspired by the Valence cross-chain vault architecture. In this system, a vault contract on one chain (source chain) manages assets that are actually deployed to a different vault on another chain (destination chain) to generate yield, utilizing the formalized resource model for tracking and validating cross-chain assets.
 
 ## Architecture Overview
 
@@ -11,17 +11,22 @@ The cross-chain vault system consists of:
    - Issues vault shares to depositors
    - Tracks the total assets under management
    - Communicates with the Time Bandits system for cross-chain operations
+   - Maintains resource commitments for cross-chain assets
 
 2. **Destination Chain Vault**: An externally-owned vault on the destination chain (e.g., Celestia) that:
    - Receives assets from the source chain via bridges
    - Generates yield from these assets
    - Can return assets to the source chain when withdrawals are requested
+   - Validates resource conservation across chains
 
 3. **Time Bandits Program**: A program that:
    - Observes deposit/withdrawal events on the source chain
    - Executes cross-chain transfers between source and destination vaults
    - Monitors yield generation on the destination chain
    - Updates the source chain vault with current value information
+   - Enforces resource conservation laws using formalized resource model
+   - Applies dual validation for cross-chain operations
+   - Tracks resources using controller labels
 
 ## Step 1: Define the Smart Contract Architecture
 
@@ -48,7 +53,16 @@ contract CrossChainVault is ERC4626, Ownable {
     uint256 public lastKnownTotalAssetsRemote;
     uint256 public lastUpdateTimestamp;
     
-    // Events for Time Bandits to monitor
+    // Resource tracking for cross-chain assets
+    bytes32 public resourceCommitment;
+    bytes32 public controllerLabel;
+    
+    // Events for resource tracking
+    event ResourceCommitmentUpdated(bytes32 commitment);
+    event ControllerLabelUpdated(bytes32 label);
+    event CrossChainTransferInitiated(uint256 amount, bytes32 resourceId, bytes32 controllerLabel);
+    event CrossChainTransferCompleted(uint256 amount, bytes32 resourceId, bytes32 controllerLabel);
+    
     event DepositForBridge(address indexed sender, uint256 assets);
     event WithdrawRequestForBridge(address indexed receiver, uint256 assets);
     event RemoteAssetsUpdated(uint256 newTotalAssets, uint256 timestamp);
@@ -71,362 +85,351 @@ contract CrossChainVault is ERC4626, Ownable {
         return lastKnownTotalAssetsRemote;
     }
     
-    // Called by Time Bandits to update the total assets value
-    function updateRemoteAssets(uint256 _newTotalAssets) external onlyController {
-        lastKnownTotalAssetsRemote = _newTotalAssets;
+    // Called by Time Bandits to update the vault with remote information
+    function updateRemoteAssets(uint256 totalAssetsRemote, bytes32 newResourceCommitment, bytes32 newControllerLabel) external {
+        require(msg.sender == timeBanditsController, "Unauthorized");
+        lastKnownTotalAssetsRemote = totalAssetsRemote;
         lastUpdateTimestamp = block.timestamp;
-        emit RemoteAssetsUpdated(_newTotalAssets, block.timestamp);
+        
+        // Update resource tracking information
+        resourceCommitment = newResourceCommitment;
+        controllerLabel = newControllerLabel;
+        
+        emit ResourceCommitmentUpdated(newResourceCommitment);
+        emit ControllerLabelUpdated(newControllerLabel);
     }
     
-    // Override deposit to emit our bridge event
+    // Override deposit to emit events for Time Bandits
     function deposit(uint256 assets, address receiver) public override returns (uint256) {
         uint256 shares = super.deposit(assets, receiver);
         emit DepositForBridge(receiver, assets);
+        
+        // Emit resource tracking event
+        emit CrossChainTransferInitiated(assets, keccak256(abi.encode(assets, block.timestamp, receiver)), controllerLabel);
+        
         return shares;
     }
     
-    // Override withdraw to emit our bridge event
+    // Override withdraw to emit events for Time Bandits
     function withdraw(uint256 assets, address receiver, address owner) public override returns (uint256) {
-        uint256 shares = super.withdraw(assets, receiver, owner);
         emit WithdrawRequestForBridge(receiver, assets);
-        return shares;
+        
+        // Emit resource tracking event with a nullifier
+        bytes32 nullifier = keccak256(abi.encode(assets, block.timestamp, owner));
+        emit CrossChainTransferInitiated(assets, nullifier, controllerLabel);
+        
+        return super.withdraw(assets, receiver, owner);
     }
-    
-    // Modifier to restrict calls to the Time Bandits controller
-    modifier onlyController() {
-        require(msg.sender == timeBanditsController, "Only controller can call");
-        _;
-    }
 }
 ```
 
-## Step 2: Define Time Bandits Effects and Fact Observation Rules
+## Step 2: Implement the Time Bandits Program
 
-### Cross-Chain Vault Effects
-
-```haskell
--- Cross-chain vault deposit effect
-type CrossChainVaultDeposit = {
-  sourceTimeline :: Timeline,
-  destTimeline :: Timeline,
-  sourceVaultAddress :: Address,
-  destVaultAddress :: Address,
-  assetAddress :: Address,  -- The underlying asset (e.g., USDC)
-  amount :: Amount,
-  bridgeParams :: ExternalBridge  -- Uses the external bridge effect from previous examples
-}
-
--- Cross-chain vault withdrawal effect
-type CrossChainVaultWithdraw = {
-  sourceTimeline :: Timeline,
-  destTimeline :: Timeline,
-  sourceVaultAddress :: Address,
-  destVaultAddress :: Address,
-  assetAddress :: Address,
-  amount :: Amount,
-  recipient :: Address,
-  bridgeParams :: ExternalBridge
-}
-
--- Value update effect
-type CrossChainVaultUpdate = {
-  sourceTimeline :: Timeline,
-  destTimeline :: Timeline,
-  sourceVaultAddress :: Address,
-  destVaultAddress :: Address,
-  newTotalAssets :: Amount
-}
-
--- Result types
-type CrossChainVaultResult = 
-  | Success { txHash :: Hash }
-  | Failed { reason :: Text }
-  | Partial { status :: Text, details :: Text }
-```
-
-### Fact Observation Rules
-
-```toml
-# Rule for observing source vault deposits
-[[rules]]
-rule_id = "cross-chain-vault-deposit-observation"
-fact_type = "VaultDepositForBridgeObservation"
-proof = "InclusionProof"
-enabled = true
-description = "Observes deposits in source vault that need bridging"
-
-path.source = "${sourceTimeline}"
-path.selector = "contract.event"
-
-[path.parameters]
-contract_address = "${sourceVaultAddress}"
-event_name = "DepositForBridge"
-
-# Rule for observing source vault withdrawal requests
-[[rules]]
-rule_id = "cross-chain-vault-withdraw-observation"
-fact_type = "VaultWithdrawRequestObservation"
-proof = "InclusionProof"
-enabled = true
-description = "Observes withdrawal requests in source vault that need cross-chain handling"
-
-path.source = "${sourceTimeline}"
-path.selector = "contract.event"
-
-[path.parameters]
-contract_address = "${sourceVaultAddress}"
-event_name = "WithdrawRequestForBridge"
-
-# Rule for observing destination vault value changes
-[[rules]]
-rule_id = "destination-vault-value-observation"
-fact_type = "DestVaultValueObservation"
-proof = "StateProof"
-enabled = true
-description = "Observes value changes in the destination vault"
-
-path.source = "${destTimeline}"
-path.selector = "contract.call"
-
-[path.parameters]
-contract_address = "${destVaultAddress}"
-method = "totalAssets"
-```
-
-## Step 3: Implement the Cross-Chain Vault Program in TEL
+Next, implement the Time Bandits program that will manage the cross-chain vault operations.
 
 ```haskell
 module CrossChainVault where
 
 import TimeBandits.Core.TEL
-import ExternalBridges  -- For bridge functionality
-import Erc4626Vault     -- For vault interactions
+import TimeBandits.Adapters.EthereumAdapter
+import TimeBandits.Adapters.CelestiaAdapter
+import TimeBandits.Resources.Formalized
+import TimeBandits.Controllers.Interface
 
--- Function to initialize a new cross-chain vault monitoring program
-initCrossChainVaultMonitor :: 
-  Timeline ->           -- Source timeline (e.g., Ethereum)
-  Timeline ->           -- Destination timeline (e.g., Celestia)
-  Address ->            -- Source vault address
-  Address ->            -- Destination vault address
-  Address ->            -- Asset address (e.g., USDC)
-  Int ->                -- Update interval in seconds
-  Effect ()
-initCrossChainVaultMonitor sourceChain destChain sourceVault destVault assetAddress updateInterval = do
-  -- Start the background processes
-  fork $ processDeposits sourceChain destChain sourceVault destVault assetAddress
-  fork $ processWithdrawals sourceChain destChain sourceVault destVault assetAddress
-  fork $ updateValuePeriodically sourceChain destChain sourceVault destVault updateInterval
+-- Define resource models
+resource StableCoin(quantity: Decimal) {
+  resourceLogic = TokenLogic
+  fungibilityDomain = "USDC"
+  ephemeral = false
+  metadata = { "decimals" = 6 }
+}
+
+resource VaultShares(quantity: Decimal) {
+  resourceLogic = TokenLogic
+  fungibilityDomain = "Vault:Shares"
+  ephemeral = false
+  metadata = { "decimals" = 18 }
+}
+
+-- State for cross-chain vault management
+data CrossChainVaultState = CrossChainVaultState {
+  -- Source chain info
+  sourceChain :: Timeline,
+  sourceVaultAddress :: Address,
+  sourceAssetAddress :: Address,
   
-  emit $ "Cross-chain vault monitor initialized for " ++ 
-          show sourceVault ++ " on " ++ sourceChain ++ " -> " ++
-          show destVault ++ " on " ++ destChain
+  -- Destination chain info
+  destChain :: Timeline,
+  destVaultAddress :: Address,
+  
+  -- Asset tracking
+  totalAssetsRemote :: Decimal,
+  totalSharesIssued :: Decimal,
+  lastUpdateTimestamp :: Int,
+  
+  -- Resource tracking
+  resources :: [Resource],
+  controllerLabels :: Map Timeline ControllerLabel,
+  commitments :: [Commitment],
+  nullifiers :: [Nullifier]
+}
 
--- Process deposits from source chain to destination chain
-processDeposits :: Timeline -> Timeline -> Address -> Address -> Address -> Effect ()
-processDeposits sourceChain destChain sourceVault destVault assetAddress = do
-  -- Watch for deposit events
-  while True $ do
-    depositFact <- observe (VaultDepositForBridgeObservation sourceChain sourceVault) on sourceChain
-    
-    -- Extract deposit parameters
-    let depositor = extractDepositor depositFact
-        amount = extractAmount depositFact
+-- Initialize the cross-chain vault manager
+initCrossChainVault :: 
+  Timeline ->    -- Source chain (e.g., Ethereum)
+  Address ->     -- Source vault address
+  Address ->     -- Source asset address
+  Timeline ->    -- Destination chain (e.g., Celestia)
+  Address ->     -- Destination vault address
+  Effect CrossChainVaultState
+initCrossChainVault sourceChain sourceVault sourceAsset destChain destVault = do
+  -- Get current time
+  currentTime <- getCurrentTimestamp
+  
+  -- Initialize controller labels for both chains
+  sourceController <- getController sourceChain
+  destController <- getController destChain
+  
+  let sourceControllerLabel = sourceController.createControllerLabel
+      destControllerLabel = destController.createControllerLabel
+      
+      -- For cross-chain operations, create a linked controller label
+      crossChainLabel = sourceControllerLabel {
+        terminalController = destControllerLabel.terminalController,
+        affectingControllers = destControllerLabel.terminalController : 
+                              sourceControllerLabel.affectingControllers
+      }
+  
+  -- Store the controller labels
+  let controllerLabels = Map.fromList [
+        (sourceChain, sourceControllerLabel),
+        (destChain, destControllerLabel)
+      ]
+  
+  -- Return initial state
+  return CrossChainVaultState {
+    sourceChain = sourceChain,
+    sourceVaultAddress = sourceVault,
+    sourceAssetAddress = sourceAsset,
+    destChain = destChain,
+    destVaultAddress = destVault,
+    totalAssetsRemote = 0,
+    totalSharesIssued = 0,
+    lastUpdateTimestamp = currentTime,
+    resources = [],
+    controllerLabels = controllerLabels,
+    commitments = [],
+    nullifiers = []
+  }
+
+-- Handle deposit event from source chain vault
+handleDeposit :: CrossChainVaultState -> Address -> Decimal -> Effect CrossChainVaultState
+handleDeposit state sender amount = do
+  -- Get current time for resource creation
+  currentTime <- getCurrentTimestamp
+  
+  -- Create a formalized resource for the deposit
+  let depositResource = Resource {
+        resourceLogic = TokenLogic,
+        fungibilityDomain = "USDC",
+        quantity = amount,
+        metadata = encodeMetadata [
+          ("chain", state.sourceChain), 
+          ("sender", sender)
+        ],
+        ephemeral = false,
+        nonce = generateNonce,
+        nullifierPubKey = deriveNullifierKey state.sourceVaultAddress,
+        randomnessSeed = generateSeed
+      }
+  
+  -- Get controller labels for source and destination chains
+  let sourceLabel = Map.findWithDefault 
+                    (error "Missing source controller") 
+                    state.sourceChain 
+                    state.controllerLabels
+      
+      destLabel = Map.findWithDefault 
+                  (error "Missing destination controller") 
+                  state.destChain 
+                  state.controllerLabels
+      
+      -- Create cross-chain controller label
+      crossChainLabel = sourceLabel {
+        terminalController = destLabel.terminalController,
+        affectingControllers = destLabel.terminalController : 
+                              sourceLabel.affectingControllers
+      }
+  
+  -- Create resource commitment
+  let commitment = hashCommitment depositResource
+  
+  -- Bridge the assets to the destination chain
+  bridgeResult <- bridgeAssets 
+                  state.sourceChain 
+                  state.destChain
+                  state.sourceAssetAddress
+                  depositResource
+                  crossChainLabel
+  
+  case bridgeResult of
+    BridgeSuccess bridgedResource -> do
+      -- Record resource delta on source chain (negative)
+      recordResourceDelta (Delta (-amount)) state.sourceChain
+      
+      -- Record resource delta on destination chain (positive)
+      recordResourceDelta (Delta amount) state.destChain
+      
+      -- Get current time map for temporal validation
+      timeMap <- getCurrentTimeMap
+      
+      -- Perform dual validation
+      validationResult <- validateCrossChainResource 
+        (TransferEffect bridgedResource)
+        bridgedResource
+        timeMap
+        crossChainLabel
+      
+      case validationResult of
+        ValidationResult (TemporallyValid _) (AncestrallyValid _) -> do
+          -- Update state with new resources
+          let newResources = bridgedResource : state.resources
+              newCommitments = commitment : state.commitments
+              
+          -- Update total assets on remote chain
+          newTotalAssetsRemote <- getDestinationVaultBalance state
+          
+          -- Update source chain contract with new information
+          updateSourceVaultInfo 
+            state.sourceChain 
+            state.sourceVaultAddress 
+            newTotalAssetsRemote 
+            commitment 
+            crossChainLabel
+          
+          -- Return updated state
+          return state {
+            totalAssetsRemote = newTotalAssetsRemote,
+            lastUpdateTimestamp = currentTime,
+            resources = newResources,
+            commitments = newCommitments
+          }
         
-    emit $ "Observed deposit of " ++ show amount ++ " from " ++ show depositor
-    
-    -- Determine which bridge to use
-    bridgeParams <- getBridgeParameters sourceChain destChain assetAddress
-    
-    -- Create the cross-chain vault deposit effect
-    let depositParams = CrossChainVaultDeposit {
-      sourceTimeline = sourceChain,
-      destTimeline = destChain,
-      sourceVaultAddress = sourceVault,
-      destVaultAddress = destVault,
-      assetAddress = assetAddress,
-      amount = amount,
-      bridgeParams = bridgeParams
-    }
-    
-    -- Execute the deposit process
-    result <- executeDepositProcess depositParams
-    
-    case result of
-      Success txHash -> 
-        emit $ "Successfully deposited to destination vault: " ++ show txHash
-      Failed reason -> 
-        emit $ "Failed to deposit to destination vault: " ++ reason
-      Partial status details ->
-        emit $ "Partial deposit status: " ++ status ++ " - " ++ details
-
--- Execute the full deposit process
-executeDepositProcess :: CrossChainVaultDeposit -> Effect CrossChainVaultResult
-executeDepositProcess params = do
-  -- Step 1: Obtain the tokens from the source vault
-  tokenResult <- getTokensFromSourceVault params.sourceTimeline params.sourceVaultAddress params.amount
-  
-  case tokenResult of
-    Left err -> return $ Failed $ "Failed to get tokens: " ++ err
-    Right _ -> do
-      -- Step 2: Bridge the tokens to the destination chain
-      bridgeResult <- ExternalBridges.bridgeToken 
-                        params.assetAddress params.assetAddress 
-                        params.sourceTimeline params.destTimeline 
-                        params.amount
+        _ -> do
+          -- Log validation failure
+          logError $ "Cross-chain validation failed for deposit"
+          return state
       
-      case bridgeResult of
-        BridgeSuccess txHash -> do
-          -- Step 3: Deposit to the destination vault
-          destDepositResult <- Erc4626Vault.depositToVault 
-                                params.destTimeline params.destVaultAddress 
-                                params.assetAddress params.amount 0.01
-          
-          case destDepositResult of
-            DepositSuccess _ finalTxHash -> do
-              -- Step 4: Update the source vault with new total assets value
-              _ <- updateSourceVaultValue params.sourceTimeline params.destTimeline 
-                    params.sourceVaultAddress params.destVaultAddress
-              
-              return $ Success finalTxHash
-              
-            _ -> return $ Partial "BridgeSuccess" "Destination deposit failed"
-          
-        BridgeRefunded refundTxHash -> do
-          -- Handle refund case - return tokens to source vault
-          _ <- returnTokensToSourceVault params.sourceTimeline 
-                params.sourceVaultAddress params.assetAddress params.amount
-          
-          return $ Failed $ "Bridge was refunded: " ++ show refundTxHash
-          
-        _ -> return $ Failed "Bridge failed"
+    BridgeFailure error -> do
+      logError $ "Bridge failure: " <> error
+      return state
 
--- Process withdrawals from destination chain back to source chain
-processWithdrawals :: Timeline -> Timeline -> Address -> Address -> Address -> Effect ()
-processWithdrawals sourceChain destChain sourceVault destVault assetAddress = do
-  -- Watch for withdrawal request events
-  while True $ do
-    withdrawFact <- observe (VaultWithdrawRequestObservation sourceChain sourceVault) on sourceChain
-    
-    -- Extract withdrawal parameters
-    let receiver = extractReceiver withdrawFact
-        amount = extractAmount withdrawFact
-        
-    emit $ "Observed withdrawal request of " ++ show amount ++ " for " ++ show receiver
-    
-    -- Determine which bridge to use
-    bridgeParams <- getBridgeParameters destChain sourceChain assetAddress
-    
-    -- Create the cross-chain vault withdrawal effect
-    let withdrawParams = CrossChainVaultWithdraw {
-      sourceTimeline = sourceChain,
-      destTimeline = destChain,
-      sourceVaultAddress = sourceVault,
-      destVaultAddress = destVault,
-      assetAddress = assetAddress,
-      amount = amount,
-      recipient = receiver,
-      bridgeParams = bridgeParams
-    }
-    
-    -- Execute the withdrawal process
-    result <- executeWithdrawProcess withdrawParams
-    
-    case result of
-      Success txHash -> 
-        emit $ "Successfully processed withdrawal: " ++ show txHash
-      Failed reason -> 
-        emit $ "Failed to process withdrawal: " ++ reason
-      Partial status details ->
-        emit $ "Partial withdrawal status: " ++ status ++ " - " ++ details
-
--- Execute the full withdrawal process
-executeWithdrawProcess :: CrossChainVaultWithdraw -> Effect CrossChainVaultResult
-executeWithdrawProcess params = do
-  -- Step 1: Convert assets to shares in the destination vault
-  sharesToWithdraw <- Erc4626Vault.convertToShares 
-                       params.destTimeline params.destVaultAddress params.amount
+-- Handle withdrawal request event from source chain
+handleWithdrawRequest :: CrossChainVaultState -> Address -> Decimal -> Effect CrossChainVaultState
+handleWithdrawRequest state receiver amount = do
+  -- Current time for operations
+  currentTime <- getCurrentTimestamp
   
-  -- Step 2: Withdraw from the destination vault
-  withdrawResult <- Erc4626Vault.withdrawFromVault
-                     params.destTimeline params.destVaultAddress 
-                     params.assetAddress sharesToWithdraw 0.01
+  -- Find a resource to withdraw
+  let resourceToWithdraw = findAvailableResource state.resources amount
   
-  case withdrawResult of
-    WithdrawSuccess receivedAssets _ -> do
-      -- Step 3: Bridge the assets back to the source chain
-      bridgeResult <- ExternalBridges.bridgeToken
-                        params.assetAddress params.assetAddress
-                        params.destTimeline params.sourceTimeline
-                        receivedAssets
-      
-      case bridgeResult of
-        BridgeSuccess txHash -> do
-          -- Step 4: Transfer assets to the recipient on source chain
-          transferResult <- transferToRecipient 
-                             params.sourceTimeline params.assetAddress 
-                             params.recipient receivedAssets
+  case resourceToWithdraw of
+    Nothing -> do
+      logError $ "Not enough resources available for withdrawal"
+      return state
+    
+    Just resource -> do
+      -- Get controller labels for destination and source chains
+      let destLabel = Map.findWithDefault 
+                      (error "Missing destination controller") 
+                      state.destChain 
+                      state.controllerLabels
           
-          case transferResult of
-            Right finalTxHash -> do
-              -- Step 5: Update the source vault with new total assets value
-              _ <- updateSourceVaultValue params.sourceTimeline params.destTimeline
-                    params.sourceVaultAddress params.destVaultAddress
-              
-              return $ Success finalTxHash
-              
-            Left err -> return $ Partial "BridgeSuccess" $ "Transfer failed: " ++ err
+          sourceLabel = Map.findWithDefault 
+                        (error "Missing source controller") 
+                        state.sourceChain 
+                        state.controllerLabels
           
-        _ -> return $ Failed "Bridge back to source chain failed"
+          -- Create cross-chain controller label (dest -> source)
+          crossChainLabel = destLabel {
+            terminalController = sourceLabel.terminalController,
+            affectingControllers = sourceLabel.terminalController : 
+                                  destLabel.affectingControllers
+          }
       
-    _ -> return $ Failed "Withdrawal from destination vault failed"
-
--- Periodically update the source vault with the current value from destination
-updateValuePeriodically :: Timeline -> Timeline -> Address -> Address -> Int -> Effect ()
-updateValuePeriodically sourceChain destChain sourceVault destVault updateInterval = do
-  while True $ do
-    -- Wait for the update interval
-    wait updateInterval seconds
-    
-    -- Update the value
-    result <- updateSourceVaultValue sourceChain destChain sourceVault destVault
-    
-    case result of
-      Right txHash -> 
-        emit $ "Updated source vault value successfully: " ++ show txHash
-      Left err -> 
-        emit $ "Failed to update source vault value: " ++ err
-    
-    -- Continue the loop
-
--- Update the source vault with the current value from destination
-updateSourceVaultValue :: Timeline -> Timeline -> Address -> Address -> Effect (Either Text Hash)
-updateSourceVaultValue sourceChain destChain sourceVault destVault = do
-  -- Step 1: Get current total assets in destination vault
-  totalAssetsResult <- try $ Erc4626Vault.getTotalAssets destChain destVault
-  
-  case totalAssetsResult of
-    Left err -> return $ Left $ "Failed to get destination assets: " ++ err
-    Right totalAssets -> do
-      -- Step 2: Update the source vault contract
-      updateResult <- try $ callContract sourceChain sourceVault "updateRemoteAssets" [totalAssets]
+      -- Create a nullifier for this resource
+      let nullifier = hashNullifier resource.nullifierPubKey resource
       
-      case updateResult of
-        Left err -> return $ Left $ "Failed to update source vault: " ++ err
-        Right txHash -> do
-          emit $ "Updated source vault total assets to " ++ show totalAssets
-          return $ Right txHash
+      -- Check that nullifier hasn't been used
+      if nullifier `elem` state.nullifiers
+        then do
+          logError $ "Resource already spent"
+          return state
+        else do
+          -- Record the nullifier
+          recordNullifier nullifier
+          
+          -- Bridge assets back to source chain
+          bridgeResult <- bridgeAssets 
+                          state.destChain 
+                          state.sourceChain
+                          state.destVaultAddress
+                          resource
+                          crossChainLabel
+          
+          case bridgeResult of
+            BridgeSuccess bridgedResource -> do
+              -- Record resource delta on destination chain (negative)
+              recordResourceDelta (Delta (-amount)) state.destChain
+              
+              -- Record resource delta on source chain (positive)
+              recordResourceDelta (Delta amount) state.sourceChain
+              
+              -- Get current time map for temporal validation
+              timeMap <- getCurrentTimeMap
+              
+              -- Perform dual validation
+              validationResult <- validateCrossChainResource 
+                (TransferEffect bridgedResource)
+                bridgedResource
+                timeMap
+                crossChainLabel
+              
+              case validationResult of
+                ValidationResult (TemporallyValid _) (AncestrallyValid _) -> do
+                  -- Update destination vault balance
+                  newTotalAssetsRemote <- getDestinationVaultBalance state
+                  
+                  -- Create new commitment for the returned resource
+                  let commitment = hashCommitment bridgedResource
+                  
+                  -- Update source chain contract with new information
+                  updateSourceVaultInfo 
+                    state.sourceChain 
+                    state.sourceVaultAddress 
+                    newTotalAssetsRemote 
+                    commitment 
+                    crossChainLabel
+                  
+                  -- Update state
+                  return state {
+                    totalAssetsRemote = newTotalAssetsRemote,
+                    lastUpdateTimestamp = currentTime,
+                    resources = resource : state.resources,
+                    commitments = commitment : state.commitments,
+                    nullifiers = nullifier : state.nullifiers
+                  }
+                
+                _ -> do
+                  -- Log validation failure
+                  logError $ "Cross-chain validation failed for withdrawal"
+                  return state
+            
+            BridgeFailure error -> do
+              logError $ "Bridge failure: " <> error
+              return state
 
--- Helper functions (implementation details omitted for brevity)
-getTokensFromSourceVault :: Timeline -> Address -> Amount -> Effect (Either Text ())
-returnTokensToSourceVault :: Timeline -> Address -> Address -> Amount -> Effect (Either Text ())
-transferToRecipient :: Timeline -> Address -> Address -> Amount -> Effect (Either Text Hash)
-getBridgeParameters :: Timeline -> Timeline -> Address -> Effect ExternalBridge
-extractDepositor :: Fact -> Address
-extractReceiver :: Fact -> Address
-extractAmount :: Fact -> Amount
-```
-
-## Step 4: Value Calculation and Yield Tracking
+## Step 3: Value Calculation and Yield Tracking
 
 Enhance the program with value calculation and yield tracking capabilities:
 
@@ -520,7 +523,7 @@ calculateAnnualizedYield oldCp newCp = do
   return $ dailyYield * 365
 ```
 
-## Step 5: Use Case - Cross-Chain USDC Yield Strategy
+## Step 4: Use Case - Cross-Chain USDC Yield Strategy
 
 Here's a concrete example of a USDC yield strategy using vaults across Ethereum and Celestia:
 
@@ -564,7 +567,7 @@ deployUsdcYieldStrategy initialDeposit = do
   emit "Cross-chain USDC yield strategy deployed and initialized"
 ```
 
-## Step 6: Risk Management and Monitoring
+## Step 5: Risk Management and Monitoring
 
 Add risk management and monitoring capabilities:
 
@@ -660,3 +663,27 @@ monitorBridgeHealth sourceChain destChain = do
     -- Check daily
     wait 86400 seconds
 ```
+
+## Conclusion
+
+This implementation demonstrates how to create a cross-chain vault using the Time Bandits framework with formalized resource model. The key aspects of this implementation are:
+
+1. **Resource formalization**: Assets are represented as formalized resources with explicit properties, ensuring conservation laws are upheld.
+
+2. **Dual validation**: Both temporal and ancestral validation are performed for cross-chain operations, preventing invalid states.
+
+3. **Controller labels**: Resources are tracked across chains using controller labels that identify which timelines control the resources.
+
+4. **Resource commitments**: Cryptographic commitments to resources are maintained and verified, ensuring integrity.
+
+5. **Nullifiers**: Resources that have been spent are tracked with nullifiers to prevent double-spending.
+
+This architecture provides several security benefits:
+
+- Strong guarantees about asset conservation across chains
+- Protection against replay attacks using nullifiers
+- Clear ownership tracking with controller labels
+- Ability to recover from chain failures through backup controllers
+- Auditability of resource movements through commitments
+
+By using the Time Bandits formalized resource model, this cross-chain vault ensures that assets are properly tracked and validated as they move between chains, providing strong security guarantees for users' funds.

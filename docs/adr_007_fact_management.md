@@ -1,220 +1,143 @@
-# ADR 007: Fact Management and Observation Pipeline
-
+# ADR 007: Fact Management
 
 ## Status
 
-Proposed
+Accepted, with register-based extensions
 
 ## Context
 
-Facts are **observations of external state** collected from timelines, oracles, and other programs. In previous iterations of the system, facts were handled informally — they were retrieved ad hoc via queries and were **not part of the causal history** of programs.
+Time Bandits programs need to observe and react to **facts** from external timelines. Facts could be:
 
-This created several problems:
+1. Account balances
+2. Price data
+3. Transaction confirmations
+4. State transitions
+5. Register state updates
+6. ZK proof verifications
 
-- **Replays were incomplete:** Replaying a program required querying live timelines or re-deriving facts from external sources.
-- **Causal Traceability was Broken:** Effects often depended on facts (e.g., asset prices) without explicitly recording the facts themselves.
-- **Fact Provenance was Unclear:** Facts could not be individually proven — there was no consistent way to verify who observed a fact and how it was authenticated.
-- **Cross-Timeline Coordination was Compromised:** Facts that came from other timelines were treated differently from local facts, introducing inconsistency.
+Previously, facts were treated as secondary to effects - programs would apply effects and then check facts. This led to:
 
-### New Approach: Facts as First-Class Causal Entities
+- Unclear causality between facts and effects
+- Difficulties in replay and simulation
+- Inconsistent fact verification across timelines
+- Challenges in tracking fact dependencies
 
-In the new model, **facts are causal objects** — every effect that depends on external state must explicitly reference the facts it observed. Facts are:
-- Stored in a dedicated **FactLog** (append-only, content-addressed).
-- Included in every effect that depends on them as a **FactSnapshot**.
-- Fully replayable, like effects themselves.
-- Proven by the observer who collected them (usually a Time Keeper).
-- Verifiable via cryptographic proofs.
+## Decision
 
+We will transition to treating **facts as first-class causal entities** with the following approach:
 
-# Decision
+1. Facts are **observed by keepers**
+2. Facts are **signed and timestamped**
+3. Facts are **content-addressed**
+4. Programs **depend on facts explicitly**
+5. Facts include **register observations and proofs**
 
-## Core Data Structures
-
-### Fact
+### Core Data Structures
 
 ```haskell
 data Fact = Fact
-    { factID :: FactID
-    , timeline :: TimelineID
-    , factType :: FactType
-    , factValue :: FactValue
-    , observedAt :: LamportTime
-    , observationProof :: ObservationProof
-    }
+  { factID :: FactID                 -- Content hash of the fact
+  , timeline :: TimelineID           -- Which timeline the fact comes from
+  , factType :: FactType             -- Categorization of fact
+  , factValue :: Value               -- The actual data
+  , observedAt :: LamportTime        -- When the fact was observed
+  , observationProof :: Proof        -- Proof of observation
+  }
+
+data FactType
+  = BalanceFact                      -- Token or native currency balance
+  | TransactionFact                  -- Transaction completion on external chain
+  | OracleFact                       -- Data from external oracle
+  | BlockFact                        -- Block information
+  | TimeFact                         -- Time observation
+  | RegisterFact                     -- Register state or operation
+  | ZKProofFact                      -- ZK proof verification result
+  | Custom Text                      -- Custom fact type
+
+data RegisterFact
+  = RegisterCreation RegisterID RegisterContents
+  | RegisterUpdate RegisterID RegisterContents
+  | RegisterTransfer RegisterID TimelineID ControllerLabel
+  | RegisterMerge [RegisterID] RegisterID
+  | RegisterSplit RegisterID [RegisterID]
+
+data ZKProofFact
+  = ProofVerification VerificationKey Proof
+  | BatchVerification [VerificationKey] [Proof]
+  | CircuitExecution CircuitType Inputs Outputs
+  | ProofComposition ProofID [ProofID]
 ```
 
-- `factID`: Content hash of the fact (unique identifier).
-- `timeline`: Source timeline (e.g., Ethereum).
-- `factType`: What kind of fact (e.g., Balance, Price, Transaction Inclusion).
-- `factValue`: Actual value (e.g., `{"ETH/USDC": 2900}`).
-- `observedAt`: Lamport timestamp of observation.
-- `observationProof`: Cryptographic proof of correctness (signed by Time Keeper).
+### Fact Observation Workflow
 
+1. **External Observation**: Time Keepers observe external events
+2. **Proof Generation**: Keepers generate observation proofs
+3. **Fact Creation**: Keepers create facts with proofs
+4. **Fact Propagation**: Facts are gossiped to Bandits
+5. **Fact Verification**: Bandits verify fact proofs
+6. **Fact Storage**: Facts are stored in fact logs
+7. **Register Observation**: Register states are observed and recorded as facts
+8. **ZK Proof Verification**: ZK proofs are verified and recorded as facts
 
-### FactSnapshot (included in every effect)
+### FactSnapshot and Effect Dependencies
+
+Programs explicitly depend on facts through fact snapshots:
 
 ```haskell
 data FactSnapshot = FactSnapshot
-    { observedFacts :: [FactID]
-    , observer :: KeeperID
-    }
+  { observedFacts :: [FactID]        -- Facts observed before effect
+  , observer :: KeeperID             -- Who observed the facts
+  , registerObservations :: Map RegisterID ByteString  -- Register state observations
+  }
+
+data Effect a = Effect
+  { effectType :: EffectType a       -- Type of effect
+  , factSnapshot :: FactSnapshot     -- Facts depended on
+  , effectValue :: a                 -- Effect payload
+  , appliedAt :: LamportTime         -- When effect was applied
+  }
 ```
 
-- `observedFacts`: The set of facts the effect depended on.
-- `observer`: Who observed them (trusted source).
+### Register-Related Facts
 
+Register facts have special handling:
 
-### FactLog
+1. **Register Creation**: When a register is created, a RegisterCreation fact is observed
+2. **Register Updates**: When a register is updated, a RegisterUpdate fact is observed
+3. **Register Transfers**: When a register moves across chains, a RegisterTransfer fact is observed
+4. **ZK Proofs**: When a ZK proof is verified, a ZKProofFact is observed
 
-```haskell
-data FactLog = FactLog
-    { timeline :: TimelineID
-    , entries :: [FactLogEntry]
-    }
-data FactLogEntry = FactObserved Fact
-                  | FactExpired FactID
-```
+These facts enable programs to track register state and verify operations without direct blockchain queries.
 
-- Timeline-specific log of observed facts.
-- Append-only.
-- Content-addressed (the entire log has a root hash).
+### Fact Replay and Simulation
 
+During replay and simulation:
 
-## Fact Sources
+1. Facts are replayed in observed order
+2. Register facts are used to reconstruct register state
+3. ZK proof facts are used to verify operation correctness
+4. Programs only see facts they explicitly depended on
+5. Fact snapshots establish clear causal relationships
 
-Facts can originate from:
-- Timeline Keepers (on-chain balances, prices, transaction confirmations).
-- Oracle Programs (external feeds).
-- Derived Facts (computed from existing facts by other programs).
+## Consequences
 
+### Positive
 
-## Fact Lifecycle
+- Clear causality between facts and effects
+- Improved replay and simulation fidelity
+- Consistent fact verification across timelines
+- Better tracking of fact dependencies
+- Register operations can be tracked with explicit facts
+- ZK proofs can be verified and recorded as facts
 
-| Phase | Action |
-|---|---|
-| Observation | Keeper observes fact, writes to FactLog. |
-| Proposal | Bandits gossip observed fact to peers. |
-| Consumption | Programs read facts from log during effect application. |
-| Snapshotting | Every effect that reads facts records their IDs in FactSnapshot. |
-| Replay | Replaying an effect verifies fact proofs directly from FactLog. |
-| Expiry (optional) | Certain facts may have TTLs, after which they are archived. |
+### Negative
 
+- Additional complexity in handling fact dependencies
+- Potential overhead from fact storage and propagation
+- Learning curve for developers used to checking facts after effects
 
-## Interface with Other Parts of the System
+### Neutral
 
-| Component | Role |
-|---|---|
-| Time Keeper | Observes facts, signs proofs, appends to FactLog. |
-| Program Execution | Queries facts before applying effects. |
-| Effect DAG | Every effect references observed facts causally. |
-| Bandits (P2P) | Gossip facts alongside proposed effects to ensure consensus on external observations. |
-| Replay Engine | Rehydrates facts during replay, verifies proofs. |
-| Observer System | Can inject synthetic facts for testing. |
-
-
-# Example Fact Observation Flow
-
-### Initial Observation (Ethereum Price)
-
-1. Ethereum Time Keeper observes:
-    - `ETH/USDC = 2900`
-2. Keeper signs fact with proof of inclusion (block header + Merkle proof).
-3. Fact recorded in Ethereum FactLog.
-
-### Bandit Gossip
-
-1. Bandits gossip the observed fact.
-2. Each Bandit appends to its local FactLog.
-3. Facts are content-addressed (same fact = same hash for all Bandits).
-
-### Program Consumption
-
-1. Program calls `observeFact("ETH/USDC")`.
-2. Keeper retrieves fact from FactLog.
-3. Program embeds fact hash into next effect’s FactSnapshot.
-
-
-# Example Fact Format (JSON)
-
-```json
-{
-    "factID": "bafy...",
-    "timeline": "Ethereum",
-    "factType": "Price",
-    "factValue": { "ETH/USDC": 2900 },
-    "observedAt": "LamportTime(12345)",
-    "observationProof": {
-        "inclusionProof": "0xabc123...",
-        "signedBy": "keeper.eth"
-    }
-}
-```
-
-
-# Benefits
-
-- Programs have explicit, immutable causal references to all external state they depend on.  
-- All fact observations are provable — each fact has a signed proof.  
-- Replays become fully deterministic — facts do not change between runs.  
-- Observers can simulate new facts (fault injection for testing).  
-- Programs become **timeline-agnostic** — they consume facts, not raw RPC responses.  
-- Fact history is **independently auditable** — Bandits can prove they acted on authentic observations.
-
-
-# Changes to Existing Systems
-
-| Component | Change |
-|---|---|
-| Program State | Add fact snapshot to every effect. |
-| Effect DAG | Add fact snapshot to effect payload. |
-| P2P Messaging | Add facts to message format, sync facts before syncing effects. |
-| Time Keeper | Writes fact log and generates proofs. |
-| Fact Store | New module responsible for persisting FactLog to disk. |
-| Replay Engine | Rehydrate facts before effect replay. |
-| Observer System | Can inject synthetic facts into FactLog. |
-
-
-# Safe State and Fact Consistency
-
-Safe states now depend partially on fact freshness. For example:
-- Programs that rely on a **price feed** should only be in safe states if:
-    - They have an observed price within the last N blocks.
-    - This price was signed by the correct keeper.
-- This creates a direct dependency between **timeline liveness** and program upgradability.
-
-
-# Testing Considerations
-
-- Unit tests for Fact, FactSnapshot, FactLog types.  
-- Tests for FactLog append, read, expiry.  
-- Test full observation lifecycle (observe → gossip → consume → replay).  
-- Test cross-timeline observation (Ethereum keeper sends fact to Solana program).  
-- Test replay mismatch (fact missing or proof invalid).
-
-# Example FactLog Storage on Disk
-
-Fact logs are per-timeline, append-only files:
-
-- `/var/time-bandits/facts/ethereum/ 0001.log 0002.log`
-- `/var/time-bandits/facts/solana/ 0001.log`
-
-
-Each entry is a content-addressed fact (CID):
-
-```json
-{
-    "cid": "bafy...",
-    "fact": { ... }
-}
-```
-
----
-
-# Summary
-
-This ADR formalizes facts as **first-class causal entities**, tightly coupled to the effect pipeline and replay engine. This ensures:
-
-- Programs never depend on mutable external state directly.  
-- All external state changes are provable and replayable.  
-- Cross-timeline facts flow through the same causal pipeline as local effects.  
-- Facts have consistent semantics across all timelines.
+- Requires standardized fact formats across timelines
+- May need periodic updates as new fact types emerge
+- Register and ZK proof facts require specialized handling
